@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import pandas as pd
 
-from redwheel import read
-from redwheel.config import CHANNELS, PLAN_END, PLAN_START, POLICY, SNAPSHOT
+from redwheel import read, rtn
+from redwheel.config import (BUILD_WEEKS, CHANNELS, PLAN_END, PLAN_START, POLICY, SNAPSHOT,
+                             TRANSFER_WEEKS)
 from redwheel.utils import dq
 
 # FACT: location names in plant_inventory_snapshot.csv. Everything else is a dealer.
@@ -79,12 +80,35 @@ def build_dim_line(dim_sku: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_dim_week(forecast: pd.DataFrame) -> pd.DataFrame:
-    """Every forecast week. week_idx 0 = plan start; fiscal year runs Sep-Aug, named by start year."""
+    """Every forecast week. week_idx 1 = plan start (0 is the opening snapshot);
+    fiscal year runs Sep-Aug, named by start year."""
     w = pd.DataFrame({"week_start": sorted(forecast["week_start"].unique())})
-    w["week_idx"] = ((w["week_start"] - PLAN_START).dt.days // 7).astype(int)
+    w["week_idx"] = ((w["week_start"] - PLAN_START).dt.days // 7 + 1).astype(int)
     w["fiscal_year"] = w["week_start"].dt.year - (w["week_start"].dt.month < 9)
     w["in_plan_horizon"] = w["week_start"].between(PLAN_START, PLAN_END)
     return w
+
+
+# Customer location per order channel. Dealers also hold their own stock -> class 'dealer'.
+CUSTOMER_LOCATION = {"dtc": "WEB", "dealer": "DEALERS", "commercial": "COMMERCIAL"}
+
+
+def build_dim_location(dim_line: pd.DataFrame) -> pd.DataFrame:
+    """The places in Redwheel's network. source_code / channel link a location to the raw files."""
+    rows = [
+        # location_id, location_class, parent, name, source_code, channel
+        ("RENO", "factory", None, "Reno Plant - Finished Goods", "RENO-FG", None),
+        ("CMH", "distribution_center", None, "Columbus Distribution Center", "CMH-DC", None),
+        (rtn.transit_location("RENO", "CMH"), "in_transit", None, "Reno -> Columbus", None, None),
+    ]
+    rows += [(f"RENO/{ln}", "production_line", "RENO", f"Reno {ln} line", None, None)
+             for ln in dim_line["line_id"]]
+    rows += [(loc, "dealer" if ch == "dealer" else "customer", None, f"{ch} customers", None, ch)
+             for ch, loc in CUSTOMER_LOCATION.items()]
+    d = pd.DataFrame(rows, columns=["location_id", "location_class", "parent", "name",
+                                    "source_code", "channel"])
+    d.insert(3, "ours", d["location_class"].map(lambda c: rtn.LOCATION_CLASSES[c]["ours"]))
+    return d
 
 
 def build_dim_policy() -> pd.DataFrame:
@@ -111,14 +135,102 @@ def build_master() -> dict[str, pd.DataFrame]:
     inventory = union_inventory(read.read_plant_inventory(), read.read_dealer_stock())
     forecast = union_forecast(*(read.read_forecast(c) for c in CHANNELS))
     dim_sku = build_dim_sku(orders)
+    dim_line = build_dim_line(dim_sku)
     return {
         "fact_orders": orders,
         "fact_inventory": inventory,
         "fact_capacity": build_capacity(read.read_capacity()),
         "fact_forecast": forecast,
         "dim_sku": dim_sku,
-        "dim_line": build_dim_line(dim_sku),
+        "dim_line": dim_line,
+        "dim_location": build_dim_location(dim_line),
         "dim_week": build_dim_week(forecast),
         "dim_policy": build_dim_policy(),
         "opening_position": build_opening_position(orders, inventory),
     }
+
+
+# ---------- 2 the object ----------
+
+def build_routing(dim_sku: pd.DataFrame) -> pd.DataFrame:
+    """What is built where. FACT: a sku's class + trim match exactly one line.
+    ASSUMPTION: all lines are at Reno; one unit of line capacity per bike."""
+    return pd.DataFrame({
+        "item": dim_sku["sku"],
+        "line": "RENO/" + dim_sku["line_id"],
+        "output": "RENO",
+        "capacity_per_unit": 1,
+        "delay": BUILD_WEEKS,
+    })
+
+
+def build_routes() -> pd.DataFrame:
+    """What can go where. Every physically possible route; which ones to *use* is a planning prior.
+    ASSUMPTION: Reno -> Columbus takes TRANSFER_WEEKS; either site can ship to every customer."""
+    rows = [("RENO", "CMH", TRANSFER_WEEKS)]
+    rows += [(site, cust, 0) for site in ("RENO", "CMH") for cust in CUSTOMER_LOCATION.values()]
+    return pd.DataFrame(rows, columns=["origin", "destination", "delay"])
+
+
+def _on_resources(resources: pd.DataFrame, ids: pd.Series, qty: pd.Series, what: str) -> pd.Series:
+    """Sum qty onto resource ids; raise if any id is not a resource (a mapping error)."""
+    unknown = set(ids) - set(resources["resource_id"])
+    if unknown:
+        raise ValueError(f"{what}: no resource for {sorted(unknown)[:3]}")
+    return qty.groupby(ids.values).sum().reindex(resources["resource_id"], fill_value=0)
+
+
+def build_opening(m: dict, resources: pd.DataFrame) -> pd.Series:
+    """Level at t = 0. Our sites from the plant snapshot, dealer stock (all dealers summed),
+    backlog per sku x channel. In-transit starts empty (ASSUMPTION: no transfer data)."""
+    loc = m["dim_location"]
+    site = loc.dropna(subset=["source_code"]).set_index("source_code")["location_id"]
+    cust = loc.dropna(subset=["channel"]).set_index("channel")["location_id"]
+
+    inv = m["fact_inventory"]
+    plant = inv[inv["nettable"]]
+    dealer = inv[~inv["nettable"]]
+    o = m["fact_orders"][m["fact_orders"]["open_at_snapshot"]]
+    ids = pd.concat([
+        "inventory|" + plant["sku"] + "|" + plant["location_code"].map(site),
+        "inventory|" + dealer["sku"] + "|" + cust["dealer"],
+        "order|" + o["sku"] + "|" + o["channel"].map(cust),
+    ], ignore_index=True)
+    qty = pd.concat([plant["on_hand"], dealer["on_hand"], o["qty"]], ignore_index=True)
+    return _on_resources(resources, ids, qty, "opening").rename("opening")
+
+
+def build_arrivals(m: dict, resources: pd.DataFrame, weeks: pd.DataFrame) -> pd.DataFrame:
+    """What comes from outside each week: forecast onto orders, capacity onto lines."""
+    loc = m["dim_location"]
+    cust = loc.dropna(subset=["channel"]).set_index("channel")["location_id"]
+    t = weeks.set_index("week_start")["t"]
+
+    f = m["fact_forecast"][m["fact_forecast"]["week_start"].isin(t.index)]
+    c = m["fact_capacity"]
+    ids = pd.concat(["order|" + f["sku"] + "|" + f["channel"].map(cust),
+                     "capacity||RENO/" + c["line_id"]], ignore_index=True)
+    week = pd.concat([f["week_start"], c["week_start"]], ignore_index=True).map(t)
+    qty = pd.concat([f["forecast_units"], c["capacity_units"]], ignore_index=True)
+    if week.isna().any():
+        raise ValueError("arrival outside the plan horizon")
+    unknown = set(ids) - set(resources["resource_id"])
+    if unknown:
+        raise ValueError(f"arrivals: no resource for {sorted(unknown)[:3]}")
+    a = qty.groupby([ids.values, week.astype(int).values]).sum().unstack(fill_value=0)
+    return a.reindex(index=resources["resource_id"], columns=weeks["t"], fill_value=0)
+
+
+def build_object(m: dict) -> rtn.RTN:
+    items = m["dim_sku"].rename(columns={"sku": "item"})
+    locations = m["dim_location"]
+    weeks = (m["dim_week"][m["dim_week"]["in_plan_horizon"]]
+             .rename(columns={"week_idx": "t"})[["t", "week_start"]].reset_index(drop=True))
+    resources = rtn.generate_resources(items, locations)
+    tasks, arrows = rtn.generate_tasks(build_routing(m["dim_sku"]), build_routes(), items, locations)
+    obj = rtn.RTN(items=items, locations=locations, weeks=weeks,
+                  resources=resources, tasks=tasks, arrows=arrows,
+                  opening=build_opening(m, resources),
+                  arrivals=build_arrivals(m, resources, weeks))
+    rtn.validate(obj)
+    return obj

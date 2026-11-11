@@ -4,5 +4,6 @@ scipy==1.13.1      # LP solver (HiGHS, bundled)
 pyarrow==21.0.0    # parquet output
 streamlit==1.50.0
 plotly==7.1.0
+networkx==3.2.1    # graph view of the object (traversal, checks)
 ipykernel          # runs the #%% cells in VS Code
 pytest==8.4.2

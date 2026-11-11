@@ -35,3 +35,8 @@ TRUE_FLAGS = {"true", "y", "yes"}
 FALSE_FLAGS = {"false", "n", "no"}
 
 CHANNELS = ("dtc", "dealer", "commercial")
+
+# ASSUMPTIONS (no data on either): a bike built in a week can ship that week;
+# a Reno -> Columbus transfer takes one week.
+BUILD_WEEKS = 0
+TRANSFER_WEEKS = 1

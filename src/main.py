@@ -2,10 +2,12 @@
 # %% setup
 import pandas as pd
 
-from redwheel import aux_fns, read
+from redwheel import aux_fns, read, rtn
+from redwheel.config import CHANNELS
 from redwheel.utils import DQ
 
-pd.set_option("display.width", 140)
+pd.set_option("display.width", 160)
+pd.set_option("display.max_columns", 20)
 
 # %% 1.1 orders: read three channels, union, flag backlog
 orders = aux_fns.union_orders(read.read_dtc(), read.read_dealer(), read.read_commercial())
@@ -62,6 +64,7 @@ capacity.groupby(["line_id", fy]).capacity_units.agg(["min", "max"]).unstack()
 dim_sku = aux_fns.build_dim_sku(orders)
 dim_line = aux_fns.build_dim_line(dim_sku)
 dim_week = aux_fns.build_dim_week(forecast)
+dim_location = aux_fns.build_dim_location(dim_line)
 dim_policy = aux_fns.build_dim_policy()
 
 print("every fact sku in dim_sku:",
@@ -69,6 +72,7 @@ print("every fact sku in dim_sku:",
 print("every capacity line in dim_line:", set(capacity.line_id) <= set(dim_line.line_id))
 print("plan weeks:", int(dim_week.in_plan_horizon.sum()), "| total weeks:", len(dim_week))
 print(dim_line, "\n", dim_policy)
+print(dim_location[["location_id", "location_class", "parent", "ours"]])
 dim_sku
 
 # %% 1.5 opening position: nettable on-hand - backlog, per sku
@@ -78,3 +82,42 @@ opening
 
 # %% data-quality log
 pd.DataFrame.from_dict(DQ, orient="index")
+
+# %% 2.1 the object: descriptions (item, location, week)
+m = {"fact_orders": orders, "fact_inventory": inventory, "fact_capacity": capacity,
+     "fact_forecast": forecast, "dim_sku": dim_sku, "dim_location": dim_location}
+items = dim_sku.rename(columns={"sku": "item"})
+weeks = (dim_week[dim_week.in_plan_horizon].rename(columns={"week_idx": "t"})[["t", "week_start"]]
+         .reset_index(drop=True))
+print(len(items), "items |", len(dim_location), "locations |", len(weeks), "weeks:",
+      weeks.week_start.iloc[0].date(), "->", weeks.week_start.iloc[-1].date())
+
+# %% 2.2 resources: generated from the location classes
+resources = rtn.generate_resources(items, dim_location)
+print(len(resources), "resources")
+resources.groupby(["kind", "location"]).size().unstack(fill_value=0)
+
+# %% 2.3 tasks + arrows: generated from what is built where and what can go where
+routing, routes = aux_fns.build_routing(dim_sku), aux_fns.build_routes()
+tasks, arrows = rtn.generate_tasks(routing, routes, items, dim_location)
+print(routes, "\n")
+print(len(tasks), "tasks", tasks.kind.value_counts().to_dict(), "|", len(arrows), "arrows")
+arrows[arrows.task_id.str.contains("RW-9304")]          # every arrow touching one SKU
+
+# %% 2.4 numbers: opening levels and weekly arrivals
+obj = rtn.RTN(items=items, locations=dim_location, weeks=weeks,
+              resources=resources, tasks=tasks, arrows=arrows,
+              opening=aux_fns.build_opening(m, resources),
+              arrivals=aux_fns.build_arrivals(m, resources, weeks))
+rtn.validate(obj)
+kind_loc = resources.set_index("resource_id")[["kind", "location"]]
+print("arrivals: forecast", int(obj.arrivals[kind_loc.kind == "order"].values.sum()),
+      "| capacity", int(obj.arrivals[kind_loc.kind == "capacity"].values.sum()))
+obj.opening.groupby([kind_loc.kind, kind_loc.location]).sum().unstack(fill_value=0)
+
+# %% 2.5 run the equation with no plan: nothing built, nothing shipped
+X = rtn.levels(obj)
+npos = rtn.net_position(obj, X)
+print("opening net position matches 1.5:",
+      npos[0].astype(int).equals(opening.set_index("sku").net0.rename_axis("item")))
+npos[[0, 1, 13, 26, 52, 121]].astype(int)                # weeks 0, 1, 13, 26, 52, 121
