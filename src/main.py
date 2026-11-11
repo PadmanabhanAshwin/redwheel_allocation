@@ -121,3 +121,5 @@ npos = rtn.net_position(obj, X)
 print("opening net position matches 1.5:",
       npos[0].astype(int).equals(opening.set_index("sku").net0.rename_axis("item")))
 npos[[0, 1, 13, 26, 52, 121]].astype(int)                # weeks 0, 1, 13, 26, 52, 121
+
+# %%
