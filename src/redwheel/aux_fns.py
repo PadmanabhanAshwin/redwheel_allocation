@@ -153,15 +153,17 @@ def build_master() -> dict[str, pd.DataFrame]:
 
 # ---------- 2 the object ----------
 
-def build_routing(dim_sku: pd.DataFrame, build_weeks: int = BUILD_WEEKS) -> pd.DataFrame:
+def build_routing(dim_sku: pd.DataFrame, build_weeks: int | dict = BUILD_WEEKS) -> pd.DataFrame:
     """What is built where. FACT: a sku's class + trim match exactly one line.
-    ASSUMPTION: all lines are at Reno; one unit of line capacity per bike."""
+    ASSUMPTION: all lines are at Reno; one unit of line capacity per bike.
+    build_weeks: one value for every line, or {line_id: weeks}."""
+    delay = dim_sku["line_id"].map(build_weeks) if isinstance(build_weeks, dict) else build_weeks
     return pd.DataFrame({
         "item": dim_sku["sku"],
         "line": "RENO/" + dim_sku["line_id"],
         "output": "RENO",
         "capacity_per_unit": 1,
-        "delay": build_weeks,
+        "delay": delay,
     })
 
 
@@ -388,7 +390,7 @@ def utilisation_by_year(obj: rtn.RTN, X: pd.DataFrame) -> pd.DataFrame:
     return pd.concat({"share_used": used, "weeks_full": full}, axis=1)
 
 
-def build_object(m: dict, build_weeks: int = BUILD_WEEKS, transfer_weeks: int = TRANSFER_WEEKS) -> rtn.RTN:
+def build_object(m: dict, build_weeks: int | dict = BUILD_WEEKS, transfer_weeks: int = TRANSFER_WEEKS) -> rtn.RTN:
     items = m["dim_sku"].rename(columns={"sku": "item"})
     locations = m["dim_location"]
     weeks = (m["dim_week"][m["dim_week"]["in_plan_horizon"]]

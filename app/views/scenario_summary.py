@@ -1,7 +1,7 @@
 """A scenario's summary: what it is, its rules, its results, and the plan period by period."""
 import streamlit as st
 
-from redwheel import scenarios as sc
+from redwheel import priors, scenarios as sc
 from ui import (GRANULARITY, HIGHLIGHT_BG, LINES, LINE_NAME, ORDER, SKU, SKUS_BY_LINE, fmt_date, grid_view, plan_grid,
                 scenario_header, scenario_view, sku_label)
 
@@ -50,6 +50,18 @@ def render(key: str):
                  hide_index=True, width="stretch")
     st.caption("Planning prior: a choice Redwheel can change. Lead time: physical. The rest: the brief, the model, or a "
                "stated assumption." + (" Highlighted: changed from scenario A." if vs else ""))
+    with st.expander("Planning priors table: every setting this run reads"):
+        t = priors.describe(V["case"].priors)
+        base_t = sc.CASES[BASE].priors
+        diff = (t["value"].astype(str).values != base_t["value"].astype(str).values) if vs else [False] * len(t)
+        st.dataframe(t.rename(columns={"prior": "Prior", "applies_to": "Applies to", "value": "Value",
+                                       "from_date": "From", "meaning": "Meaning", "kind": "Kind"})
+                     .style.apply(lambda col: [f"background-color: {HIGHLIGHT_BG}; font-weight: 600" if d else ""
+                                               for d in diff], axis=0),
+                     hide_index=True, width="stretch", height=(len(t) + 1) * 35 + 3)
+        st.caption("The rules above are written from this table. A run checks the table against the network first and "
+                   "refuses settings the network cannot carry out." + (" Highlighted: changed from scenario A." if vs
+                                                                       else ""))
 
     # ---------------- the plan, period by period ----------------
     st.subheader("Summarized Plan")
@@ -66,4 +78,5 @@ def render(key: str):
                "inventory: at period end (net = on hand " + ("+ in transit " if transit else "") + "− open orders). "
                "% SKUs @ nominal inv.: share of SKUs at their weeks-of-supply target"
                + (" at every stock site" if V["multi"] else "") + "."
-               + (" A bike built in one week reaches Reno stock the next." if V["case"].build_weeks else ""))
+               + (" Builds count in the week the line runs; the bike reaches Reno stock after the build time."
+                  if any(V["case"].build_weeks.values()) else ""))

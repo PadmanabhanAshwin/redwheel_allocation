@@ -42,3 +42,13 @@ def test_base_scorecard(r):
     assert int(r["report"]["weeks_below"].sum()) == 278
     assert str(r["report"]["held_from_date"].max().date()) == "2027-09-06"
     assert aux_fns.plan_checks(r)["pass"].all()
+
+
+def test_base_case_through_its_priors_table():
+    """Scenario A runs from its priors table through the same path as every scenario, and gives the frozen plan."""
+    from redwheel import scenarios as sc
+    b = sc.run_case(sc.CASE_A)["builds"].copy()
+    b.index = b.index.str.split("|").str[1]
+    assert b.sum(axis=1).astype(int).to_dict() == BUILT
+    weeks = np.arange(1, b.shape[1] + 1)
+    assert {s: int((b.loc[s].values * weeks).sum()) for s in b.index} == TIMING

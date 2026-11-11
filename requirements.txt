@@ -7,3 +7,4 @@ plotly==7.1.0
 networkx==3.2.1    # graph view of the object (traversal, checks)
 ipykernel          # runs the #%% cells in VS Code
 pytest==8.4.2
+anthropic==0.125.0 # LLM proposals (redwheel.llm); credentials from the environment or `ant auth login`

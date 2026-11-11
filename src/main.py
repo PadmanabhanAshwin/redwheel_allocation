@@ -165,3 +165,5 @@ print("total built: LP", round(plan.runs.values.sum()), "| rounded", int(builds.
 
 # the build plan: units per line per week (first 8 weeks shown)
 builds.groupby(builds.index.str.split("|").str[2]).sum().loc[:, 1:8]
+
+#%%

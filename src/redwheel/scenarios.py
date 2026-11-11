@@ -1,8 +1,8 @@
-"""Scenarios: a case is a named set of rules; the same object and solver run each one.
+"""Scenarios: a case is a name plus a planning-priors table; the same network and solver run each one.
 
-Scenario A is the base case and runs through `aux_fns.run_plan` untouched.
-Other cases run through `run_case`: lead times go into the object, the routing rule defines
-which stock faces which demand (pools), and the LP decides builds and transfers.
+`run_case` reads only the table: lead times go into the network's delays, the routing rule defines which stock
+faces which demand (pools), targets set what the plan aims for, and the LP decides what the table says it decides.
+Scenario A, the base case, runs the same way and reproduces the frozen base plan exactly (tests/test_base_case.py).
 """
 from __future__ import annotations
 
@@ -12,34 +12,54 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 
-from redwheel import aux_fns, engine, rtn
+from redwheel import aux_fns, engine, priors, rtn
+from redwheel.config import LINES
 
 SITES = ("RENO", "CMH")
 CUSTOMERS = ("WEB", "DEALERS", "COMMERCIAL")
 ALL_ROUTES = tuple((s, c) for s in SITES for c in CUSTOMERS)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Case:
     key: str
     name: str
-    build_weeks: int                 # weeks from using line capacity to stock at the factory
-    transfer_weeks: int              # weeks Reno -> PDC
-    ship_routes: tuple               # routing rule (a planning prior): allowed (stock site, customer) pairs
-    decides: tuple                   # task kinds the LP may run
+    priors: pd.DataFrame             # every setting the run uses (see redwheel.priors)
     summary: str = ""                # the scenario in one or two sentences
+    parent: str = ""                 # the scenario this one was copied from
 
     @property
     def is_base(self) -> bool:
         return self.key == "A"
 
+    @property
+    def settings(self) -> dict:
+        return priors.settings(self.priors)
 
-CASE_A = Case("A", "Scenario A · base case", build_weeks=0, transfer_weeks=1,
-              ship_routes=ALL_ROUTES, decides=("make",),
+    @property
+    def ship_routes(self) -> tuple:  # allowed (stock site, customer) pairs
+        return self.settings["ship_routes"]
+
+    @property
+    def decides(self) -> tuple:      # task kinds the LP decides
+        return self.settings["decides"]
+
+    @property
+    def build_weeks(self) -> dict:   # {line: weeks from using line capacity to stock at Reno}
+        return self.settings["build_weeks"]
+
+    @property
+    def transfer_weeks(self) -> int:
+        return self.settings["transfer_weeks"]
+
+
+CASE_A = Case("A", "Scenario A · base case",
+              priors.table(ALL_ROUTES, build_weeks=0, transfer_weeks=1, decides=("make",), lines=LINES),
               summary="Stock at Reno and the PDC is pooled against every order, a bike can ship the week it is "
                       "built, and the plan decides builds only.")
-CASE_B = Case("B", "Scenario B · web via PDC, others direct", build_weeks=1, transfer_weeks=1,
-              ship_routes=(("RENO", "DEALERS"), ("RENO", "COMMERCIAL"), ("CMH", "WEB")), decides=("make", "move"),
+CASE_B = Case("B", "Scenario B · web via PDC, others direct",
+              priors.table((("RENO", "DEALERS"), ("RENO", "COMMERCIAL"), ("CMH", "WEB")), build_weeks=1,
+                           transfer_weeks=1, decides=("make", "move"), lines=LINES),
               summary="Web orders ship from the PDC, which Reno restocks in a week; dealer and commercial orders ship "
                       "direct from Reno. A bike takes a week to build. The plan decides builds and transfers.")
 CASES = {c.key: c for c in (CASE_A, CASE_B)}
@@ -161,27 +181,23 @@ def _finish(case: Case, m: dict, obj: rtn.RTN, pool_def: dict, pos: dict, runs: 
 
 
 def run_case(case: Case) -> dict:
+    """Run one scenario from its priors table. Refuses a table that does not fit the network."""
     m = aux_fns.build_master()
-    pool_def = pools(case.ship_routes)
-    sku = m["dim_sku"].set_index("sku")
-    if case.is_base:                                             # the frozen base case, measured per position
-        r = aux_fns.run_plan()
-        obj = r["obj"]
-        pos = positions(obj, pool_def)
-        demand = position_demand(m, pool_def)
-        tw = pd.DataFrame({t: [r["target_wos"].at[k[0], t] for k in pos] for t in r["target_wos"].columns},
-                          index=demand.index)
-        return _finish(case, m, obj, pool_def, pos, r["builds"].astype(float), r["lp"], demand, tw,
-                       engine.forward_sum(demand, tw))
-    obj = aux_fns.build_object(m, case.build_weeks, case.transfer_weeks)
+    st = case.settings
+    obj = aux_fns.build_object(m, st["build_weeks"], st["transfer_weeks"])
+    errs = priors.validate(case.priors, obj)
+    if errs:
+        raise ValueError(f"scenario {case.key}: " + "; ".join(errs))
     H = len(obj.weeks)
+    pool_def = pools(st["ship_routes"])
+    sku = m["dim_sku"].set_index("sku")
     pos = positions(obj, pool_def)
     demand = position_demand(m, pool_def)
-    item_target = aux_fns.target_wos(m, obj.weeks)
+    item_target = aux_fns.target_wos(m | {"dim_policy": st["dim_policy"]}, obj.weeks)
     tw = pd.DataFrame({t: [item_target.at[k[0], t] for k in pos] for t in item_target.columns}, index=demand.index)
     tu = engine.forward_sum(demand, tw)
     keys = list(pos)
-    free = list(obj.tasks.loc[obj.tasks["kind"].isin(case.decides), "task_id"])
+    free = list(obj.tasks.loc[obj.tasks["kind"].isin(st["decides"]), "task_id"])
     lp = engine.decide(obj, free, tu.loc[keys], demand.loc[keys, list(range(1, H + 1))].mean(axis=1),
                        pd.Series({k: sku.at[k[0], "line_id"] for k in keys}), positions=pos, w_run=1e-6)
     make_ids = [k for k in free if k.startswith("make|")]
@@ -195,6 +211,7 @@ def run_case(case: Case) -> dict:
 SITE_NAME = {"RENO": "Reno", "CMH": "the PDC (Columbus)"}
 CUSTOMER_NAME = {"WEB": "web", "DEALERS": "dealer", "COMMERCIAL": "commercial"}
 SHORT = {"RENO": "Reno", "CMH": "PDC"}
+TARGET_NAME = {"road": "road", "mtb_base": "MTB base", "mtb_carbon": "MTB carbon"}
 
 
 def rules(case: Case) -> pd.DataFrame:
@@ -207,11 +224,20 @@ def rules(case: Case) -> pd.DataFrame:
                "; ".join(f"{SHORT[p['stock'][0]]} stock against {' + '.join(CUSTOMER_NAME[c] for c in p['customers'])} demand"
                          for p in pool_def.values()))
     wk = lambda n: "same week" if n == 0 else f"{n} week" + ("s" if n > 1 else "")
+    bw = case.build_weeks
+    build = (wk(next(iter(bw.values()))) if len(set(bw.values())) == 1 else
+             "; ".join(f"{ln} {wk(n)}" for ln, n in bw.items()))
+    pol = case.settings["dim_policy"].sort_values("effective_from", kind="stable")
+    targets = "; ".join(
+        TARGET_NAME.get(g, g) + " " + ", ".join(f"{w:g}" + ("" if d <= pd.Timestamp(aux_fns.PLAN_START) else
+                                                          f" from {d.strftime('%-d %b %Y')}")
+                                                for d, w in zip(rows["effective_from"], rows["target_wos"]))
+        for g, rows in pol.groupby("target_group", sort=False))
     return pd.DataFrame([
         ("Routing rule", routing, "planning prior"),
         ("Weeks of supply counted on", counted, "planning prior"),
-        ("Targets (weeks of supply)", "road 8, 10 from 3 Jan 2028; MTB base 12; MTB carbon 15", "brief"),
-        ("Build time", wk(case.build_weeks), "lead time"),
+        ("Targets (weeks of supply)", targets, "brief"),
+        ("Build time", build, "lead time"),
         ("Reno → PDC transfer", wk(case.transfer_weeks), "lead time"),
         ("The plan decides", " and ".join({"make": "builds", "move": "transfers to the PDC"}[k] for k in case.decides),
          "model"),
@@ -219,9 +245,9 @@ def rules(case: Case) -> pd.DataFrame:
     ], columns=["Rule", "Setting", "Kind"])
 
 
-def lead_weeks(case: Case, pool: dict) -> int:
-    """Weeks from using line capacity to stock that can ship from this pool."""
-    return case.build_weeks + (0 if "RENO" in pool["stock"] else case.transfer_weeks)
+def lead_weeks(case: Case, pool: dict, line: str) -> int:
+    """Weeks from using a line's capacity to stock that can ship from this pool."""
+    return case.build_weeks[line] + (0 if "RENO" in pool["stock"] else case.transfer_weeks)
 
 
 def held_from(ok: pd.DataFrame) -> pd.Series:
@@ -276,7 +302,7 @@ def checks(R: dict) -> pd.DataFrame:
     below = ~R["at_target"]
     unexplained = 0
     for key in below.index:
-        lead = lead_weeks(case, R["pools"][key[1]])
+        lead = lead_weeks(case, R["pools"][key[1]], R["line"][key])
         for t in below.columns[below.loc[key]]:
             if t - lead >= 1 and not full_to.at[f"capacity||RENO/{R['line'][key]}", t - lead]:
                 unexplained += 1

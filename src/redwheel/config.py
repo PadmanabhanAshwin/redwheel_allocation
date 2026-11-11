@@ -36,6 +36,9 @@ FALSE_FLAGS = {"false", "n", "no"}
 
 CHANNELS = ("dtc", "dealer", "commercial")
 
+# FACT: the four production lines in capacity_plan.csv (class-trim).
+LINES = ("road-base", "road-carbon", "mtb-base", "mtb-carbon")
+
 # ASSUMPTIONS (no data on either): a bike built in a week can ship that week;
 # a Reno -> Columbus transfer takes one week.
 BUILD_WEEKS = 0

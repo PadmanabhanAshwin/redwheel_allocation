@@ -56,10 +56,15 @@ def pool_label(pool: str) -> str:
 
 @st.cache_resource(show_spinner=False)
 def scenario_view(key: str) -> dict:
+    """The view of a built-in scenario (see view_of)."""
+    return view_of(load_cases()[key])
+
+
+def view_of(R: dict) -> dict:
     """One scenario's plan per SKU, the same shape for every scenario. A position is one SKU at one stock site
     (scenario A pools both sites); positions plus stock in transit add up to the SKU. A SKU is at target when
     every one of its positions is."""
-    R = load_cases()[key]
+    key = R["case"].key
     f = R["flows"]
     weeks = list(range(1, H + 1))
 

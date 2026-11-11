@@ -92,7 +92,8 @@ def test_the_factory_rolls_up_to_all_demand(b, m):
     # and total net = opening + bikes landed (built one week earlier) - forecast
     built = runs.loc[make].copy()
     built.index = built.index.str.split("|").str[1]
-    landed = built.shift(sc.CASE_B.build_weeks, axis=1, fill_value=0).cumsum(axis=1)
+    assert set(sc.CASE_B.build_weeks.values()) == {1}
+    landed = built.shift(1, axis=1, fill_value=0).cumsum(axis=1)
     demand = aux_fns.forecast_by_item(m).loc[:, 1:H].cumsum(axis=1)
     expected = (landed - demand).add(pd.Series(EXPECTED_NET0), axis=0)
     assert np.abs(total.loc[expected.index, 1:].values - expected.values).max() == 0
