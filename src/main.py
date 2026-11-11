@@ -167,19 +167,3 @@ print("total built: LP", round(plan.runs.values.sum()), "| rounded", int(builds.
 
 # the build plan: units per line per week (first 8 weeks shown)
 builds.groupby(builds.index.str.split("|").str[2]).sum().loc[:, 1:8]
-
-# %% 4.1 report: is the plan hitting its targets, from when, vs doing nothing
-report = aux_fns.target_report(m | {"dim_sku": dim_sku}, obj, X_round, X, target_units, target, demand)
-report
-
-# %% 4.2 report: group weeks of supply (lowest SKU in the group) against target
-wos_round = rtn.weeks_of_supply(rtn.net_position(obj, X_round), demand).loc[target.index]
-group = aux_fns.group_wos(wos_round, dim_sku)
-group_target = target.groupby(dim_sku.set_index("sku").target_group).first()
-show = [1, 13, 26, 47, 48, 53, 70, 121]
-pd.concat({"plan": group[show].round(1), "target": group_target[show]}, axis=1)
-
-# %% 4.3 report: line utilisation by fiscal year, and the build plan (the deliverable)
-print(aux_fns.utilisation_by_year(obj, X_round), "\n")
-build_plan = aux_fns.build_plan_table(obj, builds)
-build_plan.head(10)

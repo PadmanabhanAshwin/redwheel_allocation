@@ -19,6 +19,7 @@ def read_dtc() -> pd.DataFrame:
         "order_id": r["order_id"],
         "party_id": r["customer_id"],
         "party_name": None,                      # web customers have no name
+        "party_type": "Consumer",
         "state": r["ship_to_state"],
         "order_date": pd.to_datetime(r["order_date"], format="%Y-%m-%d"),
         "need_by_date": pd.NaT,                  # no requested date on web orders
@@ -40,6 +41,7 @@ def read_dealer() -> pd.DataFrame:
         "order_id": r["Dealer Order #"],
         "party_id": r["Dealer ID"],
         "party_name": r["Dealer Name"],
+        "party_type": "Dealer",
         "state": r["State"],
         "order_date": pd.to_datetime(r["Order Date"], format="%m/%d/%Y"),
         "need_by_date": pd.to_datetime(r["Requested Ship Date"], format="%m/%d/%Y"),
@@ -61,6 +63,7 @@ def read_commercial() -> pd.DataFrame:
         "order_id": r["PO Number"],
         "party_id": r["Account"],                # no account id in the file; name is the key
         "party_name": r["Account"],
+        "party_type": r["Account Type"],
         "state": None,                           # no location in the file
         "order_date": pd.to_datetime(r["PO Date"], format="%d-%b-%Y"),
         "need_by_date": pd.to_datetime(r["Need By"], format="%d-%b-%Y"),

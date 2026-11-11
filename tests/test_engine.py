@@ -159,3 +159,54 @@ def test_rounding_adds_no_missed_targets_and_proof_holds(obj, plan, rounded):
     for s in below.index:
         for t in below.columns[below.loc[s]]:
             assert full_so_far.at[f"capacity||RENO/{line[s]}", t], (s, t)
+
+
+# ---------------- positions and transfers, by hand ----------------
+# Tiny chain, customer served from the DC only. Opening: 5 at the factory, 0 at the DC, 3 ordered; 4 more
+# ordered in week 1. So the DC position (DC stock - orders) is -7 until stock arrives.
+
+def decide_dc(route_delay, target, w_run=1e-6):
+    obj = tiny(route_delay=route_delay)
+    pos = {"A@D": {"inventory|A|D": 1.0, "order|A|C": -1.0}}
+    tgt = pd.DataFrame([target], index=["A@D"], columns=[1, 2, 3, 4], dtype=float)
+    p = engine.decide(obj, ["make|A|L", "move|A|F>D"], tgt, pd.Series({"A@D": 1.0}), pd.Series({"A@D": "L"}),
+                      positions=pos, w_run=w_run)
+    return obj, p
+
+
+def test_transfer_lead_time_delays_when_stock_counts():
+    """DC target 6 from week 3. Needs 13 at the DC (7 owed + 6): 5 on hand + 8 built, moved in week 1,
+    arriving week 3. Weeks 1-2 cannot be helped: short 7 each."""
+    obj, p = decide_dc(route_delay=2, target=[0, 0, 6, 6])
+    assert p.runs.loc["make|A|L"].round(6).tolist() == [8, 0, 0, 0]
+    assert p.runs.loc["move|A|F>D"].round(6).tolist() == [13, 0, 0, 0]
+    assert p.short.loc["A@D"].round(6).tolist() == [7, 7, 0, 0]
+    X = rtn.levels(obj, p.runs)
+    assert list(X.loc["inventory|A|D"].round(6)) == [0, 0, 0, 13, 13]         # lands in week 3
+    assert list(X.loc["inventory|A|F>D"].round(6)) == [0, 13, 13, 0, 0]       # in transit weeks 1-2
+    assert np.abs(X.values - p.levels.values).max() < 1e-9
+
+
+def test_no_transfer_lead_time_no_delay():
+    """Same chain with an instant transfer: the same 8 built and 13 moved, and the target is met from week 1."""
+    _, p = decide_dc(route_delay=0, target=[6, 6, 6, 6])
+    assert p.runs.loc["make|A|L"].round(6).tolist() == [8, 0, 0, 0]
+    assert p.runs.loc["move|A|F>D"].round(6).tolist() == [13, 0, 0, 0]
+    assert p.short.loc["A@D"].round(6).max() == 0
+
+
+def test_cannot_move_stock_that_is_not_there():
+    """Target far above what exists: the LP may move only what the factory holds (5 + capacity 10 a week)."""
+    obj, p = decide_dc(route_delay=0, target=[100, 100, 100, 100])
+    X = rtn.levels(obj, p.runs)
+    assert X.loc["inventory|A|F"].min() >= -1e-9
+    assert p.runs.loc["move|A|F>D"].round(6).tolist() == [15, 10, 10, 10]
+
+
+def test_without_a_run_cost_idle_stock_is_free():
+    """Why w_run exists: factory stock is in no position here, so with w_run = 0 the LP may build bikes
+    nobody needs. With it, builds stop at what the target requires."""
+    _, free_builds = decide_dc(route_delay=2, target=[0, 0, 6, 6], w_run=0.0)
+    _, costed = decide_dc(route_delay=2, target=[0, 0, 6, 6], w_run=1e-6)
+    assert costed.runs.loc["make|A|L"].sum() == pytest.approx(8)
+    assert free_builds.runs.loc["make|A|L"].sum() >= 8 - 1e-9          # may be more: nothing stops it

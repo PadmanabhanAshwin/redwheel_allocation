@@ -153,7 +153,7 @@ def build_master() -> dict[str, pd.DataFrame]:
 
 # ---------- 2 the object ----------
 
-def build_routing(dim_sku: pd.DataFrame) -> pd.DataFrame:
+def build_routing(dim_sku: pd.DataFrame, build_weeks: int = BUILD_WEEKS) -> pd.DataFrame:
     """What is built where. FACT: a sku's class + trim match exactly one line.
     ASSUMPTION: all lines are at Reno; one unit of line capacity per bike."""
     return pd.DataFrame({
@@ -161,14 +161,14 @@ def build_routing(dim_sku: pd.DataFrame) -> pd.DataFrame:
         "line": "RENO/" + dim_sku["line_id"],
         "output": "RENO",
         "capacity_per_unit": 1,
-        "delay": BUILD_WEEKS,
+        "delay": build_weeks,
     })
 
 
-def build_routes() -> pd.DataFrame:
+def build_routes(transfer_weeks: int = TRANSFER_WEEKS) -> pd.DataFrame:
     """What can go where. Every physically possible route; which ones to *use* is a planning prior.
     ASSUMPTION: Reno -> Columbus takes TRANSFER_WEEKS; either site can ship to every customer."""
-    rows = [("RENO", "CMH", TRANSFER_WEEKS)]
+    rows = [("RENO", "CMH", transfer_weeks)]
     rows += [(site, cust, 0) for site in ("RENO", "CMH") for cust in CUSTOMER_LOCATION.values()]
     return pd.DataFrame(rows, columns=["origin", "destination", "delay"])
 
@@ -239,6 +239,68 @@ def target_wos(m: dict, weeks: pd.DataFrame) -> pd.DataFrame:
         current = p[p["effective_from"] <= ws].groupby("target_group")["target_wos"].last()
         out[t] = groups.map(current).to_numpy()
     return out
+
+
+# ---------- demand sources ----------
+
+# FACT: site coordinates are public geography. ASSUMPTION: a state is served by the nearer site
+# (straight-line distance from the state's approximate geographic centre). Used only to describe
+# where demand is; the base plan does not use it.
+SITE_COORD = {"RENO": (39.53, -119.81), "CMH": (39.96, -83.00)}
+STATE_CENTRE = {
+    "OR": (44.0, -120.5), "MN": (46.3, -94.3), "WA": (47.4, -120.5), "CO": (39.0, -105.5), "MA": (42.3, -71.8),
+    "UT": (39.3, -111.7), "CA": (37.2, -119.4), "GA": (32.7, -83.4), "VT": (44.0, -72.7), "MT": (47.0, -109.6),
+    "FL": (28.6, -82.4), "MI": (44.3, -85.4), "PA": (40.9, -77.8), "AZ": (34.3, -111.7), "NY": (42.9, -75.5),
+    "NC": (35.6, -79.4), "ID": (44.4, -114.6), "TX": (31.5, -99.3), "NM": (34.4, -106.1), "IL": (40.0, -89.2),
+}
+
+
+def _km(a: tuple, b: tuple) -> float:
+    """Great-circle distance."""
+    la1, lo1, la2, lo2 = map(np.radians, (*a, *b))
+    h = np.sin((la2 - la1) / 2) ** 2 + np.cos(la1) * np.cos(la2) * np.sin((lo2 - lo1) / 2) ** 2
+    return float(6371 * 2 * np.arcsin(np.sqrt(h)))
+
+
+def nearest_site(state: str) -> str:
+    if state not in STATE_CENTRE:
+        raise ValueError(f"no coordinates for state {state}")
+    return min(SITE_COORD, key=lambda site: _km(STATE_CENTRE[state], SITE_COORD[site]))
+
+
+def demand_sources(m: dict) -> dict:
+    """Where demand comes from: channel, geography, customer. History = the 52 weeks of orders."""
+    o, f = m["fact_orders"], m["fact_forecast"]
+    line = m["dim_sku"].set_index("sku")["line_id"]
+    plan_weeks = m["dim_week"].loc[m["dim_week"]["in_plan_horizon"], "week_start"]
+    first52 = plan_weeks.iloc[:52]
+    hist = o.groupby("channel")["qty"].sum()
+    by_channel = pd.DataFrame({
+        "orders_last_52": hist,
+        "order_lines": o.groupby("channel").size(),
+        "forecast_next_52": f[f["week_start"].isin(first52)].groupby("channel")["forecast_units"].sum(),
+        "forecast_horizon": f[f["week_start"].isin(plan_weeks)].groupby("channel")["forecast_units"].sum(),
+    })
+    wk = o["order_date"] - pd.to_timedelta(o["order_date"].dt.dayofweek, unit="D")
+    located = o[o["state"].notna()]
+    by_state = located.pivot_table(index="state", columns="channel", values="qty", aggfunc="sum", fill_value=0)
+    by_state["site"] = [nearest_site(s) for s in by_state.index]
+    dealers = (o[o["channel"] == "dealer"].groupby(["party_id", "party_name", "state"], as_index=False)["qty"].sum()
+               .sort_values("qty", ascending=False).reset_index(drop=True))
+    return {
+        "by_channel": by_channel,
+        "weekly_orders": o.groupby([wk.rename("week"), "channel"])["qty"].sum().unstack(fill_value=0),
+        "weekly_forecast": (f[f["week_start"].isin(plan_weeks)].groupby(["week_start", "channel"])["forecast_units"]
+                            .sum().unstack(fill_value=0)),
+        "by_state": by_state,
+        "line_by_channel": o.assign(line=o["sku"].map(line)).pivot_table(index="line", columns="channel",
+                                                                         values="qty", aggfunc="sum", fill_value=0),
+        "dealers": dealers,
+        "commercial_types": (o[o["channel"] == "commercial"].groupby("party_type")["qty"]
+                             .agg(units="sum", order_lines="size").sort_values("units", ascending=False)),
+        "commercial_accounts": int(o.loc[o["channel"] == "commercial", "party_id"].nunique()),
+        "total": int(o["qty"].sum()),
+    }
 
 
 # ---------- 4 report ----------
@@ -326,13 +388,14 @@ def utilisation_by_year(obj: rtn.RTN, X: pd.DataFrame) -> pd.DataFrame:
     return pd.concat({"share_used": used, "weeks_full": full}, axis=1)
 
 
-def build_object(m: dict) -> rtn.RTN:
+def build_object(m: dict, build_weeks: int = BUILD_WEEKS, transfer_weeks: int = TRANSFER_WEEKS) -> rtn.RTN:
     items = m["dim_sku"].rename(columns={"sku": "item"})
     locations = m["dim_location"]
     weeks = (m["dim_week"][m["dim_week"]["in_plan_horizon"]]
              .rename(columns={"week_idx": "t"})[["t", "week_start"]].reset_index(drop=True))
     resources = rtn.generate_resources(items, locations)
-    tasks, arrows = rtn.generate_tasks(build_routing(m["dim_sku"]), build_routes(), items, locations)
+    tasks, arrows = rtn.generate_tasks(build_routing(m["dim_sku"], build_weeks), build_routes(transfer_weeks),
+                                       items, locations)
     obj = rtn.RTN(items=items, locations=locations, weeks=weeks,
                   resources=resources, tasks=tasks, arrows=arrows,
                   opening=build_opening(m, resources),

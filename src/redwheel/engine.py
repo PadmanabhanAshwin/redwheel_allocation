@@ -125,8 +125,16 @@ def forward_sum(demand: pd.DataFrame, n: pd.DataFrame) -> pd.DataFrame:
 
 
 def decide(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekly_demand: pd.Series,
-           group: pd.Series, w_worst: float = 1.0, w_short: float = 0.1, w_excess: float = 0.001) -> Plan:
-    """free: task ids the LP may run. target_units: item x t (1..H). group: item -> fairness group."""
+           group: pd.Series, w_worst: float = 1.0, w_short: float = 0.1, w_excess: float = 0.001,
+           positions: dict | None = None, w_run: float = 0.0) -> Plan:
+    """free: task ids the LP may run. target_units: position x t (1..H). group: position -> fairness group.
+
+    A position is what a target is set on. By default there is one per item: all our inventory of the item
+    minus all its orders. `positions` replaces that with {key: {resource_id: sign}}, e.g. one per (item, pool);
+    target_units, weekly_demand and group are then indexed by those keys.
+
+    w_run: a small cost per task run. Needed when some stock is outside every position (e.g. a site that may
+    not ship): without it, building or moving stock there is free and the LP may do it for no reason."""
     H = len(obj.weeks)
     res = obj.resources.reset_index(drop=True)
     items = list(target_units.index)
@@ -171,7 +179,10 @@ def decide(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekly_dem
     # ---- net position, target and fairness rows (<= form) ----
     ours = res["location"].map(obj.locations.set_index("location_id")["ours"]).to_numpy(bool)
     sign = np.where((res["kind"] == "inventory") & ours, 1.0, np.where(res["kind"] == "order", -1.0, 0.0))
-    members = {s: [r for r in range(nR) if res.at[r, "item"] == s and sign[r] != 0] for s in items}
+    if positions is None:
+        members = {s: [(r, sign[r]) for r in range(nR) if res.at[r, "item"] == s and sign[r] != 0] for s in items}
+    else:
+        members = {s: [(int(r_pos[rid]), float(sg)) for rid, sg in positions[s].items()] for s in items}
     rows, cols, vals, b_ub = [], [], [], []
     k = 0
     for si, s in enumerate(items):
@@ -180,12 +191,12 @@ def decide(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekly_dem
         for t in range(1, H + 1):
             tgt = float(target_units.at[s, t])
             # -net - short <= -tgt
-            for r in members[s]:
-                rows.append(k); cols.append(lvl(r, t)); vals.append(-sign[r])
+            for r, sg in members[s]:
+                rows.append(k); cols.append(lvl(r, t)); vals.append(-sg)
             rows.append(k); cols.append(shrt(si, t)); vals.append(-1.0); b_ub.append(-tgt); k += 1
             # net - excess <= tgt
-            for r in members[s]:
-                rows.append(k); cols.append(lvl(r, t)); vals.append(sign[r])
+            for r, sg in members[s]:
+                rows.append(k); cols.append(lvl(r, t)); vals.append(sg)
             rows.append(k); cols.append(exc(si, t)); vals.append(-1.0); b_ub.append(tgt); k += 1
             # short/d - worst <= 0
             rows.append(k); cols.append(shrt(si, t)); vals.append(1.0 / d)
@@ -200,6 +211,7 @@ def decide(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekly_dem
             c[shrt(si, t)] = w_short / d
             c[exc(si, t)] = w_excess / d
     c[o_worst:] = w_worst
+    c[o_run:o_lvl] = w_run
 
     sol = linprog(c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=(0, None), method="highs")
     if sol.status != 0:

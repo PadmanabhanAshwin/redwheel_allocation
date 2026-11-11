@@ -4,15 +4,20 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from redwheel import aux_fns, rtn
+from redwheel import aux_fns, rtn, scenarios
 from redwheel.utils import DQ
 
 # Colour follows the entity: bike size. Black, bronze and gold differ by lightness, so they stay
 # distinguishable without colour vision; every chart also carries a legend.
 SIZE_COLOR = {"S": "#262420", "M": "#8f6b16", "L": "#d9b44a"}
+CHANNELS = ["dealer", "dtc", "commercial"]
+CHANNEL_NAME = {"dealer": "Dealers", "dtc": "Direct-to-consumer", "commercial": "Commercial"}
+CHANNEL_COLOR = {"dealer": "#262420", "dtc": "#d9b44a", "commercial": "#8f6b16"}
+SITE_NAME = {"RENO": "Reno", "CMH": "Columbus"}
 GOOD_BG, BAD_BG = "#e3f1e7", "#fbe4e1"          # status tints, always paired with a text marker
 INK, MUTED, GRID = "#0b0b0b", "#6b6a66", "#e7e6e2"
 HISTORY, FORECAST, CAPACITY, TARGET = "#a3a29c", "#2a78d6", "#0b0b0b", "#0b0b0b"
+CASE_COLOR = {"A": "#262420", "B": "#b8860b"}            # scenario A black, scenario B gold
 LINES = ["road-base", "road-carbon", "mtb-base", "mtb-carbon"]
 LINE_NAME = {"road-base": "Road · base", "road-carbon": "Road · carbon",
              "mtb-base": "MTB · base", "mtb-carbon": "MTB · carbon"}
@@ -23,10 +28,15 @@ GROUP_NAME = {"road": "Road (8 weeks; 10 from Jan 2028)", "mtb_base": "MTB base 
 @st.cache_resource(show_spinner="Running the plan: master data → network → optimisation → whole bikes …")
 def load():
     r = aux_fns.run_plan()
-    return r, aux_fns.plan_checks(r), dict(DQ), aux_fns.compare_plans(r)
+    return r, aux_fns.plan_checks(r), dict(DQ), aux_fns.compare_plans(r), aux_fns.demand_sources(r["m"])
 
 
-r, checks, dq_log, compare = load()
+@st.cache_resource(show_spinner="Running the scenarios …")
+def load_cases():
+    return {k: scenarios.run_case(c) for k, c in scenarios.CASES.items()}
+
+
+r, checks, dq_log, compare, demand_src = load()
 m, obj = r["m"], r["obj"]
 H = len(obj.weeks)
 WEEKS = obj.weeks.set_index("t")["week_start"]

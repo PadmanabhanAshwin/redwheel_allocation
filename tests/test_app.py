@@ -7,8 +7,10 @@ from streamlit.testing.v1 import AppTest
 from redwheel import aux_fns
 
 APP = str(Path(__file__).resolve().parents[1] / "app" / "app.py")
-PAGES = {"views/context.py": "Supply–Demand Context", "views/build_plan.py": "Build Plans",
+PAGES = {"views/context.py": "Supply–Demand Context", "views/demand.py": "Demand Sources",
+         "views/build_plan.py": "Build Plans",
          "views/build_score.py": "Build Score", "views/balance.py": "Inventory Balance by SKU",
+         "views/scenario_list.py": "Scenarios", "views/scenario_compare.py": "Scenario Comparison",
          "views/object_encoding.py": "Object Encoding", "views/validation.py": "Model Validation"}
 
 
