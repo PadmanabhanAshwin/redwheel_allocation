@@ -221,6 +221,89 @@ def build_arrivals(m: dict, resources: pd.DataFrame, weeks: pd.DataFrame) -> pd.
     return a.reindex(index=resources["resource_id"], columns=weeks["t"], fill_value=0)
 
 
+def forecast_by_item(m: dict) -> pd.DataFrame:
+    """Total forecast (all channels) per sku x week index, every forecast week (1..156),
+    including the weeks after the plan horizon that targets near the end look ahead into."""
+    t = m["dim_week"].set_index("week_start")["week_idx"]
+    f = m["fact_forecast"].assign(t=m["fact_forecast"]["week_start"].map(t))
+    return f.pivot_table(index="sku", columns="t", values="forecast_units", aggfunc="sum").rename_axis("item")
+
+
+def target_wos(m: dict, weeks: pd.DataFrame) -> pd.DataFrame:
+    """Target weeks of supply per sku x plan week, from dim_policy (latest row effective that week)."""
+    p = m["dim_policy"].sort_values("effective_from")
+    groups = m["dim_sku"].set_index("sku")["target_group"]
+    out = pd.DataFrame(index=groups.index.rename("item"), columns=weeks["t"], dtype=float)
+    for t, ws in zip(weeks["t"], weeks["week_start"]):
+        current = p[p["effective_from"] <= ws].groupby("target_group")["target_wos"].last()
+        out[t] = groups.map(current).to_numpy()
+    return out
+
+
+# ---------- 4 report ----------
+
+def _held_from(ok: pd.DataFrame) -> pd.Series:
+    """First week from which ok holds every week to the end; NaN if it fails in the last week."""
+    not_ok_last = ok.apply(lambda r: (~r)[~r].index.max() if (~r).any() else 0, axis=1)
+    last = ok.columns.max()
+    return (not_ok_last + 1).where(not_ok_last < last)
+
+
+def target_report(m: dict, obj: rtn.RTN, X: pd.DataFrame, X_base: pd.DataFrame,
+                  target_units: pd.DataFrame, target_wos: pd.DataFrame, demand: pd.DataFrame) -> pd.DataFrame:
+    """Per sku: is the plan hitting its target, from when, and against doing nothing.
+    'Below target' is judged in units (net position < next N weeks of forecast), as in the LP."""
+    weeks = list(target_units.columns)
+    net = rtn.net_position(obj, X).loc[target_units.index]
+    wos = rtn.weeks_of_supply(net, demand)
+    at_target = net[weeks] >= target_units - 1e-6
+    base_at_target = rtn.net_position(obj, X_base).loc[target_units.index, weeks] >= target_units - 1e-6
+    held = _held_from(at_target)
+    date = obj.weeks.set_index("t")["week_start"]
+    once_held = pd.DataFrame({t: t >= held for t in weeks})          # False where never held
+    over = (wos[weeks] - target_wos).where(once_held)
+    sku = m["dim_sku"].set_index("sku")
+    r = pd.DataFrame({
+        "line": sku["line_id"], "group": sku["target_group"],
+        "target_wk1": target_wos[1],
+        "wos_wk1": wos[1].round(1),
+        "first_at_target": at_target.idxmax(axis=1).where(at_target.any(axis=1)),
+        "held_from": held,
+        "held_from_date": held.map(date),
+        "weeks_below": (~at_target).sum(axis=1),
+        "weeks_below_no_plan": (~base_at_target).sum(axis=1),
+        "backlog_cleared_from": _held_from(net[weeks] >= -1e-6),
+        "max_wos_over_target_once_held": over.max(axis=1).round(1),
+    })
+    return r.rename_axis("sku")
+
+
+def group_wos(wos: pd.DataFrame, dim_sku: pd.DataFrame) -> pd.DataFrame:
+    """Lowest sku weeks of supply in each target group: skus do not offset each other."""
+    return wos.groupby(dim_sku.set_index("sku")["target_group"]).min()
+
+
+def build_plan_table(obj: rtn.RTN, builds: pd.DataFrame) -> pd.DataFrame:
+    """The deliverable: units to build per sku per week, long format."""
+    t = builds.stack().rename("units").reset_index()
+    t.columns = ["task_id", "t", "units"]
+    parts = t["task_id"].str.split("|")
+    out = pd.DataFrame({"week_start": t["t"].map(obj.weeks.set_index("t")["week_start"]),
+                        "line": parts.str[2].str.replace("RENO/", "", regex=False),
+                        "sku": parts.str[1], "units": t["units"].astype(int)})
+    return out.sort_values(["week_start", "line", "sku"]).reset_index(drop=True)
+
+
+def utilisation_by_year(obj: rtn.RTN, X: pd.DataFrame) -> pd.DataFrame:
+    u = rtn.utilisation(obj, X)
+    u.index = u.index.str.replace("capacity||RENO/", "", regex=False)
+    ws = obj.weeks.set_index("t")["week_start"]
+    fy = (ws.dt.year - (ws.dt.month < 9)).loc[u.columns]
+    used = u.T.groupby(fy.values).mean().T.round(2)
+    full = (u > 1 - 1e-9).T.groupby(fy.values).sum().T
+    return pd.concat({"share_used": used, "weeks_full": full}, axis=1)
+
+
 def build_object(m: dict) -> rtn.RTN:
     items = m["dim_sku"].rename(columns={"sku": "item"})
     locations = m["dim_location"]

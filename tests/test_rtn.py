@@ -13,7 +13,7 @@ from redwheel import rtn
 H = 4
 
 
-def tiny(route_delay: int = 2) -> rtn.RTN:
+def tiny(route_delay: int = 2, build_delay: int = 0) -> rtn.RTN:
     items = pd.DataFrame({"item": ["A"]})
     locations = pd.DataFrame({
         "location_id": ["F", "L", "D", "F>D", "C"],
@@ -22,7 +22,7 @@ def tiny(route_delay: int = 2) -> rtn.RTN:
         "ours": [True, False, True, True, False],
     })
     weeks = pd.DataFrame({"t": range(1, H + 1), "week_start": pd.date_range("2026-01-05", periods=H, freq="7D")})
-    routing = pd.DataFrame({"item": ["A"], "line": ["L"], "output": ["F"], "capacity_per_unit": [1], "delay": [0]})
+    routing = pd.DataFrame({"item": ["A"], "line": ["L"], "output": ["F"], "capacity_per_unit": [1], "delay": [build_delay]})
     routes = pd.DataFrame({"origin": ["F", "F", "D"], "destination": ["D", "C", "C"], "delay": [route_delay, 0, 0]})
     resources = rtn.generate_resources(items, locations)
     tasks, arrows = rtn.generate_tasks(routing, routes, items, locations)
@@ -164,3 +164,15 @@ def test_levels_rejects_bad_runs():
     with pytest.raises(ValueError, match="unknown task"):
         rtn.levels(obj, pd.DataFrame({1: [1.0]}, index=["make|A|nowhere"]))
     assert np.isfinite(rtn.levels(obj).values).all()
+
+
+def test_weeks_of_supply_by_hand():
+    demand = pd.DataFrame([[2, 4, 6, 8]], index=["A"], columns=[1, 2, 3, 4])
+    net = pd.DataFrame([[9, 9, 0, -7, 100]], index=["A"], columns=[0, 1, 2, 3, 4])
+    wos = rtn.weeks_of_supply(net.iloc[:, :4], demand)
+    assert wos.at["A", 0] == pytest.approx(2.5)        # 2 + 4 covered, 3 of the next 6
+    assert wos.at["A", 1] == pytest.approx(1 + 5 / 6)  # from week 2: 4 covered, 5 of the next 6
+    assert wos.at["A", 2] == 0
+    assert wos.at["A", 3] == pytest.approx(-7 / 8)     # backlog of 7 = 7/8 of week 4's demand
+    capped = rtn.weeks_of_supply(pd.DataFrame([[100]], index=["A"], columns=[0]), demand)
+    assert capped.at["A", 0] == 4                      # only 4 weeks of demand to cover

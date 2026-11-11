@@ -206,6 +206,36 @@ def net_position(obj: RTN, X: pd.DataFrame) -> pd.DataFrame:
     return X.mul(sign, axis=0).groupby(res["item"]).sum()
 
 
+def weeks_of_supply(net: pd.DataFrame, demand: pd.DataFrame) -> pd.DataFrame:
+    """Forward cover: how many future weeks of demand the net position covers, at the end of week t.
+
+    net:    item x t (0..H)            e.g. net_position(obj, X)
+    demand: item x t (1..T), T >= H    forecast per week, may run past the plan horizon
+    Walks forward from week t+1, whole weeks then a fraction of the next. A negative net position
+    (backlog) gives a negative value: how many future weeks of demand the backlog equals.
+    So for N >= 0:  weeks_of_supply >= N  exactly when  net >= demand[t+1] + ... + demand[t+N].
+    Capped at the weeks of demand available after t.
+    """
+    T = demand.columns.max()
+    out = pd.DataFrame(index=net.index, columns=net.columns, dtype=float)
+    for item in net.index:
+        cum = np.concatenate([[0.0], demand.loc[item, range(1, T + 1)].cumsum().to_numpy(float)])
+        for t in net.columns:
+            ahead = cum[t:] - cum[t]                      # demand from t+1 to t+k, k = 0..T-t
+            n = net.at[item, t]
+            out.at[item, t] = np.sign(n) * np.interp(abs(n), ahead, np.arange(len(ahead)))
+    return out
+
+
+def utilisation(obj: RTN, X: pd.DataFrame) -> pd.DataFrame:
+    """Share of each capacity resource used per week: 1 - level left / capacity arrived. cap x t (1..H)."""
+    cap = obj.resources.loc[obj.resources["kind"] == "capacity", "resource_id"]
+    arrived = obj.arrivals.loc[cap]
+    if (arrived.values <= 0).any():
+        raise ValueError("utilisation needs capacity > 0 every week")
+    return 1 - X.loc[cap, arrived.columns] / arrived
+
+
 # ---------- graph view ----------
 
 def to_networkx(obj: RTN) -> nx.MultiDiGraph:

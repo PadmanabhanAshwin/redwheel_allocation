@@ -1,8 +1,9 @@
 """Redwheel — the pipeline, step by step. Run cell by cell in VS Code (Shift+Enter)."""
 # %% setup
+import numpy as np
 import pandas as pd
 
-from redwheel import aux_fns, read, rtn
+from redwheel import aux_fns, engine, read, rtn
 from redwheel.config import CHANNELS
 from redwheel.utils import DQ
 
@@ -117,9 +118,68 @@ obj.opening.groupby([kind_loc.kind, kind_loc.location]).sum().unstack(fill_value
 
 # %% 2.5 run the equation with no plan: nothing built, nothing shipped
 X = rtn.levels(obj)
+#%%calculate net position. 
 npos = rtn.net_position(obj, X)
 print("opening net position matches 1.5:",
       npos[0].astype(int).equals(opening.set_index("sku").net0.rename_axis("item")))
 npos[[0, 1, 13, 26, 52, 121]].astype(int)                # weeks 0, 1, 13, 26, 52, 121
 
 # %%
+runs = pd.DataFrame({1: [200, 150]}, index=["make|RW-9304|RENO/mtb-carbon", "fulfil|RW-9304|RENO>DEALERS"])
+X = rtn.levels(obj, runs)
+X.loc[X.index.str.contains("RW-9304|mtb-carbon"), [0, 1, 2]]
+
+# %%
+
+# %% 3.1 weeks of supply: baseline with nothing built, against target
+demand = aux_fns.forecast_by_item(m | {"dim_week": dim_week})   # all 156 forecast weeks
+target = aux_fns.target_wos(m | {"dim_policy": dim_policy}, weeks)
+wos_base = rtn.weeks_of_supply(npos, demand)
+
+show = [0, 1, 13, 26, 52, 121]
+base = wos_base[show].round(1)
+base.insert(0, "target wk1", target[1])
+base                                                   # negative = weeks of backlog
+
+# %% 3.2 decide: LP on the object, builds only, target = next N weeks of forecast
+target_units = engine.forward_sum(demand, target)
+free = list(tasks.loc[tasks.kind == "make", "task_id"])                 # ships and moves stay 0
+plan = engine.decide(obj, free, target_units,
+                     weekly_demand=demand.loc[:, 1:121].mean(axis=1),
+                     group=dim_sku.set_index("sku").line_id)            # fairness within a line
+
+X_plan = rtn.levels(obj, plan.runs)
+print("closure (LP levels vs rtn.levels):", np.abs(X_plan.values - plan.levels.values).max())
+print("lowest level anywhere (>= 0: capacity never exceeded):", X_plan.values.min().round(9))
+
+wos_plan = rtn.weeks_of_supply(rtn.net_position(obj, X_plan), demand)
+out = wos_plan[[1, 13, 26, 52, 53, 78, 121]].round(1)
+out.insert(0, "target wk1", target[1])
+out
+
+# %% 3.3 whole bikes: cumulative builds rounded up, taken back only where a line is full
+builds = engine.round_runs(obj, plan.runs)
+X_round = rtn.levels(obj, builds)
+gap = builds.cumsum(axis=1) - plan.runs.cumsum(axis=1)
+print("lowest level anywhere (>= 0: capacity never exceeded):", X_round.values.min())
+print(f"cumulative rounded - LP, per SKU: {gap.values.min():.2f} to {gap.values.max():.2f}")
+print("total built: LP", round(plan.runs.values.sum()), "| rounded", int(builds.values.sum()))
+
+# the build plan: units per line per week (first 8 weeks shown)
+builds.groupby(builds.index.str.split("|").str[2]).sum().loc[:, 1:8]
+
+# %% 4.1 report: is the plan hitting its targets, from when, vs doing nothing
+report = aux_fns.target_report(m | {"dim_sku": dim_sku}, obj, X_round, X, target_units, target, demand)
+report
+
+# %% 4.2 report: group weeks of supply (lowest SKU in the group) against target
+wos_round = rtn.weeks_of_supply(rtn.net_position(obj, X_round), demand).loc[target.index]
+group = aux_fns.group_wos(wos_round, dim_sku)
+group_target = target.groupby(dim_sku.set_index("sku").target_group).first()
+show = [1, 13, 26, 47, 48, 53, 70, 121]
+pd.concat({"plan": group[show].round(1), "target": group_target[show]}, axis=1)
+
+# %% 4.3 report: line utilisation by fiscal year, and the build plan (the deliverable)
+print(aux_fns.utilisation_by_year(obj, X_round), "\n")
+build_plan = aux_fns.build_plan_table(obj, builds)
+build_plan.head(10)

@@ -268,3 +268,29 @@ def test_plans_actually_exercise_the_network(obj, run):
     assert runs[kind == "make"].values.sum() > 0
     assert runs[runs.index.str.contains(r"\|CMH>")].values.sum() > 0
     assert runs[runs.index.str.contains(r"\|RENO>(?:WEB|DEALERS|COMMERCIAL)")].values.sum() > 0
+
+
+# ---------------- weeks of supply ----------------
+
+def test_wos_target_equals_forward_forecast_sum(obj, m):
+    """The LP will state 'WOS >= N' as 'net >= next N weeks of forecast'. They must agree everywhere."""
+    from redwheel import aux_fns
+    demand = aux_fns.forecast_by_item(m)
+    net = rtn.net_position(obj, rtn.levels(obj))
+    wos = rtn.weeks_of_supply(net, demand)
+    cum = demand.cumsum(axis=1)
+    for n in (8, 10, 12, 15):
+        for t in net.columns:
+            ahead = cum[t + n] - (cum[t] if t > 0 else 0)
+            assert ((wos[t] >= n - 1e-9) == (net[t] >= ahead - 1e-9)).all(), (n, t)
+
+
+def test_targets_follow_the_brief(obj, m):
+    from redwheel import aux_fns
+    tgt = aux_fns.target_wos(m, obj.weeks)
+    road = m["dim_sku"].set_index("sku")["target_group"] == "road"
+    w2028 = obj.weeks.loc[obj.weeks["week_start"] >= "2028-01-03", "t"].min()
+    assert (tgt.loc[road[road].index, : w2028 - 1] == 8).all().all()
+    assert (tgt.loc[road[road].index, w2028:] == 10).all().all()
+    assert set(tgt.loc[["RW-9324", "RW-9901"]].stack()) == {12}
+    assert set(tgt.loc[["RW-4418", "RW-6416", "RW-9304"]].stack()) == {15}
