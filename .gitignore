@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Generated artefacts (rebuilt by `python -m redwheel.master` / the engine)
+outputs/*
+!outputs/.gitkeep
+*.pkl
+
+# Personal working material, not part of the submission
+local_assets/
+*.docx
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+data/
+
+outputs/

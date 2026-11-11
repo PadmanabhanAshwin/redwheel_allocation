@@ -1,0 +1,8 @@
+pandas==2.3.3
+numpy==2.0.2
+scipy==1.13.1      # LP solver (HiGHS, bundled)
+pyarrow==21.0.0    # parquet output
+streamlit==1.50.0
+plotly==7.1.0
+ipykernel          # runs the #%% cells in VS Code
+pytest==8.4.2
