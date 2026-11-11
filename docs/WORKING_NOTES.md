@@ -12,6 +12,8 @@ Decisions taken and items still open. Updated as we go; newest decisions at the 
 | D4 | Weeks of supply is counted the way demand faces: each stock location against the demand it serves. Stock counts once it has arrived. The factory rolls up to all demand through the transfer to the PDC. | 2026-11-11 |
 | D5 | Build time is a modifiable parameter (by line or SKU eventually). First value: 1 week, the same for every line. Reno → PDC stays 1 week. | 2026-11-11 |
 | D7 | Scenario A = the base case. Scenario B = routing B: web orders ship from the PDC (replenished from Reno, 1 week); dealer and commercial orders ship direct from Reno; build time 1 week; the LP decides builds and transfers. | 2026-11-11 |
+| D8 | Navigation: Overview (Context, Scenarios, Scenario Comparison) → one section per scenario (Summary, Network, Build Plans, Build Score, Inventory Balance) → Model (Object Encoding, Demand Sources, Model Validation). Previous/next links follow that order. Context holds snapshot facts only; the Summarized Plan lives in each scenario's Summary. | 2026-11-11 |
+| D9 | The network is shared; a scenario sets edge delays and which ship routes are used. Each scenario's Network page reads both from that scenario's network and routing rule; Object Encoding shows the shared network (every route, no delays). | 2026-11-11 |
 | D6 | "Shipped" means factory output released to orders as soon as it is available (an assumption). | 2026-11-11 |
 
 ## Open items
@@ -26,11 +28,11 @@ Decisions taken and items still open. Updated as we go; newest decisions at the 
 | O6 | LLM form that fills in a case | Exhibit candidate: "change the build time on a line". After O5. |
 | O7 | Scenario list to re-run | Supplier slip (no supplier data: would be illustrative), demand spike on a SKU, line capacity down. |
 | O8 | Object Encoding page: show how the raw files map into the object | Pinned by the user. |
-| O9 | Build Score page needs a proper rework | Only renamed so far. |
+| O9 | Build Score page needs a proper rework | Heatmap removed; quarter-end table per position. Planner's rule toggle for scenario A only. |
 | O10 | Shipping decided by the model rather than assumed | Today: ship as soon as stock exists, oldest orders first. |
 | O11 | Code and README still say "arrows"; the UI says "edges" | Rename if wanted. |
 | O12 | Near-term forecast is well below recent orders on every line | Stated on page 1; raise with Redwheel. |
 | O13 | Road SKUs hold stock roughly equal to their open orders, and those orders are not shipping | Data does not say why. |
 | O14 | End-of-horizon effect in scenarios with lead times | In scenario B a bike built in week 121 lands after the horizon, so the plan builds nothing in week 121, tapers in week 120 and transfers nothing in the last week. Fix: plan a few weeks past the reporting horizon (needs capacity assumed beyond the data). Guarded by a test so it is not forgotten. |
-| O15 | The other pages (Build Plans, Build Score, Inventory Balance, Supply–Demand Context) show scenario A only | Make them follow a selected scenario once the scenario pages are agreed. |
+| O15 | ~~Other pages show scenario A only~~ | Done: each scenario has its own section of pages (D8). |
 | O16 | Planning priors as an editable table | Routing rule, targets and lead times currently live in `scenarios.py` (`Case`) and `config.py`. Next: one table the UI and an LLM can change. |

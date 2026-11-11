@@ -1,17 +1,16 @@
-"""Page 1 — supply–demand context: the plan at a glance, then demand and capacity by line."""
+"""Supply–demand context: the position at the snapshot, and the demand and capacity every scenario plans against."""
 import pandas as pd
 import streamlit as st
 
-from ui import (
-    CAP, CAPACITY, FORECAST, GRANULARITY, H, HISTORY, LINES, LINE_NAME, MUTED, ORDER, SKU, SKUS_BY_LINE, SNAP,
-    WEEKS, cell, fmt_date, grid_view, line_grid, m, obj, plan_grid, r, sku_label, style)
+from ui import CAP, CAPACITY, FORECAST, H, HISTORY, LINES, MUTED, SKU, SKUS_BY_LINE, SNAP, WEEKS, cell, fmt_date, \
+    line_grid, m, obj, r, style
 
 st.title("Supply–Demand Context")
 st.markdown(
     "Redwheel builds ten bicycle SKUs on four production lines at Reno and ships from Reno and the Columbus "
     "distribution centre to three channels (direct-to-consumer, dealers, commercial). Position at the "
-    f"**{fmt_date(SNAP)} snapshot**, and the plan over the horizon ({fmt_date(SNAP)} – "
-    f"{fmt_date(WEEKS.iloc[-1])}, {H} weeks).")
+    f"**{fmt_date(SNAP)} snapshot**, and the demand and capacity every scenario plans against "
+    f"({fmt_date(SNAP)} – {fmt_date(WEEKS.iloc[-1])}, {H} weeks).")
 
 on_hand = int(obj.opening[[f"inventory|{s}|{l}" for s in SKU.index for l in ("RENO", "CMH")]].sum())
 backlog = int(m["opening_position"]["backlog"].sum())
@@ -21,19 +20,6 @@ c[1].metric("Open orders (backlog)", f"{backlog:,}", help="Ordered and not yet d
 c[2].metric("Net position", f"{on_hand - backlog:,}", help="On hand − open orders")
 c[3].metric(f"Forecast demand, {H} weeks", f"{int(r['demand'].loc[:, 1:H].values.sum()):,}")
 c[4].metric(f"Build capacity, {H} weeks", f"{int(sum(v.sum() for v in CAP.values())):,}")
-
-# ---------------- hero: summarized plan ----------------
-st.subheader("Summarized Plan")
-scopes = ["All SKUs"] + [f"line:{ln}" for ln in LINES] + ORDER
-left, right = st.columns([2, 3])
-scope = left.selectbox("Scope", scopes, format_func=lambda x: x if x == "All SKUs" else (
-    f"{LINE_NAME[x[5:]]} line" if x.startswith("line:") else sku_label(x)))
-gran = right.radio("Granularity", GRANULARITY, index=1, horizontal=True)
-skus = list(SKU.index) if scope == "All SKUs" else (SKUS_BY_LINE[scope[5:]] if scope.startswith("line:") else [scope])
-table, flags = plan_grid(skus, gran)
-grid_view(table, flags)
-st.caption("Demand and builds: period totals. On hand, open orders, net inventory: at period end (net = on hand − "
-           "open orders). % SKUs @ nominal inv.: share of SKUs at their weeks-of-supply target.")
 
 # ---------------- demand and capacity by line ----------------
 st.subheader("Weekly demand and build capacity by production line")

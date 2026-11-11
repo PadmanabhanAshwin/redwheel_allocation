@@ -27,6 +27,7 @@ class Case:
     transfer_weeks: int              # weeks Reno -> PDC
     ship_routes: tuple               # routing rule (a planning prior): allowed (stock site, customer) pairs
     decides: tuple                   # task kinds the LP may run
+    summary: str = ""                # the scenario in one or two sentences
 
     @property
     def is_base(self) -> bool:
@@ -34,9 +35,13 @@ class Case:
 
 
 CASE_A = Case("A", "Scenario A · base case", build_weeks=0, transfer_weeks=1,
-              ship_routes=ALL_ROUTES, decides=("make",))
+              ship_routes=ALL_ROUTES, decides=("make",),
+              summary="Stock at Reno and the PDC is pooled against every order, a bike can ship the week it is "
+                      "built, and the plan decides builds only.")
 CASE_B = Case("B", "Scenario B · web via PDC, others direct", build_weeks=1, transfer_weeks=1,
-              ship_routes=(("RENO", "DEALERS"), ("RENO", "COMMERCIAL"), ("CMH", "WEB")), decides=("make", "move"))
+              ship_routes=(("RENO", "DEALERS"), ("RENO", "COMMERCIAL"), ("CMH", "WEB")), decides=("make", "move"),
+              summary="Web orders ship from the PDC, which Reno restocks in a week; dealer and commercial orders ship "
+                      "direct from Reno. A bike takes a week to build. The plan decides builds and transfers.")
 CASES = {c.key: c for c in (CASE_A, CASE_B)}
 
 
@@ -276,10 +281,16 @@ def checks(R: dict) -> pd.DataFrame:
             if t - lead >= 1 and not full_to.at[f"capacity||RENO/{R['line'][key]}", t - lead]:
                 unexplained += 1
     closure = np.abs(rtn.levels(obj, lp.runs).values - lp.levels.values).max()
+    whole = R["runs"]
+    gap = whole.cumsum(axis=1) - lp.runs.loc[whole.index, whole.columns].cumsum(axis=1)
+    below_lp = position_levels(lp.levels, R["positions"])[weeks] < R["target_units"] - 1e-6
     rows = [
         ("Whole bikes, none negative", "", bool((R["runs"].values == np.round(R["runs"].values)).all()
                                                 and R["runs"].values.min() >= 0)),
         ("Capacity never exceeded; no stock level below zero", f"lowest level {X.values.min():.0f}", X.values.min() >= -1e-9),
+        ("Whole-bike plan within 1 bike of the LP, cumulative, every task", f"{gap.values.min():.3f} to {gap.values.max():.3f}",
+         gap.values.min() > -1 and gap.values.max() < 1),
+        ("Rounding to whole bikes adds no missed targets", "", not (below & ~below_lp).values.any()),
         ("Closure: LP levels = the object's equation run with the LP's decisions", f"{closure:.1e}", closure < 1e-6),
         ("Rollup: pool positions + in transit = total net inventory", f"difference {rollup:.0f}", rollup < 1e-6),
         ("Shipping projection: nothing negative; on hand − open orders = net inventory", "",

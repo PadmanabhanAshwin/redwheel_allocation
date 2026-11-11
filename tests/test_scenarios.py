@@ -138,7 +138,7 @@ def test_shipping_never_uses_stock_the_plan_transfers_out_later():
 @pytest.mark.parametrize("which", ["A", "B"])
 def test_every_check_passes(which, A, B):
     c = sc.checks({"A": A, "B": B}[which])
-    assert len(c) == 6 and c["pass"].all(), c[~c["pass"]].to_string()
+    assert len(c) == 8 and c["pass"].all(), c[~c["pass"]].to_string()
 
 
 def test_scenario_b_is_whole_and_close_to_the_lp(B):
@@ -164,3 +164,28 @@ def test_known_end_of_horizon_effect_in_b(B):
     """Documented limitation (working notes O14): a bike built in the last week lands after the horizon,
     so B plans no builds in week 121 and no transfers in the last week."""
     assert B["builds"][121].sum() == 0 and B["moves"][121].sum() == 0
+
+
+# ---------------- what the plan pages read, per SKU ----------------
+
+def test_scenario_a_per_sku_equals_the_base_run(A):
+    """The plan pages read every scenario through run_case; for A that must be the frozen base run exactly."""
+    base = aux_fns.run_plan()
+    net = A["net"].droplevel("pool").loc[base["net"].index]
+    assert np.abs(net.values - base["net"].values).max() == 0
+    H = len(base["obj"].weeks)
+    ok = base["net"].loc[:, 1:H] >= base["target_units"] - 1e-6
+    assert (A["at_target"].droplevel("pool").loc[ok.index].values == ok.values).all()
+    assert (A["builds"].values == base["builds"].loc[A["builds"].index].values).all()
+
+
+@pytest.mark.parametrize("which", ["A", "B"])
+def test_balance_per_sku(which, A, B):
+    """Inventory Balance page: opening net + built - forecast = closing net, per SKU, where net counts every
+    site and stock in transit. Holds while nothing is built in the last build-time weeks (O14)."""
+    R = {"A": A, "B": B}[which]
+    H = len(R["obj"].weeks)
+    net = R["net"].groupby(level="item").sum().add(R["transit"], fill_value=0)
+    built = R["builds"].groupby(R["builds"].index.str.split("|").str[1]).sum().sum(axis=1)
+    forecast = R["flows"]["demand"].groupby(level="item").sum().sum(axis=1)
+    assert np.abs((net[0] + built - forecast - net[H]).values).max() < 1e-9

@@ -129,8 +129,6 @@ runs = pd.DataFrame({1: [200, 150]}, index=["make|RW-9304|RENO/mtb-carbon", "ful
 X = rtn.levels(obj, runs)
 X.loc[X.index.str.contains("RW-9304|mtb-carbon"), [0, 1, 2]]
 
-# %%
-
 # %% 3.1 weeks of supply: baseline with nothing built, against target
 demand = aux_fns.forecast_by_item(m | {"dim_week": dim_week})   # all 156 forecast weeks
 target = aux_fns.target_wos(m | {"dim_policy": dim_policy}, weeks)

@@ -1,25 +1,40 @@
-"""Page 6 — model validation: checks on this run, and the LP against a planner's rule."""
+"""Model validation: checks on the data and the object, checks on every scenario's plan, and the LP against a
+planner's rule (scenario A)."""
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from ui import FORECAST, H, HISTORY, LINES, LINE_NAME, WEEKS, checks, compare, fmt_date, right_align, style
+from ui import (FORECAST, H, HISTORY, LINES, LINE_NAME, WEEKS, checks, compare, fmt_date, load_cases, right_align,
+                scenario_view, style)
 
 st.title("Model Validation")
 
 # ---------------- checks ----------------
-st.subheader("Checks on this run")
-st.dataframe(checks.assign(Result=checks["pass"].map({True: "pass", False: "FAIL"})).drop(columns="pass")
+st.subheader("Checks on the data and the object")
+base = checks[checks["area"].isin(["Master data", "Object"])]
+st.dataframe(base.assign(Result=base["pass"].map({True: "pass", False: "FAIL"})).drop(columns="pass")
              .rename(columns={"area": "Area", "check": "Check", "value": "Value"}),
              hide_index=True, width="stretch")
+st.caption("The same for every scenario: scenarios change rules, not the data or the network.")
+
+st.subheader("Checks on each scenario's plan")
+cases = load_cases()
+per = {cases[k]["case"].name: scenario_view(k)["checks"].set_index("check") for k in cases}
+first = next(iter(per.values()))
+st.dataframe(pd.DataFrame({name: [("pass" if c.at[i, "pass"] else "FAIL") + (f" · {c.at[i, 'value']}" if c.at[i, "value"]
+                                                                              else "") for i in first.index]
+                           for name, c in per.items()}, index=first.index.rename("Check")), width="stretch")
+st.caption("A position is one SKU at one stock site (scenario A pools both sites). Lead time: build time, plus the "
+           "transfer for stock at the PDC.")
 
 # ---------------- LP vs the planner's rule ----------------
-st.subheader("Does the optimisation earn its place?")
+st.subheader("Does the optimisation earn its place? (scenario A)")
 s = compare["summary"]
 lp, rule = "LP plan", "Lowest-cover-first rule"
 bl = compare["by_line"]
 st.markdown("Compared with a common planner's rule, **lowest cover first**: each week, each line builds for the SKU "
-            "furthest below target first, one week at a time, no look-ahead. Same network, inputs and scoring.")
+            "furthest below target first, one week at a time, no look-ahead. Same network, inputs and scoring, on scenario A "
+            "(builds only, stock pooled across sites).")
 st.markdown(
     f"**Result.** The LP holds every target from **{fmt_date(s.at['All targets held from', lp])}**; the rule from "
     f"**{fmt_date(s.at['All targets held from', rule])}**. The gain is foresight on road: the LP builds ahead of the "

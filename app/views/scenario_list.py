@@ -3,18 +3,22 @@ import pandas as pd
 import streamlit as st
 
 from redwheel import scenarios as sc
-from ui import fmt_date, load_cases, right_align
+from ui import fmt_date, load_cases
 
 st.title("Scenarios")
-st.markdown("Each scenario is the same network and solver under a different set of rules.")
+st.markdown("Each scenario is the same network and solver under a different set of rules. Scenario A is the base "
+            "case; each later scenario changes some of its rules.")
 cases = load_cases()
+base = sc.rules(next(iter(cases.values()))["case"]).set_index("Rule")["Setting"]
 cards = {k: sc.scorecard(R) for k, R in cases.items()}
 chk = {k: sc.checks(R) for k, R in cases.items()}
 
 summary = {}
 for k, R in cases.items():
     c, rule = cards[k], sc.rules(R["case"]).set_index("Rule")["Setting"]
+    changed = [n for n in base.index if rule[n] != base[n]]
     summary[R["case"].name] = {
+        "Changes from scenario A": "; ".join(changed) if changed else "—",
         "Routing rule": rule["Routing rule"], "Weeks of supply counted on": rule["Weeks of supply counted on"],
         "Build time": rule["Build time"], "Reno → PDC transfer": rule["Reno → PDC transfer"],
         "The plan decides": rule["The plan decides"],
@@ -24,13 +28,4 @@ for k, R in cases.items():
         "Checks passed": f"{int(chk[k]['pass'].sum())} of {len(chk[k])}"}
 st.dataframe(pd.DataFrame(summary).rename_axis(""), width="stretch")
 
-st.subheader("Rules and checks")
-key = st.radio("Scenario", list(cases), format_func=lambda k: cases[k]["case"].name, horizontal=True)
-R = cases[key]
-st.markdown("**Rules**")
-st.dataframe(sc.rules(R["case"]), hide_index=True, width="stretch")
-st.caption("Planning prior: a choice Redwheel can change. Lead time: physical. The rest: the brief, the model, or a "
-           "stated assumption.")
-st.markdown("**Checks on this run**")
-st.dataframe(chk[key].assign(Result=chk[key]["pass"].map({True: "pass", False: "FAIL"})).drop(columns="pass")
-             .rename(columns={"check": "Check", "value": "Value"}), hide_index=True, width="stretch")
+st.caption("Each scenario's own section has its summary and plan pages. Checks: computed on each run; the detail is on the Model Validation page.")

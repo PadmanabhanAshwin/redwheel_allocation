@@ -45,9 +45,54 @@ SKU = m["dim_sku"].set_index("sku")
 SKUS_BY_LINE = {ln: list(SKU.index[SKU["line_id"] == ln]) for ln in LINES}
 ORDER = [s for ln in LINES for s in sorted(SKUS_BY_LINE[ln], key=lambda x: "SML".index(SKU.at[x, "size"]))]
 CAP = {ln: obj.arrivals.loc[f"capacity||RENO/{ln}", 1:H].to_numpy() for ln in LINES}
-BUILD = {s: r["builds"].loc[f"make|{s}|RENO/{SKU.at[s, 'line_id']}"].to_numpy() for s in SKU.index}
-# At target in a week = net position >= the next N weeks of forecast, in units (as in the plan).
-AT_TARGET = r["net"].loc[ORDER, 1:H] >= r["target_units"].loc[ORDER] - 1e-6
+
+
+# ---------------- scenarios: one control, one shape of results ----------------
+
+def pool_label(pool: str) -> str:
+    """'CMH+RENO' -> 'Reno + PDC'."""
+    return " + ".join(scenarios.SHORT[s] for s in scenarios.SITES if s in pool.split("+"))
+
+
+@st.cache_resource(show_spinner=False)
+def scenario_view(key: str) -> dict:
+    """One scenario's plan per SKU, the same shape for every scenario. A position is one SKU at one stock site
+    (scenario A pools both sites); positions plus stock in transit add up to the SKU. A SKU is at target when
+    every one of its positions is."""
+    R = load_cases()[key]
+    f = R["flows"]
+    weeks = list(range(1, H + 1))
+
+    def by_sku(df):
+        return df.groupby(level="item").sum().reindex(ORDER)
+
+    def by_task(df):
+        return df.groupby(df.index.str.split("|").str[1]).sum().reindex(index=ORDER, columns=weeks, fill_value=0)
+
+    prev_open = f["open_orders"][[t - 1 for t in weeks]].set_axis(weeks, axis=1)
+    late = f["shipped"].where(f["shipped"] < prev_open, prev_open)        # oldest orders ship first, per position
+    transit = R["transit"].reindex(ORDER).fillna(0)
+    return {"key": key, "case": R["case"], "R": R, "pools": R["pools"], "multi": len(R["pools"]) > 1,
+            "built": by_task(R["builds"]), "moved": by_task(R["moves"]),
+            "demand": by_sku(f["demand"]), "shipped": by_sku(f["shipped"]), "late": by_sku(late),
+            "on_hand": by_sku(f["on_hand"]), "open_orders": by_sku(f["open_orders"]), "transit": transit,
+            "net": by_sku(R["net"]) + transit, "target_units": by_sku(R["target_units"]),
+            "at_target": R["at_target"].groupby(level="item").all().reindex(ORDER),
+            "start_ok": (R["wos"][0] >= R["target_wos"][1]).groupby(level="item").all().reindex(ORDER),
+            "rules": scenarios.rules(R["case"]).set_index("Rule")["Setting"],
+            "card": scenarios.scorecard(R), "checks": scenarios.checks(R)}
+
+
+def scenario_header(key: str, title: str) -> dict:
+    """Top of every page inside a scenario: the scenario's name above the page title, its key rules below."""
+    V = scenario_view(key)
+    st.markdown(f"<div style='color:{MUTED}; font-size:0.9rem; font-weight:600; letter-spacing:0.04em; "
+                f"text-transform:uppercase; margin-bottom:-0.6rem'>{V['case'].name}</div>", unsafe_allow_html=True)
+    st.title(title)
+    rl = V["rules"]
+    st.caption(f"Routing: {rl['Routing rule']} · Build time: {rl['Build time']} · Reno → PDC: "
+               f"{rl['Reno → PDC transfer']} · The plan decides: {rl['The plan decides']}.")
+    return V
 
 # Fiscal quarters (FY runs September-August; a week belongs to the month of its Monday).
 _fy = WEEKS.dt.year - (WEEKS.dt.month < 9)
@@ -117,10 +162,20 @@ def status_table(df, ints=(), dec1=(), good=None, height=None, right=()):
 SIZE_RANK = {"S": 1, "M": 2, "L": 3}
 
 
-def network_figure(s):
-    """Two lanes: Reno on top, Columbus below, the transfer between them; customers on the right."""
+UNUSED = "#cfcdc6"                                # routes the routing rule does not allow
+
+
+def network_figure(s, o=None, routes=None, delays=True):
+    """Two lanes: Reno on top, Columbus below, the transfer between them; customers on the right.
+    o: the scenario's network (default: scenario A's). routes: allowed (site, customer) pairs; the others are drawn
+    faded. delays: label edges with their delay (off for the shared view, where each scenario sets its own)."""
+    o = obj if o is None else o
     ln = SKU.at[s, "line_id"]
-    g = rtn.to_networkx(obj)
+    g = rtn.to_networkx(o)
+
+    def unused(n):
+        return (routes is not None and n.startswith("fulfil|")
+                and tuple(n.split("|")[2].split(">")) not in set(routes))
     sg = g.subgraph([n for n, d in g.nodes(data=True) if d.get("item") == s or n == f"capacity||RENO/{ln}"])
     cust = ["WEB", "DEALERS", "COMMERCIAL"]
     cust_name = {"WEB": "DTC", "DEALERS": "dealers", "COMMERCIAL": "commercial"}
@@ -148,10 +203,10 @@ def network_figure(s):
         if sg.has_edge(v, u):                       # move <-> in transit: draw the pair side by side
             off = 0.09 if d["amount"] > 0 else -0.09
             y0, y1 = y0 + off, y1 + off
-        col = INK if d["amount"] > 0 else HISTORY
+        col = UNUSED if unused(u) or unused(v) else INK if d["amount"] > 0 else HISTORY
         fig.add_annotation(x=x1, y=y1, ax=x0, ay=y0, xref="x", yref="y", axref="x", ayref="y", showarrow=True,
                            arrowhead=2, arrowsize=1, arrowwidth=1.4, arrowcolor=col, standoff=13, startstandoff=13)
-        if d["delay"]:
+        if delays and d["delay"]:
             fig.add_annotation(x=(x0 + x1) / 2, y=(y0 + y1) / 2, text=f"+{d['delay']} wk", showarrow=False,
                                yshift=-11, font=dict(size=10, color=MUTED))
     name = {"RENO": "Reno stock", "CMH": "Columbus stock", "RENO>CMH": "in transit", "DEALERS": "dealer stock"}
@@ -162,9 +217,9 @@ def network_figure(s):
         if d["kind"] == "capacity":
             txt.append(f"{LINE_NAME[ln]} line capacity")
         elif d["kind"] == "order":
-            txt.append(f"{cust_name[d['location']]} orders ({obj.opening[n]:,.0f})")
+            txt.append(f"{cust_name[d['location']]} orders ({o.opening[n]:,.0f})")
         else:
-            txt.append(f"{name[d['location']]} ({obj.opening[n]:,.0f})")
+            txt.append(f"{name[d['location']]} ({o.opening[n]:,.0f})")
     right = [sg.nodes[n]["location"] in ("WEB", "DEALERS", "COMMERCIAL") or
              (sg.nodes[n]["kind"] == "inventory" and sg.nodes[n]["location"] == "DEALERS") for n in res]
     fig.add_scatter(x=[pos[n][0] for n in res], y=[pos[n][1] for n in res], mode="markers+text",
@@ -174,8 +229,10 @@ def network_figure(s):
     ts = [n for n in sg.nodes if sg.nodes[n]["node"] == "task"]
     tlabel = [("fulfil · " + cust_name[n.split(">")[1]]) if n.startswith("fulfil") else n.split("|")[0] for n in ts]
     fig.add_scatter(x=[pos[n][0] for n in ts], y=[pos[n][1] for n in ts], mode="markers+text",
-                    marker=dict(size=13, color=INK, symbol="square"), text=tlabel, textposition="top center",
-                    textfont=dict(size=11), hovertext=ts, hoverinfo="text")
+                    marker=dict(size=13, color=[UNUSED if unused(n) else INK for n in ts], symbol="square"),
+                    text=tlabel, textposition="top center",
+                    textfont=dict(size=11, color=[MUTED if unused(n) else INK for n in ts]),
+                    hovertext=[n + (" (not used: routing rule)" if unused(n) else "") for n in ts], hoverinfo="text")
     for x, y, t in [(4.1, 2.75, "Reno"), (4.1, -2.75, "Columbus")]:
         fig.add_annotation(x=x, y=y, text=t, showarrow=False, font=dict(size=12, color=MUTED))
     fig.update_layout(height=560, margin=dict(l=8, r=8, t=8, b=8), plot_bgcolor="white", paper_bgcolor="white",
@@ -203,10 +260,9 @@ HIGHLIGHT_BG = "#f6edd4"                          # neutral emphasis: the plan's
 HIGHLIGHT_ROWS = ("Builds", "Net inventory")
 
 
-def plan_grid(skus: list, gran: str):
+def plan_grid(V: dict, skus: list, gran: str):
     """Rows = measures, columns = start + periods. Returns (display table, per-cell good/bad flags for shading).
-    Builds and demand are period totals; on hand, open orders and net inventory are at the period end."""
-    f = r["flows"]
+    Builds and demand are period totals; on hand, in transit, open orders and net inventory are at the period end."""
     per = periods(gran)
     labels = list(dict.fromkeys(per))
     weeks_in = {p: per.index[per == p] for p in labels}
@@ -222,17 +278,17 @@ def plan_grid(skus: list, gran: str):
     def in_period(df):
         return {start: None, **{p: df.loc[skus, weeks_in[p]].values.sum() for p in labels}}
 
-    rows = {"Forecast demand": in_period(f["demand"]), "Builds": in_period(f["built"]),
-            "On hand": at_end(f["on_hand"]), "Open orders": at_end(f["open_orders"]),
-            "Net inventory": at_end(r["net"])}
+    rows = {"Forecast demand": in_period(V["demand"]), "Builds": in_period(V["built"]),
+            "On hand": at_end(V["on_hand"])}
+    if "move" in V["case"].decides:
+        rows["In transit to the PDC"] = at_end(V["transit"])
+    rows.update({"Open orders": at_end(V["open_orders"]), "Net inventory": at_end(V["net"])})
     if whole_lines:
         cap = {p: sum(obj.arrivals.loc[f"capacity||RENO/{ln}", weeks_in[p]].sum() for ln in lines) for p in labels}
         rows["Capacity (used)"] = {start: None, **{p: f"{cap[p]:,.0f} ({rows['Builds'][p] / cap[p]:.0%})" for p in labels}}
-    ok0 = (r["wos"].loc[skus, 0] >= r["target_wos"].loc[skus, 1])
-    rows["% SKUs @ nominal inv."] = {start: f"{ok0.mean():.0%}",
-                                     **{p: f"{AT_TARGET.loc[skus, last[p]].mean():.0%}" for p in labels}}
-    flags = {"% SKUs @ nominal inv.": {start: bool(ok0.all()),
-                                       **{p: bool(AT_TARGET.loc[skus, last[p]].all()) for p in labels}}}
+    ok0, ok = V["start_ok"].loc[skus], V["at_target"].loc[skus]
+    rows["% SKUs @ nominal inv."] = {start: f"{ok0.mean():.0%}", **{p: f"{ok[last[p]].mean():.0%}" for p in labels}}
+    flags = {"% SKUs @ nominal inv.": {start: bool(ok0.all()), **{p: bool(ok[last[p]].all()) for p in labels}}}
 
     def fmt(v):
         return "" if v is None else v if isinstance(v, str) else f"{v:,.0f}"
