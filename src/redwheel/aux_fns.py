@@ -1,9 +1,10 @@
 """Business logic: turn read-in sources into master tables."""
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
-from redwheel import read, rtn
+from redwheel import engine, read, rtn
 from redwheel.config import (BUILD_WEEKS, CHANNELS, PLAN_END, PLAN_START, POLICY, SNAPSHOT,
                              TRANSFER_WEEKS)
 from redwheel.utils import dq
@@ -275,7 +276,28 @@ def target_report(m: dict, obj: rtn.RTN, X: pd.DataFrame, X_base: pd.DataFrame,
         "backlog_cleared_from": _held_from(net[weeks] >= -1e-6),
         "max_wos_over_target_once_held": over.max(axis=1).round(1),
     })
+    r["limited_by"] = [_limited_by(obj, at_target.loc[s], held[s], sku.at[s, "line_id"], date) for s in r.index]
     return r.rename_axis("sku")
+
+
+def _limited_by(obj: rtn.RTN, ok: pd.Series, held, line_id: str, date: pd.Series) -> str:
+    """Why a sku is not at target earlier, read from the plan (the line is at full capacity throughout,
+    which plan_checks verifies):
+    - it reached target, then fell below again   -> demand in those weeks exceeded what the line could add
+    - it first reaches target as capacity steps up -> capacity until that step-up
+    - otherwise                                   -> clearing the opening backlog"""
+    if ok.all():
+        return "—"
+    first = ok.idxmax() if ok.any() else None
+    if first is not None and first < held:
+        dip = ok.index[(~ok) & (ok.index > first)]
+        span = date[dip.min()].strftime("%b"), date[dip.max()].strftime("%b %Y")
+        return f"demand peak ahead (below target {span[0]}–{span[1]})"
+    cap = obj.arrivals.loc[f"capacity||RENO/{line_id}"]
+    step_up = [t for t in cap.index[1:] if cap[t] > cap[t - 1]]
+    if pd.notna(held) and int(held) in step_up:
+        return f"capacity until step-up, {date[int(held)].strftime('%-d %b %Y')}"
+    return "opening backlog"
 
 
 def group_wos(wos: pd.DataFrame, dim_sku: pd.DataFrame) -> pd.DataFrame:
@@ -317,3 +339,135 @@ def build_object(m: dict) -> rtn.RTN:
                   arrivals=build_arrivals(m, resources, weeks))
     rtn.validate(obj)
     return obj
+
+
+# ---------- the single button ----------
+
+def run_plan() -> dict:
+    """Raw files -> master data -> object -> LP -> whole-bike build plan -> report. One call."""
+    m = build_master()
+    obj = build_object(m)
+    H = len(obj.weeks)
+    demand = forecast_by_item(m)
+    tw = target_wos(m, obj.weeks)
+    tu = engine.forward_sum(demand, tw)
+    line = m["dim_sku"].set_index("sku")["line_id"]
+    free = list(obj.tasks.loc[obj.tasks["kind"] == "make", "task_id"])     # ships, moves stay 0
+    lp = engine.decide(obj, free, tu, demand.loc[:, 1:H].mean(axis=1), line)
+    builds = engine.round_runs(obj, lp.runs)
+    X, X_base = rtn.levels(obj, builds), rtn.levels(obj)
+    net, net_base = rtn.net_position(obj, X), rtn.net_position(obj, X_base)
+    wos = rtn.weeks_of_supply(net, demand).loc[tu.index]
+    return {
+        "m": m, "obj": obj, "demand": demand, "target_wos": tw, "target_units": tu, "line": line,
+        "lp": lp, "builds": builds, "X": X, "X_base": X_base, "net": net, "net_base": net_base,
+        "wos": wos, "wos_base": rtn.weeks_of_supply(net_base, demand).loc[tu.index],
+        "report": target_report(m, obj, X, X_base, tu, tw, demand),
+        "group_wos": group_wos(wos, m["dim_sku"]),
+        "utilisation": utilisation_by_year(obj, X),
+        "build_plan": build_plan_table(obj, builds),
+        "flows": ship_asap(m, obj, builds, demand.loc[:, 1:H]),
+    }
+
+
+def ship_asap(m: dict, obj: rtn.RTN, builds: pd.DataFrame, demand: pd.DataFrame) -> dict:
+    """Project on hand and open orders per sku, assuming orders ship as soon as stock exists
+    (sites pooled). The plan decides builds only; this splits its net position into its two parts.
+
+    shipped[t]  = min(on_hand[t-1] + built[t], open[t-1] + demand[t])
+    on_hand[t]  = on_hand[t-1] + built[t] - shipped[t]
+    open[t]     = open[t-1] + demand[t] - shipped[t]
+    so on_hand - open = net position every week, and from week 1 at most one of them is positive."""
+    op = m["opening_position"].set_index("sku")
+    items = list(demand.index)
+    built = builds.groupby(builds.index.str.split("|").str[1]).sum().loc[items]
+    H = demand.shape[1]
+    on, opn, shp = (pd.DataFrame(0.0, index=items, columns=range(0, H + 1)) for _ in range(3))
+    on[0], opn[0] = op.loc[items, "on_hand_nettable"].astype(float), op.loc[items, "backlog"].astype(float)
+    for t in range(1, H + 1):
+        avail, owed = on[t - 1] + built[t], opn[t - 1] + demand[t]
+        shp[t] = np.minimum(avail, owed)
+        on[t], opn[t] = avail - shp[t], owed - shp[t]
+    return {"on_hand": on, "open_orders": opn, "shipped": shp.loc[:, 1:], "built": built, "demand": demand}
+
+
+def plan_checks(r: dict) -> pd.DataFrame:
+    """Every check that the plan is right, computed from the run itself."""
+    m, obj, tu = r["m"], r["obj"], r["target_units"]
+    weeks = list(tu.columns)
+    X, lp, builds = r["X"], r["lp"], r["builds"]
+    cap = X[X.index.str.startswith("capacity|")].loc[:, weeks]
+    net = r["net"].loc[tu.index, weeks]
+    below = net < tu - 1e-9
+    below_lp = rtn.net_position(obj, lp.levels).loc[tu.index, weeks] < tu - 1e-6
+    full_so_far = (cap < 0.5).cumprod(axis=1).astype(bool)
+    not_explained = sum(not full_so_far.at[f"capacity||RENO/{r['line'][s]}", t]
+                        for s in below.index for t in below.columns[below.loc[s]])
+    gap = builds.cumsum(axis=1) - lp.runs.cumsum(axis=1)
+    o = m["fact_orders"]
+    net0_master = m["opening_position"].set_index("sku")["net0"]
+    rows = [
+        ("Master data", "order lines read", f"{len(o):,}", len(o) == 13_974),
+        ("Master data", "backlog units at snapshot", f"{int(o.loc[o.open_at_snapshot, 'qty'].sum()):,}",
+         o.loc[o.open_at_snapshot, "qty"].sum() == 5_991),
+        ("Object", "resources / tasks / edges", f"{len(obj.resources)} / {len(obj.tasks)} / {len(obj.arrows)}",
+         (len(obj.resources), len(obj.tasks), len(obj.arrows)) == (74, 80, 180)),
+        ("Object", "opening net position = master data, every SKU", "",
+         bool((r["net"][0].reindex(net0_master.index) == net0_master).all())),
+        ("Solver", "closure: LP levels = equation rolled forward with LP builds",
+         f"{np.abs(rtn.levels(obj, lp.runs).values - lp.levels.values).max():.1e}",
+         np.abs(rtn.levels(obj, lp.runs).values - lp.levels.values).max() < 1e-6),
+        ("Build plan", "whole bikes, none negative", "", bool((builds.values == np.round(builds.values)).all()
+                                                               and builds.values.min() >= 0)),
+        ("Build plan", "capacity never exceeded, no level below zero", f"lowest level {X.values.min():.0f}",
+         X.values.min() >= 0),
+        ("Build plan", "within 1 bike of the LP, cumulative, every SKU",
+         f"{gap.values.min():.2f} to {gap.values.max():.2f}", gap.values.min() > -1 and gap.values.max() < 1),
+        ("Build plan", "rounding adds no missed targets", "", not (below & ~below_lp).values.any()),
+        ("Targets", "below target only when the line ran full every week until then",
+         f"{int(below.values.sum())} SKU-weeks below, {not_explained} unexplained", not_explained == 0),
+    ]
+    return pd.DataFrame(rows, columns=["area", "check", "value", "pass"])
+
+
+# ---------- LP vs the planner's rule ----------
+
+def compare_plans(r: dict) -> dict:
+    """Score three plans the same way: the LP (whole bikes), the lowest-cover-first rule, and no builds."""
+    obj, tu = r["obj"], r["target_units"]
+    weeks = list(tu.columns)
+    H = len(weeks)
+    wd = r["demand"].loc[:, 1:H].mean(axis=1)
+    free = list(obj.tasks.loc[obj.tasks["kind"] == "make", "task_id"])
+    plans = {"LP plan": r["builds"],
+             "Lowest-cover-first rule": engine.lowest_cover_first(obj, free, tu, wd),
+             "No builds": pd.DataFrame(0, index=free, columns=weeks)}
+    date = obj.weeks.set_index("t")["week_start"]
+    line = r["line"]
+    summary, by_line, below_by_week, wos, at_target = {}, {}, {}, {}, {}
+    for name, runs in plans.items():
+        X = rtn.levels(obj, runs)
+        net = rtn.net_position(obj, X).loc[tu.index, weeks]
+        ok = net >= tu - 1e-6
+        held = _held_from(ok)
+        flows = ship_asap(r["m"], obj, runs, r["demand"].loc[:, 1:H])
+        prev_open = flows["open_orders"].loc[:, 0:H - 1].set_axis(weeks, axis=1)
+        on_time = flows["shipped"] - flows["shipped"].clip(upper=prev_open)
+        summary[name] = {
+            "Bikes built": int(runs.values.sum()),
+            "Capacity respected": bool(X.values.min() >= -1e-9),
+            "SKU-weeks below target": int((~ok).values.sum()),
+            "Shortfall (weeks of demand, summed)": float((tu - net).clip(lower=0).div(wd, axis=0).values.sum()),
+            "All targets held from": date[int(held.max())] if held.notna().all() else None,
+            "On-time fill rate": float(on_time.values.sum() / flows["demand"].values.sum()),
+            "LP objective (lower is better)": engine.objective_value(obj, runs, tu, wd, line),
+        }
+        by_line[name] = pd.DataFrame({"below": (~ok).sum(axis=1), "held": held}).groupby(line[tu.index]).agg(
+            below=("below", "sum"), held=("held", "max"))
+        below_by_week[name] = (~ok).sum(axis=0)
+        wos[name] = rtn.weeks_of_supply(rtn.net_position(obj, X), r["demand"]).loc[tu.index]
+        at_target[name] = ok
+    return {"plans": plans, "summary": pd.DataFrame(summary), "by_line": by_line, "below_by_week": below_by_week,
+            "wos": wos, "at_target": at_target,
+            "lp_solver_objective": r["lp"].objective,
+            "lp_unrounded_objective": engine.objective_value(obj, r["lp"].runs, tu, wd, line)}

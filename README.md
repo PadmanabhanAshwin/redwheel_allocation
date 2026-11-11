@@ -27,7 +27,7 @@ streamlit run app/app.py      # planner UI
 | `src/main.py` | The pipeline as `# %%` cells, calling the modules below |
 | `src/redwheel/` | `config` · `utils` (helpers) · `read` (one reader per file) · `aux_fns` (Redwheel logic) · `rtn` (the generic object) |
 | `tests/` | `test_rtn` (generic object, by hand) · `test_master` · `test_object` (Redwheel as the object) |
-| `app/` | Streamlit UI |
+| `app/` | Streamlit UI: `app.py` (navigation) · `ui.py` (shared data and styling) · `views/` (one file per page) |
 | `docs/` | Assumptions and data-quality log |
 | `scripts/explore/` | Original profiling scripts (reference only) |
 | `outputs/` | Generated tables (git-ignored) |

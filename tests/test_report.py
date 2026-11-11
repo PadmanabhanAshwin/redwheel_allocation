@@ -77,3 +77,24 @@ def test_rw9324_built_only_once_stock_runs_down(r):
     first = b[b > 0].index.min()
     assert first == 87
     assert (r["wos"].loc["RW-9324", :first - 1] > 12).all()
+
+
+def test_limited_by_is_read_from_the_plan(r):
+    lb = r["rep"]["limited_by"]
+    assert set(lb[["RW-1378", "RW-2984", "RW-3980"]]) == {"demand peak ahead (below target May–Jul 2027)"}
+    assert set(lb[["RW-4418", "RW-6416", "RW-9304"]]) == {"capacity until step-up, 6 Sep 2027"}
+    assert set(lb[["RW-7298", "RW-9835", "RW-9901"]]) == {"opening backlog"}
+    assert lb["RW-9324"] == "—"
+
+
+def test_ship_asap_splits_net_position_exactly(obj, m):
+    r = aux_fns.run_plan()
+    f = r["flows"]
+    net = r["net"].loc[f["on_hand"].index]
+    assert (f["on_hand"] - f["open_orders"] - net).abs().values.max() < 1e-9          # parts add up to the plan
+    assert (f["on_hand"].loc[:, 1:].clip(upper=f["open_orders"].loc[:, 1:]) == 0).all().all()   # never both
+    assert f["on_hand"].values.min() >= 0 and f["open_orders"].values.min() >= 0
+    # every bike built is either shipped or still on hand; every order is either shipped or still open
+    built, dem, shp = f["built"].sum(axis=1), f["demand"].sum(axis=1), f["shipped"].sum(axis=1)
+    assert (f["on_hand"][0] + built - shp - f["on_hand"][121]).abs().max() < 1e-9
+    assert (f["open_orders"][0] + dem - shp - f["open_orders"][121]).abs().max() < 1e-9

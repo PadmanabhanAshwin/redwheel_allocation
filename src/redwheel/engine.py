@@ -36,6 +36,51 @@ class Plan:
     objective: float
 
 
+def objective_value(obj: rtn.RTN, runs: pd.DataFrame, target_units: pd.DataFrame, weekly_demand: pd.Series,
+                    group: pd.Series, w_worst: float = 1.0, w_short: float = 0.1, w_excess: float = 0.001) -> float:
+    """Score any plan on the LP's own objective: run it through the object, then
+    w_worst * sum over groups and weeks of the largest shortfall (in weeks) in the group
+    + w_short * total shortfall in weeks + w_excess * total stock above target in weeks."""
+    items = list(target_units.index)
+    net = rtn.net_position(obj, rtn.levels(obj, runs)).loc[items, target_units.columns]
+    d = weekly_demand[items]
+    short = (target_units - net).clip(lower=0).div(d, axis=0)
+    excess = (net - target_units).clip(lower=0).div(d, axis=0)
+    worst = short.groupby(group[items]).max()
+    return float(w_worst * worst.values.sum() + w_short * short.values.sum() + w_excess * excess.values.sum())
+
+
+def lowest_cover_first(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame,
+                       weekly_demand: pd.Series) -> pd.DataFrame:
+    """The planner's rule (run-out-time priority), for comparison with the LP.
+
+    Week by week, with no look-ahead: on each line, rank its SKUs by cover against target after this week's
+    demand, in weeks ((net - target) / weekly demand, lowest first), and build each up to its target in that
+    order until the line's capacity is used. Whole bikes. Needs make tasks with no build delay."""
+    a = obj.arrows[obj.arrows["task_id"].isin(free)]
+    if (a["delay"] != 0).any():
+        raise ValueError("lowest_cover_first assumes builds land in the week they are made")
+    cap_of = a[a["resource_id"].str.startswith("capacity|")].set_index("task_id")["resource_id"]
+    item_of = obj.tasks.set_index("task_id")["item"]
+    res = obj.resources.set_index("resource_id")
+    orders = res.index[res["kind"] == "order"]
+    demand = obj.arrivals.loc[orders].groupby(res.loc[orders, "item"]).sum()       # item x t
+    net = rtn.net_position(obj, rtn.levels(obj))[0].astype(float).copy()          # opening net position
+    runs = pd.DataFrame(0, index=free, columns=target_units.columns, dtype=int)
+    for t in target_units.columns:
+        net = net - demand[t]                                                      # this week's demand first
+        for cap_id, tasks in cap_of.groupby(cap_of).groups.items():
+            left = int(round(obj.arrivals.at[cap_id, t]))
+            cover = {k: (net[item_of[k]] - target_units.at[item_of[k], t]) / weekly_demand[item_of[k]] for k in tasks}
+            for k in sorted(tasks, key=lambda k: cover[k]):
+                need = int(np.ceil(max(0.0, target_units.at[item_of[k], t] - net[item_of[k]]) - 1e-9))
+                b = min(need, left)
+                runs.at[k, t] = b
+                net[item_of[k]] += b
+                left -= b
+    return runs
+
+
 def round_runs(obj: rtn.RTN, runs: pd.DataFrame) -> pd.DataFrame:
     """Whole-number runs for tasks that draw one unit of a capacity resource per run.
 
