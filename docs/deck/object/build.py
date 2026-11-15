@@ -205,74 +205,52 @@ p2 = page(2, "Redwheel resource–task network", "",
 
 # ================================================================ 3 · network structures
 w3 = NUM["wk3"]
-# small graph pieces for this slide
-def sres(x, c, kind, name, w, h=56):
-    return f'<rect class="res" x="{x}" y="{c-h/2}" width="{w}" height="{h}" rx="12"/>' + txt(x + 12, c - 6, kind, 14, GREY) + txt(x + 12, c + 18, name, 18, INK, 700)
-def stk(x, c, name, w, h=50, fs=19):
+def sres(x, c, kind, name, w, h=60):
+    return f'<rect class="res" x="{x}" y="{c-h/2}" width="{w}" height="{h}" rx="12"/>' + txt(x + 13, c - 7, kind, 15, GREY) + txt(x + 13, c + 19, name, 19, INK, 700)
+def stk(x, c, name, w, h=54, fs=20):
     return f'<rect class="task" x="{x}" y="{c-h/2}" width="{w}" height="{h}" rx="6"/>' + txt(x + w / 2, c + fs * 0.36, name, fs, "#fff", 700, "middle")
 def sar(x1, y1, x2, y2, lab="", lx=None, ly=None, anchor="middle", curve=False):
     d = f"M{x1} {y1} C{x1+30} {y1} {x2-36} {y2} {x2-4} {y2}" if curve else f"M{x1} {y1} L{x2-4} {y2}"
     lx = (x1 + x2) / 2 if lx is None else lx; ly = min(y1, y2) - 10 if ly is None else ly
-    return f'<path class="wire" style="stroke-width:2" marker-end="url(#a)" d="{d}"/>' + (txt(lx, ly, lab, 18, AMB, 700, anchor) if lab else "")
-O = lambda op: f" {op} "; P_ = " + "; SUM_LE = lambda sub: f'Σ{v("", sub)}'
+    return f'<path class="wire" style="stroke-width:2" marker-end="url(#a)" d="{d}"/>' + (txt(lx, ly, lab, 19, AMB, 700, anchor) if lab else "")
+O = lambda op: f" {op} "; P_ = " + "; M_ = " − "; SUM_LE = lambda sub: f'Σ{v("", sub)}'
+tagA = lambda x, y, s, anchor="middle": txt(x, y, s, 18, AMB, 700, anchor)
 
-# four structures, each alone: (header, effect, term, diagram(x0, c), relation, number)
-CY = 386
+# the four structures, each alone
+CY = 382
 def dA(x, c): return stk(x, c, "make", 80) + sar(x+80, c, x+130, c, "+1") + sres(x+130, c, "inventory", "Reno, 25", 140) + sar(x+270, c, x+320, c, "−1") + stk(x+320, c, "move", 80)
-def dB(x, c): return (sres(x, c, "capacity", "MTB carbon", 150) + "".join(sar(x+150, c+d0, x+230, c+d1, curve=True) for d0, d1 in [(-12, -52), (0, 0), (12, 52)])
-                      + txt(x+188, c-40, "−1", 18, AMB, 700, "middle") + "".join(stk(x+230, c+dy, f"make {k}", 150, 40, 17) for dy, k in [(-52, "9304"), (0, "4418"), (52, "6416")]))
-def dC(x, c): return (sres(x, c-31, "capacity", "line", 130, 50) + sres(x, c+31, "inventory", "frames", 130, 50) + sar(x+130, c-31, x+230, c-8, "−1", ly=c-38, curve=True)
-                      + sar(x+130, c+31, x+230, c+8, "−1", ly=c+52, curve=True) + stk(x+230, c, "make", 90))
+def dB(x, c): return (sres(x, c, "capacity", "MTB carbon", 150) + "".join(sar(x+150, c+d0, x+230, c+d1, curve=True) for d0, d1 in [(-12, -56), (0, 0), (12, 56)])
+                      + txt(x+172, c-40, "−1", 19, AMB, 700, "middle") + "".join(stk(x+230, c+dy, f"make {k}", 150, 44, 18) for dy, k in [(-56, "9304"), (0, "4418"), (56, "6416")]))
+def dC(x, c): return (sres(x, c-34, "capacity", "line", 130, 54) + sres(x, c+34, "inventory", "frames", 130, 54) + sar(x+130, c-34, x+230, c-9, "−1", ly=c-42, curve=True)
+                      + sar(x+130, c+34, x+230, c+9, "−1", ly=c+58, curve=True) + stk(x+230, c, "make", 90))
 def dD(x, c): return stk(x, c, "move", 80) + sar(x+80, c, x+210, c, "+1, 1 wk") + sres(x+210, c, "inventory", "Columbus", 150)
-ALONE = [("Series", "dependency", "material availability", dA,
-          f'{SUM_LE("τ≤t")} {v("N", "move,τ")}{O("≤")}{v("X", "Reno,0")}{P_}{SUM_LE("τ≤t")} {v("N", "make,τ")}', "RW-4418: 25 at Reno at opening"),
-         ("Shared input", "competition", "capacity allocation", dB,
-          f'{v("N", "9304,t")}{P_}{v("N", "4418,t")}{P_}{v("N", "6416,t")}{O("≤")}375',
-          f'Week of 21 Sep 2026: {w3["RW-9304"][0]} + {w3["RW-4418"][0]} + {w3["RW-6416"][0]} = 375'),
-         ("Joint input", "matching", "assembly, bill of materials", dC,
-          f'{v("N", "make,t")}{O("≤")}min( {v("line", "t")}, {v("frames", "t")} )', "Worked below, with a supplier"),
-         ("Delay", "lag", "lead time, pipeline stock", dD,
-          f'{v("X", "transit,t")}{O("=")}{v("N", "move,t")}',
-          f'Scenario B: {SC["B"]["scorecard"]["Average bikes in transit"]:.0f} bikes in transit on average')]
+ALONE = [("Series", "dependency", dA, f'{SUM_LE("τ≤t")} {v("N", "move,τ")}{O("≤")}{v("X", "Reno,0")}{P_}{SUM_LE("τ≤t")} {v("N", "make,τ")}'),
+         ("Shared input", "competition", dB, f'{v("N", "9304,t")}{P_}{v("N", "4418,t")}{P_}{v("N", "6416,t")}{O("≤")}375'),
+         ("Joint input", "matching", dC, f'{v("N", "make,t")}{O("≤")}min( {v("line", "t")}, {v("frames", "t")} )'),
+         ("Delay", "lag", dD, f'{v("X", "transit,t")}{O("=")}{v("N", "move,t")}')]
 def alone():
-    g = txt(110, 240, "Each structure alone", 17, GREY, 700)
-    for i, (h, eff, term, dg, rel, num) in enumerate(ALONE):
+    g = ""
+    for i, (h, eff, dg, rel) in enumerate(ALONE):
         x = 110 + i * 435
-        g += (txt(x, 290, f'{B_(h)} <tspan style="fill:{GREY}">·</tspan> <tspan style="fill:{AMB};font-weight:700">{eff}</tspan>', 24)
-              + txt(x, 316, term, 16, GREY) + dg(x, CY) + meq(x, 486, rel, 24) + txt(x, 518, num, 17))
+        g += txt(x, 262, f'{B_(h)} <tspan style="fill:{GREY}">·</tspan> <tspan style="fill:{AMB};font-weight:700">{eff}</tspan>', 26) + dg(x, CY) + meq(x, 492, rel, 26)
     return g
 
-# combined: the tested small example (tests/test_generality.py, bike_from_a_frame); Redwheel's data has no components
-FRAME = {"week": [1, 2, 3, 4, 5, 6], "frames bought": [9, 4, 4, 4, 0, 0], "frames available": [3, 0, 9, 4, 4, 4],
-         "line capacity": [10] * 6, "ordered": [4] * 6, "built": [3, 0, 9, 4, 4, 4], "owed after the week": [1, 5, 0, 0, 0, 0],
-         "limit on builds": ["frames", "frames", "orders", "orders", "orders", "orders"]}
-C2 = 778
-def combined_graph():
-    return (stk(110, C2, "buy", 75) + sar(185, C2, 290, C2, "+1, 2 wk") + sres(290, C2, "inventory", "frames, 3", 140)
-            + sar(430, C2, 480, C2, "−1") + stk(480, C2, "make", 85)
-            + sres(452, C2 - 104, "capacity", "line, 10 / wk", 142) + sar(522, C2 - 76, 522, C2 - 25) + txt(508, C2 - 44, "−1", 18, AMB, 700, "end")
-            + sar(565, C2, 615, C2, "+1") + sres(615, C2, "inventory", "bikes", 115) + sar(730, C2, 780, C2, "−1") + stk(780, C2, "fulfil", 85)
-            + sar(865, C2, 915, C2, "−1") + sres(915, C2, "order", "4 / wk", 115)
-            + "".join(txt(x, C2 + 58, s, 17, AMB, 700, "middle") for x, s in [(237, "delay"), (522, "joint input"), (672, "series")]))
-def frame_table():
-    x0, xs, y0, dy = 1120, [1470 + 62 * i for i in range(6)], 640, 31
-    g = f'<rect x="{xs[1]-27}" y="{y0-22}" width="54" height="{dy*len(FRAME)+4}" rx="6" style="fill:{tint(AMB, 0.13)}"/>'
-    for r, (k, vals) in enumerate(FRAME.items()):
-        y = y0 + r * dy; head = r == 0; bold = k == "built"; lim = k == "limit on builds"
-        col = AMB if lim else (GREY if head else INK); w = 700 if (bold or lim) else 400
-        g += txt(x0, y, k, 16 if head else 18, GREY if head else INK, 700 if bold else 400)
-        g += "".join(txt(x, y, f"{val}", 15 if lim else (16 if head else 18), col, w, "middle") for x, val in zip(xs, vals))
-        if head: g += f'<line x1="{x0}" y1="{y+11}" x2="1810" y2="{y+11}" style="stroke:{RULE_C};stroke-width:1.5"/>'
-    return g
+# combined: a bill of materials. bike = 1 frame + 2 wheels; frames bought on a 2-week lead time
+CA, CB = 690, 850
+def bom():
+    return (stk(110, CA, "buy", 80) + sar(190, CA, 320, CA, "+1, 2 wk") + tagA(255, CA + 38, "delay")
+            + sres(320, CA, "inventory", "frames", 150) + tagA(395, CA - 44, "series")
+            + sres(320, CB, "inventory", "wheels", 150) + tagA(395, CB + 58, "shared input")
+            + sar(470, CA - 4, 630, CA - 12) + sar(470, CA + 14, 630, CB - 14) + sar(470, CB - 14, 630, CA + 14) + sar(470, CB + 4, 630, CB + 12)
+            + "".join(txt(x, y, l, 19, AMB, 700, "middle") for x, y, l in [(584, CA - 22, "−1"), (622, CA + 52, "−2"), (624, CB - 38, "−1"), (604, CB + 44, "−2")])
+            + stk(630, CA, "make A", 120) + tagA(690, CA - 44, "joint input") + stk(630, CB, "make B", 120)
+            + sar(750, CA, 820, CA, "+1") + sres(820, CA, "inventory", "bike A", 130) + sar(750, CB, 820, CB, "+1") + sres(820, CB, "inventory", "bike B", 130))
+ROWS = [f'{v("X", "frames,t")}{O("=")}{v("X", "frames,t−1")}{P_}{v("N", "buy,t−2")}{M_}{v("N", "A,t")}{M_}{v("N", "B,t")}{O("≥")}0',
+        f'{v("X", "wheels,t")}{O("=")}{v("X", "wheels,t−1")}{P_}{v("π", "wheels,t")}{M_}2{v("N", "A,t")}{M_}2{v("N", "B,t")}{O("≥")}0']
 p3 = page(3, "Network structures", "",
-          alone() + rule(552)
-          + txt(110, 600, "Combined: one bike built from a bought frame", 17, GREY, 700)
-          + txt(1810, 600, "small example, tested; Redwheel’s data has no components", 16, GREY, 400, "end")
-          + combined_graph() + frame_table()
-          + lines(110, 892, ["Week 2: the line has 10 free and builds 0; frames bought in week 1 arrive in week 3.",
-                             "The plan buys 9 frames in week 1, for the 5 owed and week 3’s 4 ordered.",
-                             "With 9 frames at the start instead of 3, it builds 4 every week."], 18, INK, 29)
-          + rule(980) + txt(110, 1022, "Alone, each structure gives one relation in closed form. Combined, the limit changes by week; the LP solves the balance for all resources and weeks at once.", 21))
+          alone() + rule(560) + txt(110, 606, "Combined: bill of materials", 18, GREY, 700)
+          + bom() + meq(1090, 742, ROWS[0], 27) + meq(1090, 820, ROWS[1], 27)
+          + rule(958) + txt(110, 1006, "The balances share runs and weeks; the LP solves them together.", 23))
 
 # ================================================================ 5 · linear program
 SH = ["9304", "4418", "6416"]; OPEN_STOCK = {"9304": 10, "4418": 25, "6416": 15}
