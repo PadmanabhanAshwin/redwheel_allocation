@@ -514,3 +514,49 @@ def test_round_runs_in_whole_lots():
     assert R.loc["make|A|L"].tolist() == [4, 8] and R.loc["make|B|L"].tolist() == [6, 2]
     gap = R.cumsum(axis=1) - pd.DataFrame([[6, 12], [4, 8]], index=R.index, columns=[1, 2])
     assert gap.abs().values.max() < 4 and R.sum().tolist() == [10, 10]
+
+
+# ---------------- ties: a way to break them, and the proof there are none in the scenarios (O34) ----------------
+
+@pytest.mark.parametrize("base, want", [
+    ([10, 10, 10, 10], [10, 10, 10, 10]),     # every plan building at least 8 in week 1 is optimal: the closest is kept
+    ([8, 0, 0, 0], [8, 0, 0, 0]),
+    ([0, 0, 0, 0], [8, 0, 0, 0]),              # the closest optimal plan to building nothing builds what is needed
+    ([0, 9, 0, 0], [8, 9, 0, 0]),              # 8 must come in week 1; week 2 keeps the base's 9 (extra costs nothing here)
+])
+def test_the_tie_break_picks_the_optimal_plan_closest_to_a_base(base, want):
+    """The tiny chain with stock above target and runs free (w_excess = w_run = 0): any plan building at least 8 in week
+    1 is optimal, a real tie. decide(base_runs=...) keeps the optimum and moves as few runs as possible from the base."""
+    obj = tiny()
+    tgt = pd.DataFrame([[6, 6, 6, 6]], index=["A"], columns=[1, 2, 3, 4], dtype=float)
+    b = pd.DataFrame([base], index=["make|A|L"], columns=[1, 2, 3, 4], dtype=float)
+    p = engine.decide(obj, ["make|A|L"], tgt, pd.Series({"A": 1.0}), pd.Series({"A": "L"}), w_excess=0.0, base_runs=b)
+    assert p.runs.loc["make|A|L"].round(5).tolist() == want
+    assert p.short.values.max() == pytest.approx(0, abs=1e-6)          # the optimum, to the hold tolerance
+
+
+@pytest.mark.parametrize("key", ["A", "E1", "E4", "P1"])
+def test_the_scenarios_have_no_ties(key):
+    """Every optimal plan is the solver's plan, to within a bike: pulled toward a random plan, as far as the objective
+    allows (the hold tolerance, 1e-7 + 1e-9 x objective, buys about one run at the run cost of 1e-6), no run moves by
+    more than 1.5. So the plans are not an accident of the solver's path, and the tie-break is not used by run_case:
+    on this data it would only add solver noise (D27). E1 in particular: its SKU re-mix around the stoppage is the
+    objective's, not a tie."""
+    from dataclasses import replace
+    from redwheel import scenarios as sc
+    case = {"A": sc.CASE_A, "E1": sc.CASE_E1, "E4": sc.CASE_E4, "P1": sc.CASE_P1}[key]
+    plain = sc.run_case(case)["lp"].runs
+    rng = np.random.default_rng(0)
+    base = pd.DataFrame(rng.uniform(0, 600, plain.shape), index=plain.index, columns=plain.columns)
+    fn = "decide_walk" if case.walk else "decide"
+    real = getattr(engine, fn)
+
+    def pulled(*a, **kw):
+        return real(*a, **{**kw, "base_runs": base})
+    mp = pytest.MonkeyPatch()
+    mp.setattr(engine, fn, pulled)
+    try:
+        got = sc.run_case(replace(case, key=key + "-pulled"))["lp"].runs
+    finally:
+        mp.undo()
+    assert np.abs(got.values - plain.values).max() < 1.5

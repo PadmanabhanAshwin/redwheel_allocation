@@ -3442,9 +3442,16 @@
    ]
   },
   "against_A": {
+   "against": "A",
    "bikes_built_diff": 0,
    "sku_totals_diff": {},
    "cells_that_differ": 582,
+   "cells_that_differ_by_line": {
+    "mtb-base": 66,
+    "mtb-carbon": 263,
+    "road-base": 92,
+    "road-carbon": 161
+   },
    "mtb_carbon_line_weekly_diff": {
     "53": 77,
     "54": 292,
@@ -5038,9 +5045,39 @@
    ]
   },
   "against_A": {
+   "against": "A",
    "bikes_built_diff": 0,
    "sku_totals_diff": {},
    "cells_that_differ": 77,
+   "cells_that_differ_by_line": {
+    "mtb-base": 0,
+    "mtb-carbon": 77,
+    "road-base": 0,
+    "road-carbon": 0
+   },
+   "mtb_carbon_line_weekly_diff": {
+    "26": -375,
+    "27": -375,
+    "28": -375,
+    "53": 77,
+    "54": 292,
+    "55": 290,
+    "56": 289,
+    "57": 177
+   },
+   "other_lines_identical": true
+  },
+  "against_parent": {
+   "against": "A",
+   "bikes_built_diff": 0,
+   "sku_totals_diff": {},
+   "cells_that_differ": 77,
+   "cells_that_differ_by_line": {
+    "mtb-base": 0,
+    "mtb-carbon": 77,
+    "road-base": 0,
+    "road-carbon": 0
+   },
    "mtb_carbon_line_weekly_diff": {
     "26": -375,
     "27": -375,
@@ -6573,11 +6610,37 @@
    ]
   },
   "against_A": {
+   "against": "A",
    "bikes_built_diff": 191,
    "sku_totals_diff": {
     "RW-4418": 191
    },
    "cells_that_differ": 103,
+   "cells_that_differ_by_line": {
+    "mtb-base": 0,
+    "mtb-carbon": 103,
+    "road-base": 0,
+    "road-carbon": 0
+   },
+   "mtb_carbon_line_weekly_diff": {
+    "53": 77,
+    "54": 114
+   },
+   "other_lines_identical": true
+  },
+  "against_parent": {
+   "against": "A",
+   "bikes_built_diff": 191,
+   "sku_totals_diff": {
+    "RW-4418": 191
+   },
+   "cells_that_differ": 103,
+   "cells_that_differ_by_line": {
+    "mtb-base": 0,
+    "mtb-carbon": 103,
+    "road-base": 0,
+    "road-carbon": 0
+   },
    "mtb_carbon_line_weekly_diff": {
     "53": 77,
     "54": 114
@@ -8104,9 +8167,44 @@
    ]
   },
   "against_A": {
+   "against": "A",
    "bikes_built_diff": 0,
    "sku_totals_diff": {},
    "cells_that_differ": 13,
+   "cells_that_differ_by_line": {
+    "mtb-base": 0,
+    "mtb-carbon": 13,
+    "road-base": 0,
+    "road-carbon": 0
+   },
+   "mtb_carbon_line_weekly_diff": {
+    "55": 255,
+    "56": 289,
+    "57": 284,
+    "58": 284,
+    "59": 282,
+    "60": -130,
+    "61": -131,
+    "62": -132,
+    "63": -132,
+    "64": -215,
+    "65": -216,
+    "66": -218,
+    "67": -220
+   },
+   "other_lines_identical": true
+  },
+  "against_parent": {
+   "against": "A",
+   "bikes_built_diff": 0,
+   "sku_totals_diff": {},
+   "cells_that_differ": 13,
+   "cells_that_differ_by_line": {
+    "mtb-base": 0,
+    "mtb-carbon": 13,
+    "road-base": 0,
+    "road-carbon": 0
+   },
    "mtb_carbon_line_weekly_diff": {
     "55": 255,
     "56": 289,
@@ -9644,11 +9742,37 @@
    ]
   },
   "against_A": {
+   "against": "A",
    "bikes_built_diff": 300,
    "sku_totals_diff": {
     "RW-4418": 300
    },
    "cells_that_differ": 86,
+   "cells_that_differ_by_line": {
+    "mtb-base": 0,
+    "mtb-carbon": 86,
+    "road-base": 0,
+    "road-carbon": 0
+   },
+   "mtb_carbon_line_weekly_diff": {
+    "53": 77,
+    "54": 223
+   },
+   "other_lines_identical": true
+  },
+  "against_parent": {
+   "against": "A",
+   "bikes_built_diff": 300,
+   "sku_totals_diff": {
+    "RW-4418": 300
+   },
+   "cells_that_differ": 86,
+   "cells_that_differ_by_line": {
+    "mtb-base": 0,
+    "mtb-carbon": 86,
+    "road-base": 0,
+    "road-carbon": 0
+   },
    "mtb_carbon_line_weekly_diff": {
     "53": 77,
     "54": 223
@@ -11175,11 +11299,102 @@
    ]
   },
   "against_A": {
+   "against": "A",
    "bikes_built_diff": 33,
    "sku_totals_diff": {
     "RW-9304": 33
    },
    "cells_that_differ": 225,
+   "cells_that_differ_by_line": {
+    "mtb-base": 0,
+    "mtb-carbon": 225,
+    "road-base": 0,
+    "road-carbon": 0
+   },
+   "mtb_carbon_line_weekly_diff": {
+    "53": 19,
+    "54": 8,
+    "55": 8,
+    "56": 7,
+    "57": 6,
+    "58": -44,
+    "59": 6,
+    "60": 5,
+    "61": 4,
+    "62": 3,
+    "63": 2,
+    "64": -6,
+    "65": -8,
+    "66": -8,
+    "67": 41,
+    "68": -10,
+    "69": -10,
+    "70": -11,
+    "71": 37,
+    "72": -14,
+    "73": -15,
+    "74": -16,
+    "75": 34,
+    "76": -18,
+    "77": 10,
+    "78": 8,
+    "79": 8,
+    "80": -42,
+    "81": 6,
+    "82": 6,
+    "83": 5,
+    "84": 3,
+    "85": 3,
+    "86": 2,
+    "87": 2,
+    "90": 10,
+    "91": 8,
+    "92": -42,
+    "93": 8,
+    "94": 8,
+    "95": 7,
+    "96": 6,
+    "97": 6,
+    "98": 5,
+    "99": -45,
+    "100": 3,
+    "101": 3,
+    "102": 2,
+    "103": 28,
+    "104": -23,
+    "105": 26,
+    "106": -24,
+    "107": 24,
+    "108": -26,
+    "109": 24,
+    "110": -27,
+    "111": 22,
+    "112": -28,
+    "113": 20,
+    "114": 20,
+    "115": -31,
+    "116": -10,
+    "117": 38,
+    "118": -14,
+    "119": -14,
+    "120": 34,
+    "121": -16
+   },
+   "other_lines_identical": true
+  },
+  "against_parent": {
+   "against": "A",
+   "bikes_built_diff": 33,
+   "sku_totals_diff": {
+    "RW-9304": 33
+   },
+   "cells_that_differ": 225,
+   "cells_that_differ_by_line": {
+    "mtb-base": 0,
+    "mtb-carbon": 225,
+    "road-base": 0,
+    "road-carbon": 0
+   },
    "mtb_carbon_line_weekly_diff": {
     "53": 19,
     "54": 8,
@@ -12801,9 +13016,30 @@
    ]
   },
   "against_A": {
+   "against": "A",
    "bikes_built_diff": 0,
    "sku_totals_diff": {},
    "cells_that_differ": 152,
+   "cells_that_differ_by_line": {
+    "mtb-base": 0,
+    "mtb-carbon": 138,
+    "road-base": 0,
+    "road-carbon": 14
+   },
+   "mtb_carbon_line_weekly_diff": {},
+   "other_lines_identical": false
+  },
+  "against_parent": {
+   "against": "A",
+   "bikes_built_diff": 0,
+   "sku_totals_diff": {},
+   "cells_that_differ": 152,
+   "cells_that_differ_by_line": {
+    "mtb-base": 0,
+    "mtb-carbon": 138,
+    "road-base": 0,
+    "road-carbon": 14
+   },
    "mtb_carbon_line_weekly_diff": {},
    "other_lines_identical": false
   }
@@ -14756,9 +14992,16 @@
    ]
   },
   "against_A": {
+   "against": "A",
    "bikes_built_diff": 0,
    "sku_totals_diff": {},
    "cells_that_differ": 583,
+   "cells_that_differ_by_line": {
+    "mtb-base": 66,
+    "mtb-carbon": 264,
+    "road-base": 92,
+    "road-carbon": 161
+   },
    "mtb_carbon_line_weekly_diff": {
     "53": 77,
     "54": 292,
@@ -14831,6 +15074,35 @@
     "121": -788
    },
    "other_lines_identical": false
+  },
+  "against_parent": {
+   "against": "B",
+   "bikes_built_diff": 0,
+   "sku_totals_diff": {},
+   "cells_that_differ": 16,
+   "cells_that_differ_by_line": {
+    "mtb-base": 0,
+    "mtb-carbon": 16,
+    "road-base": 0,
+    "road-carbon": 0
+   },
+   "mtb_carbon_line_weekly_diff": {
+    "55": 255,
+    "56": 284,
+    "57": 283,
+    "58": 282,
+    "59": 276,
+    "60": -131,
+    "61": -132,
+    "62": -164,
+    "63": -215,
+    "64": -217,
+    "65": -219,
+    "66": -221,
+    "67": -141,
+    "68": 60
+   },
+   "other_lines_identical": true
   }
  },
  "_meta": {
@@ -14969,6 +15241,66 @@
    "B+E3"
   ],
   "all_checks_pass": true,
+  "consistency": [
+   {
+    "rule": "every scenario passes every plan check",
+    "holds": true
+   },
+   {
+    "rule": "A builds 94,429 bikes and holds every target from 6 Sep 2027 (the frozen base)",
+    "holds": true
+   },
+   {
+    "rule": "E1 takes 3 weeks of 375 off MTB carbon and makes all 1,125 back, nothing else",
+    "holds": true
+   },
+   {
+    "rule": "E2 builds exactly the orders it adds (636 -> 827: +191), all RW-4418, other lines identical",
+    "holds": true
+   },
+   {
+    "rule": "E3 builds the same bikes at other times, other lines identical, no date moves",
+    "holds": true
+   },
+   {
+    "rule": "E4 builds exactly the 300 it adds, all RW-4418, other lines identical",
+    "holds": true
+   },
+   {
+    "rule": "E5 builds RW-9304 only in whole lots of 50, its total rounded up to a whole lot (A's 16,267 -> 16,300)",
+    "holds": true
+   },
+   {
+    "rule": "E5 moves no line's date and leaves the other lines identical",
+    "holds": true
+   },
+   {
+    "rule": "P1 builds the same bikes, holds every target on the same date, clears every order on the same date",
+    "holds": true
+   },
+   {
+    "rule": "P1's ranking moves only MTB carbon; its 'orders past their date first' step also re-mixes road carbon (14 cells, weeks 3-7); base lines identical",
+    "holds": true
+   },
+   {
+    "rule": "P1 brings RW-9304 and RW-4418 to target sooner and RW-6416 on A's date",
+    "holds": true
+   },
+   {
+    "rule": "a change never brings a line's date earlier than its parent's, except by priority",
+    "holds": true
+   },
+   {
+    "rule": "B+E3 builds B's bikes at other times; its MTB carbon date is no earlier than B's",
+    "holds": true
+   },
+   {
+    "rule": "the same 375 a week on MTB carbon in every full week of A, E2, E3, E4, E5 and P1 (weeks 1-52)",
+    "holds": true
+   }
+  ],
+  "code_at_commit": "afc4d7b (plus any uncommitted change)",
+  "optimality": "every solve certified from its duals and re-solved by interior point (tests/test_optimality.py); every optimal plan is the solver's plan to within a bike (tests/test_engine.py, no ties)",
   "tests": "run PYTHONPATH=src .venv/bin/python -m pytest -q to confirm the suite that pins these numbers"
  }
 }

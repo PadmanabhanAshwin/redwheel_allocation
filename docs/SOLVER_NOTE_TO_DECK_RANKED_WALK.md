@@ -109,8 +109,8 @@ week (the line's weekly total is identical under both rules in every week); rule
 `weeks` (plan week → Monday), `A` and `P1` (bike → 121 weekly builds, whole bikes), `capacity` (the line, per week),
 `wos_A`, `wos_P1` and `target_wos` (weeks of supply and target, per bike and week), all for the three MTB carbon
 bikes. Plot `P1[bike]` in the bike's colour over `A[bike]` in grey, exactly as the slide is laid out; the shapes
-will be rougher than the sketch (the solver moves bikes between weeks where the even rule had ties), and that is
-fine: say "the solver's plan".
+will be rougher than the sketch (the objective moves bikes between weeks as each week's shortage is shared), and
+that is fine: say "the solver's plan". It is the only optimal plan to within a bike (D27).
 
 **One wording fix:** "Serve waiting customers first, equally" is right for step 2, but P1's step 1 is "customers
 past their date first". Either say both or drop "past their date" from the scenario (that is the object session's

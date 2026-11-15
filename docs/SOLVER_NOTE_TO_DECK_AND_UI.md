@@ -74,3 +74,37 @@ sentence each: "we changed N numbers, this moved, nothing else did."
 
 Words: "fixed order quantity" or "built in lots of 50"; not "FOQ" on a slide. Say the LP plans the flow and the
 build plan is cut into lots; do not say the solver chooses lot timing (the exact version is later work).
+
+## 6. The final run (15 Nov, night): read this, then `docs/deck/deck_numbers.json`, once
+
+The numbers file is final. It was written by `scripts/deck_numbers.py` after the last solver change, and the script
+refuses to write it unless every scenario passes every plan check and 14 consistency rules hold between the
+scenarios and their changes (listed in the file under `_meta.consistency`, all "holds": true). Regenerate only if
+the code changes.
+
+| Scenario | What changed | Bikes built | MTB carbon at target | Every order cleared | On-time fill | Lines touched |
+|---|---|---|---|---|---|---|
+| **A** | nothing (the base) | 94,429 | 6 Sep 2027 | 14 Dec 2026 | 96.4% | – |
+| **B** | web orders ship from the PDC; a week to build | 94,429 | 27 Sep 2027 | 4 Jan 2027 | 95.3% | all four (a different rule) |
+| **E1** | MTB carbon line down 3 weeks (1–15 Mar 2027) | 94,429 | 4 Oct 2027 | 14 Dec 2026 | 96.4% | MTB carbon only (77 cells) |
+| **E2** | RW-4418 dealer orders +30%, Jan–Mar 2027 | 94,620 | 13 Sep 2027 | 14 Dec 2026 | 96.4% | MTB carbon only (103 cells) |
+| **E3** | no RW-4418 for 8 weeks (frames late), Oct–Dec 2027 | 94,429 | 6 Sep 2027 | 14 Dec 2026 | 96.4% | MTB carbon only (13 cells) |
+| **E4** | a fleet order: 300 RW-4418, week of 9 Nov 2026 | 94,729 | 13 Sep 2027 | 28 Dec 2026 | 95.6% | MTB carbon only (86 cells) |
+| **E5** | RW-9304 built in lots of 50 | 94,462 | 6 Sep 2027 | 21 Dec 2026 | 96.3% | MTB carbon only (225 cells) |
+| **P1** | priority order: past-due orders, then all orders, then RW-9304 → RW-4418 → RW-6416 | 94,429 | 6 Sep 2027 | 14 Dec 2026 | 96.4% | MTB carbon (138 cells), road carbon (14) |
+| **B+E3** | E3's frames late, under B's rules | 94,429 | 27 Dec 2027 | 4 Jan 2027 | 95.3% | MTB carbon only (16 cells vs B) |
+
+**Three facts for the "why believe it" slide, each pinned by a test:**
+1. *Optimal, proved.* Every LP solve of every scenario is certified from its own duals (feasible plan, feasible duals,
+   duality gap ≤ 1e-15), and a second algorithm (interior point) finds the same optimum.
+2. *The only optimal plan.* Pulled toward any other plan, the optimum does not move by more than a bike: nothing in
+   these plans is an accident of the solver's path.
+3. *Consistent.* Each event's footprint is exactly where its change is: E2 and E4 build exactly the bikes they add,
+   E1 makes back all 1,125 lost bikes, E3 and E5 move no date, the other lines are identical cell for cell.
+
+**Two corrections to earlier wording:**
+- E1's re-mix of the three MTB carbon bikes in weeks 25–57 is the objective's doing, not a tie: with 1,125 bikes lost,
+  every week until the catch-up is further from target than in A, and sharing that evenly needs a different split.
+  Say "the line shares the loss", not "the solver happens to swap bikes".
+- P1's ranking moves only MTB carbon (117 cells on its own). Its first step, "orders past their date first", covers
+  every line and re-mixes road carbon in 14 cells in weeks 3–7 (at most 11 bikes in a cell). Say which step did what.

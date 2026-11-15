@@ -154,7 +154,8 @@ a part week.
 | Fairness makes the plan worse (O24) | checked: it is what serves customers first; see §3 |
 | "All targets held from" dates the last shortfall; the objective counts how far short, not when (O28) | open |
 | End of horizon with lead times (O14) | open, guarded by a test |
-| Ties: one-bike swaps between SKUs equally far behind are arbitrary | open, harmless |
+| Ties: is the plan an accident of the solver's path? | closed (D27): every optimal plan is the solver's plan to within a bike; a tie-break exists (`base_runs`) and is not needed |
+| Is the plan optimal, or only what the solver reports? | closed (D27): certified from the duals for every solve, and re-solved by interior point |
 
 ## 6. What changed for you
 
@@ -180,6 +181,9 @@ divisor the plan used). `net`, `target_units`, `demand` and the shape of `builds
   `weeks_of_supply`; `window_demand` with its floor; a Series divisor equals the same number every week; the MTB carbon
   SKUs level on the planner's measure; a 15.5-week target agrees with weeks of supply in every position-week;
   a window with no demand still plans.
+- `tests/test_optimality.py`: every solve of every built-in scenario certified optimal from its own duals
+  (`engine.certificate`: primal violation, dual violation, duality gap), and the same objective from interior point.
+- `tests/test_engine.py` (ties): the tie-break on a case with real ties; no ties in A, E1, E4, P1.
 - `tests/test_base_case.py`: the frozen base plan (TIMING re-pinned for D23; BUILT, 278 and the dates unchanged).
 - `tests/test_events.py`, `tests/test_baseline.py`: events and the LP against the planner's rule.
 - D23 was validated against an independent build of the LP from the previous commit's source with the divisor

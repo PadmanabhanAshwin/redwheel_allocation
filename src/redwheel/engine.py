@@ -305,6 +305,66 @@ def _solve(c, A_ub, b_ub, A_eq, b_eq, bounds) -> np.ndarray:
     return sol.x
 
 
+def certificate(c, A_ub, b_ub, A_eq, b_eq, bounds, sol) -> dict:
+    """An optimality certificate for a solved LP, computed here from the solver's primal and dual values, not taken
+    from the solver's word. For  min c.x  s.t.  A_ub x <= b_ub, A_eq x = b_eq, lo <= x <= hi  the dual is
+    max b_ub.y_ub + b_eq.y_eq + lo.y_lo + hi.y_hi  s.t.  A_ub' y_ub + A_eq' y_eq + y_lo + y_hi = c,
+    y_ub <= 0, y_lo >= 0, y_hi <= 0 (scipy's marginals). x is optimal when it is feasible, y is feasible, and the two
+    objectives meet. Returns the largest primal violation, the largest dual violation (residual and signs) and the
+    gap between the objectives, relative to max(1, |c.x|)."""
+    x = sol.x
+    lo, hi = np.asarray(bounds, float)[:, 0], np.asarray(bounds, float)[:, 1]
+    A_ub, A_eq = sparse.csr_matrix(A_ub), sparse.csr_matrix(A_eq)
+    b_ub, b_eq = np.asarray(b_ub, float), np.asarray(b_eq, float)
+    y_ub, y_eq = sol.ineqlin.marginals, sol.eqlin.marginals
+    y_lo, y_hi = sol.lower.marginals, sol.upper.marginals
+    primal = max(float(np.max(A_ub.dot(x) - b_ub, initial=0.0)), float(np.max(np.abs(A_eq.dot(x) - b_eq), initial=0.0)),
+                 float(np.max(lo - x, initial=0.0)), float(np.max(np.where(np.isfinite(hi), x - hi, 0.0), initial=0.0)))
+    residual = np.asarray(c, float) - A_ub.T.dot(y_ub) - A_eq.T.dot(y_eq) - y_lo - y_hi
+    signs = max(float(np.max(y_ub, initial=0.0)), float(np.max(-y_lo, initial=0.0)), float(np.max(y_hi, initial=0.0)),
+                float(np.max(np.abs(np.where(np.isfinite(hi), 0.0, y_hi)), initial=0.0)))
+    dual_obj = _dot(b_ub, y_ub) + _dot(b_eq, y_eq) + _dot(lo, y_lo) + _dot(np.where(np.isfinite(hi), hi, 0.0), y_hi)
+    primal_obj = float((np.asarray(c, float) * x).sum())
+    return {"primal": primal, "dual": max(float(np.max(np.abs(residual), initial=0.0)), signs),
+            "gap": abs(primal_obj - float(dual_obj)) / max(1.0, abs(primal_obj)), "objective": primal_obj}
+
+
+def _closest(lp: _LP, A_ub, b_ub, A_eq, b_eq, bounds, held: list, base_runs: pd.DataFrame) -> np.ndarray:
+    """The tie-break: among the plans that keep every held objective at its optimum, the one closest to a base plan.
+
+    held: [(c, limit)], each objective already minimised; it is kept at most at its limit. Closest means the fewest
+    runs moved, week by week: minimise sum |runs[i,t] - base[i,t]| over the tasks the base has (an L1 distance, made
+    linear with two slack variables per run). Nothing the plan is judged on can get worse, so it only chooses among
+    equally good plans; without it the solver's own path chooses, and a what-if moves runs its change did not need."""
+    n, H = A_ub.shape[1], lp.H
+    tasks = [i for i, k in enumerate(lp.free) if k in base_runs.index]
+    m = len(tasks) * H
+    rows, cols, vals, rhs = [], [], [], []
+    for j, i in enumerate(tasks):                       # runs[i,t] - over[i,t] + under[i,t] = base[i,t]
+        base = base_runs.loc[lp.free[i]].reindex(range(1, H + 1)).fillna(0.0).to_numpy(float)
+        for t in range(H):
+            r = j * H + t
+            rows += [r, r, r]; cols += [lp.o_run + i * H + t, n + r, n + m + r]; vals += [1.0, -1.0, 1.0]
+            rhs.append(base[t])
+    pad = lambda M: sparse.hstack([M, sparse.csr_matrix((M.shape[0], 2 * m))]).tocsr()
+    A_eq2 = sparse.vstack([pad(sparse.csr_matrix(A_eq)), sparse.csr_matrix((vals, (rows, cols)), shape=(m, n + 2 * m))]).tocsr()
+    b_eq2 = list(b_eq) + rhs
+    A_ub2 = sparse.vstack([pad(sparse.csr_matrix(A_ub))] + [sparse.csr_matrix(np.concatenate([c, np.zeros(2 * m)])) for c, _ in held]).tocsr()
+    b_ub2 = list(b_ub) + [limit for _, limit in held]
+    bounds2 = np.vstack([bounds, np.column_stack([np.zeros(2 * m), np.full(2 * m, np.inf)])])
+    c2 = np.concatenate([np.zeros(n), np.ones(2 * m)])
+    x = _solve(c2, A_ub2, b_ub2, A_eq2, b_eq2, bounds2)[:n]
+    for c, limit in held:
+        if _dot(c, x) > limit + 1e-6:
+            raise RuntimeError("the tie-break moved a held objective: its rows are wrong")
+    return x
+
+
+def _hold(opt: float) -> float:
+    """The most a held objective may rise: HiGHS's own tolerance, scaled to the objective."""
+    return opt + 1e-7 + 1e-9 * abs(opt)
+
+
 def _plan(lp: _LP, x: np.ndarray, objective: float, steps: list | None = None) -> Plan:
     weeks = list(range(1, lp.H + 1))
     runs = pd.DataFrame(x[lp.o_run:lp.o_lvl].reshape(lp.nF, lp.H), index=lp.free, columns=weeks)
@@ -316,7 +376,7 @@ def _plan(lp: _LP, x: np.ndarray, objective: float, steps: list | None = None) -
 
 def decide(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekly_demand: pd.Series | pd.DataFrame,
            group: pd.Series, w_worst: float = 1.0, w_short: float = 0.1, w_excess: float = 0.001,
-           positions: dict | None = None, w_run: float = 0.0) -> Plan:
+           positions: dict | None = None, w_run: float = 0.0, base_runs: pd.DataFrame | None = None) -> Plan:
     """free: task ids the LP may run. target_units: position x t (1..H). group: position -> fairness group.
     weekly_demand: position x t (1..H), the units a week that turn units short into weeks short (`window_demand`);
     a Series is one number per position, the same every week.
@@ -326,15 +386,22 @@ def decide(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekly_dem
     target_units, weekly_demand and group are then indexed by those keys.
 
     w_run: a small cost per task run. Needed when some stock is outside every position (e.g. a site that may
-    not ship): without it, building or moving stock there is free and the LP may do it for no reason."""
+    not ship): without it, building or moving stock there is free and the LP may do it for no reason.
+
+    base_runs: task x week, a plan to stay close to (the scenario a what-if starts from). After the optimum is
+    found, a last solve keeps it and moves as few runs as possible from the base (`_closest`): ties are broken
+    toward the base instead of by the solver's path."""
     lp = _build(obj, free, target_units, weekly_demand, group, w_worst, w_short, w_excess, positions, w_run)
     x = _solve(lp.c, lp.A_ub, lp.b_ub, lp.A_eq, lp.b_eq, lp.bounds)
+    if base_runs is not None:
+        x = _closest(lp, lp.A_ub, lp.b_ub, lp.A_eq, lp.b_eq, lp.bounds, [(lp.c, _hold(_dot(lp.c, x)))], base_runs)
     return _plan(lp, x, _dot(lp.c, x))
 
 
 def decide_walk(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekly_demand: pd.Series | pd.DataFrame,
                 group: pd.Series, floors: dict, steps: list, w_worst: float = 1.0, w_short: float = 0.1,
-                w_excess: float = 0.001, positions: dict | None = None, w_run: float = 0.0) -> Plan:
+                w_excess: float = 0.001, positions: dict | None = None, w_run: float = 0.0,
+                base_runs: pd.DataFrame | None = None) -> Plan:
     """The same LP, with the objective stated as a walk over floors (docs/RANKED_WALK.md).
 
     floors: {name: position x t (1..H)}, levels net position should not fall below. Names are opaque; the floor
@@ -346,7 +413,8 @@ def decide_walk(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekl
     + w_short * the step's total shortfall in weeks, then hold that at its optimum. Last, minimise stock above
     target and runs with every step held. With the one step (the target floor, every position) this is `decide`.
     Plan.steps records each step's worst and total at its optimum; Plan.objective is the score on `decide`'s
-    objective (the yardstick every plan is scored on), not the walk's."""
+    objective (the yardstick every plan is scored on), not the walk's. base_runs: as in `decide`, a last solve that
+    keeps every step and the final stage and moves as few runs as possible from the base."""
     lp = _build(obj, free, target_units, weekly_demand, group, w_worst, w_short, w_excess, positions, w_run)
     H, nI, nG = lp.H, lp.nI, lp.nG
     is_target = {f: np.allclose(F.loc[lp.items, range(1, H + 1)].values, target_units.values) for f, F in floors.items()}
@@ -408,7 +476,7 @@ def decide_walk(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekl
             if _dot(c_h, x) > limit + 1e-6:
                 raise RuntimeError("a held step moved: the walk's rows are wrong")
         opt = _dot(cj, x)
-        limit = opt + 1e-7 + 1e-9 * abs(opt)                                   # HiGHS's own tolerance, scaled
+        limit = _hold(opt)                                                     # HiGHS's own tolerance, scaled
         A_ub = sparse.vstack([A_ub, sparse.csr_matrix(cj)]).tocsr(); b_ub = b_ub + [limit]
         held.append((cj, limit))
         record.append({"floor": f, "positions": list(keys), "worst": _dot(c_wst, x), "total": _dot(c_tot, x)})
@@ -417,6 +485,8 @@ def decide_walk(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekl
     for si in range(nI):
         c_last[lp.o_exc + si * H:lp.o_exc + (si + 1) * H] = w_excess / lp.dv[si]
     x = _solve(c_last, A_ub, b_ub, A_eq, lp.b_eq, bounds)
+    if base_runs is not None:                         # the steps are rows of A_ub already; hold the last stage too
+        x = _closest(lp, A_ub, b_ub, A_eq, lp.b_eq, bounds, [(c_last, _hold(_dot(c_last, x)))], base_runs)
     for c_h, limit in held:
         if _dot(c_h, x) > limit + 1e-6:
             raise RuntimeError("a held step moved: the walk's rows are wrong")

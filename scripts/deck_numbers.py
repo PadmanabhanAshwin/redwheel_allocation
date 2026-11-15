@@ -60,16 +60,71 @@ def run(case, A):
                                 for (k, p) in R["wos"].index if k in MTB},
         "target_weeks_mtb": {k: [float(R["target_wos"].loc[(k, p), t]) for t in w] for (k, p) in R["target_wos"].index if k in MTB and p != "CMH"},
     }
-    if A is not None and case.key != "A":
-        d = by_sku(R).reindex(index=by_sku(A).index) - by_sku(A)
-        out["against_A"] = {
-            "bikes_built_diff": int(d.values.sum()),
-            "sku_totals_diff": {k: int(v) for k, v in d.sum(axis=1).items() if v != 0},
-            "cells_that_differ": int((d != 0).values.sum()),
-            "mtb_carbon_line_weekly_diff": {int(t): int(v) for t, v in d.loc[MTB].sum().items() if v != 0},
-            "other_lines_identical": bool((d.drop(index=MTB) == 0).all().all()),
-        }
     return R, out
+
+
+def against(R, P, line_of):
+    """What a scenario's whole-bike plan does differently from another's."""
+    d = by_sku(R).reindex(index=by_sku(P).index) - by_sku(P)
+    return {
+        "against": P["case"].key,
+        "bikes_built_diff": int(d.values.sum()),
+        "sku_totals_diff": {k: int(v) for k, v in d.sum(axis=1).items() if v != 0},
+        "cells_that_differ": int((d != 0).values.sum()),
+        "cells_that_differ_by_line": {ln: int((d.loc[[k for k in d.index if line_of[k] == ln]] != 0).values.sum())
+                                      for ln in sorted(set(line_of.values))},
+        "mtb_carbon_line_weekly_diff": {int(t): int(v) for t, v in d.loc[MTB].sum().items() if v != 0},
+        "other_lines_identical": bool((d.drop(index=MTB) == 0).all().all()),
+    }
+
+
+def consistency(doc, res):
+    """Relations the scenarios must keep with their changes and with each other. The file is not written if any fails."""
+    A = doc["A"]
+    built = lambda k: doc[k]["scorecard"]["Bikes built"]
+    held = lambda k, ln="mtb-carbon": doc[k]["held_by_line"][ln]
+    rules = [
+        ("every scenario passes every plan check", all(v["checks"]["passed"] == v["checks"]["of"] for v in doc.values())),
+        ("A builds 94,429 bikes and holds every target from 6 Sep 2027 (the frozen base)",
+         built("A") == 94429 and doc["A"]["scorecard"]["All targets held from"] == "2027-09-06"),
+        ("E1 takes 3 weeks of 375 off MTB carbon and makes all 1,125 back, nothing else",
+         doc["E1"]["against_A"]["bikes_built_diff"] == 0 and all(doc["E1"]["against_A"]["mtb_carbon_line_weekly_diff"].get(t) == -375 for t in (26, 27, 28))
+         and sum(v for t, v in doc["E1"]["against_A"]["mtb_carbon_line_weekly_diff"].items() if t > 28) == 1125
+         and doc["E1"]["against_A"]["other_lines_identical"]),
+        ("E2 builds exactly the orders it adds (636 -> 827: +191), all RW-4418, other lines identical",
+         doc["E2"]["against_A"]["sku_totals_diff"] == {"RW-4418": 191} and doc["E2"]["against_A"]["other_lines_identical"]),
+        ("E3 builds the same bikes at other times, other lines identical, no date moves",
+         doc["E3"]["against_A"]["bikes_built_diff"] == 0 and doc["E3"]["against_A"]["other_lines_identical"]
+         and doc["E3"]["held_by_line"] == A["held_by_line"]),
+        ("E4 builds exactly the 300 it adds, all RW-4418, other lines identical",
+         doc["E4"]["against_A"]["sku_totals_diff"] == {"RW-4418": 300} and doc["E4"]["against_A"]["other_lines_identical"]),
+        ("E5 builds RW-9304 only in whole lots of 50, its total rounded up to a whole lot (A's 16,267 -> 16,300)",
+         all(v % 50 == 0 for v in doc["E5"]["mtb_carbon_builds_by_week"]["RW-9304"])
+         and doc["E5"]["builds_per_sku_total"]["RW-9304"] == 16300 and doc["A"]["builds_per_sku_total"]["RW-9304"] == 16267
+         and doc["E5"]["against_A"]["sku_totals_diff"] == {"RW-9304": 33}),
+        ("E5 moves no line's date and leaves the other lines identical",
+         doc["E5"]["held_by_line"] == A["held_by_line"] and doc["E5"]["against_A"]["other_lines_identical"]),
+        ("P1 builds the same bikes, holds every target on the same date, clears every order on the same date",
+         doc["P1"]["against_A"]["bikes_built_diff"] == 0 and doc["P1"]["held_by_line"] == A["held_by_line"]
+         and doc["P1"]["scorecard"]["Open orders cleared from"] == A["scorecard"]["Open orders cleared from"]),
+        ("P1's ranking moves only MTB carbon; its 'orders past their date first' step also re-mixes road carbon "
+         "(14 cells, weeks 3-7); base lines identical",
+         doc["P1"]["against_A"]["cells_that_differ_by_line"] == {"mtb-base": 0, "mtb-carbon": 138, "road-base": 0, "road-carbon": 14}
+         and all(3 <= t <= 7 for k in ("RW-1378", "RW-2984", "RW-3980") for t, v in
+                 enumerate(np.array(res["P1"]["builds"].set_axis(res["P1"]["builds"].index.str.split("|").str[1]).loc[k])
+                           - np.array(res["A"]["builds"].set_axis(res["A"]["builds"].index.str.split("|").str[1]).loc[k]), start=1) if v != 0)),
+        ("P1 brings RW-9304 and RW-4418 to target sooner and RW-6416 on A's date",
+         doc["P1"]["per_sku"]["RW-9304"]["at_target"] < A["per_sku"]["RW-9304"]["at_target"]
+         and doc["P1"]["per_sku"]["RW-4418"]["at_target"] < A["per_sku"]["RW-4418"]["at_target"]
+         and doc["P1"]["per_sku"]["RW-6416"]["at_target"] == A["per_sku"]["RW-6416"]["at_target"]),
+        ("a change never brings a line's date earlier than its parent's, except by priority",
+         all(held(k, ln) >= A["held_by_line"][ln] for k in ("E1", "E2", "E3", "E4", "E5") for ln in A["held_by_line"])),
+        ("B+E3 builds B's bikes at other times; its MTB carbon date is no earlier than B's",
+         doc["B+E3"]["against_parent"]["bikes_built_diff"] == 0 and held("B+E3") >= held("B")),
+        ("the same 375 a week on MTB carbon in every full week of A, E2, E3, E4, E5 and P1 (weeks 1-52)",
+         all(all(v == 375 for v in doc[k]["mtb_carbon_line_by_week"][:52]) for k in ("A", "E2", "E3", "E4", "E5", "P1"))),
+    ]
+    return [{"rule": r, "holds": bool(ok)} for r, ok in rules]
 
 
 if __name__ == "__main__":
@@ -83,11 +138,29 @@ if __name__ == "__main__":
             weeks = {int(t): str(d.date()) for t, d in R["obj"].weeks.set_index("t")["week_start"].items()}
         results[case.key] = R
         doc[case.key] = out
+    line_of = A["m"]["dim_sku"].set_index("sku")["line_id"]
+    for case in CASES:
+        if case.key != "A":
+            doc[case.key]["against_A"] = against(results[case.key], A, line_of)
+        if case.parent and case.parent in results:
+            doc[case.key]["against_parent"] = against(results[case.key], results[case.parent], line_of)
+    for case in CASES:
+        out = doc[case.key]
         print(f"{case.key:5s} checks {out['checks']['passed']}/{out['checks']['of']} | built {out['scorecard']['Bikes built']:,} "
               f"| all held {out['scorecard']['All targets held from']} | cleared {out['scorecard']['Open orders cleared from']} "
               f"| fill {out['scorecard']['On-time fill rate']:.4f} | MTB carbon {out['held_by_line']['mtb-carbon']}")
     failed = [k for k, v in doc.items() if v["checks"]["passed"] != v["checks"]["of"]]
+    rules = consistency(doc, results)
+    for r in rules:
+        print(("  ok   " if r["holds"] else "  FAIL ") + r["rule"])
+    if not all(r["holds"] for r in rules):
+        sys.exit("consistency failed: not written")
+    import subprocess
+    commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
     doc["_meta"] = {"weeks": weeks, "scenarios": [c.key for c in CASES], "all_checks_pass": not failed,
+                    "consistency": rules, "code_at_commit": commit + " (plus any uncommitted change)",
+                    "optimality": "every solve certified from its duals and re-solved by interior point (tests/test_optimality.py); "
+                                  "every optimal plan is the solver's plan to within a bike (tests/test_engine.py, no ties)",
                     "tests": "run PYTHONPATH=src .venv/bin/python -m pytest -q to confirm the suite that pins these numbers"}
     json.dump(doc, open(OUT, "w"), indent=1, default=str)
     print("wrote", OUT, "| scenarios with a failing check:", failed or "none")
