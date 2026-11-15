@@ -32,14 +32,13 @@ without them.
 |---|---|
 | `data/` | The nine CSVs exactly as Redwheel shared them (never edited) |
 | `src/main.py` | The pipeline as `# %%` cells, calling the modules below |
-| `src/redwheel/` | `config` · `utils` (helpers) · `read` (one reader per file) · `aux_fns` (Redwheel logic) · `rtn` (the generic object) · `changes` (edits to the object's numbers, generic) · `engine` (the LP) · `scenarios` · `priors` (the settings table and its validator) · `tunables` (every tunable, in one list, with its form) · `llm` (requests → checked edits; grounded answers) · `store` (saved scenarios) |
+| `src/redwheel/` | `config` · `utils` (helpers) · `read` (one reader per file) · `aux_fns` (Redwheel logic) · `rtn` (the generic object) · `changes` (edits to the object's numbers, generic) · `walk` (the priority order: what comes first when a line is short, generic) · `engine` (the LP) · `scenarios` · `priors` (the settings table and its validator) · `tunables` (every tunable, in one list, with its form) · `llm` (requests → checked edits; grounded answers) · `store` (saved scenarios) |
 | `tests/` | One file per layer: the generic object by hand, master data, Redwheel as the object, the solver, scenarios and settings, the LLM loop, the UIs |
 | `planner3/` | The compact planner (the deck's look). Plan view: the date every target is held and what sets it, headline numbers, a planning grid (line capacity used, SKU weeks of supply, month by month), Build Plans, Summarized Plan, Plan by SKU. `reading` (what the view says; no Streamlit; tested against the engine) · `charts` (the grid) · `theme`. Same engine, scenarios and saved files as `planner2/` |
 | `planner2/` | The planner: `home` · `scenario` · `whatif` · `compare` pages; `components` (settings in plain words, the settings editor), `charts`, `facts` (what the LLM may answer from), `state` (scenarios, drafts, cached runs) |
 | `app/` | First UI: `app.py` (navigation) · `ui.py` (shared data and styling, also used by `planner2`) · `views/` (one file per page; four are reused as `planner2` reference pages) |
 | `planner/` | Second UI (scenario workbench), kept unchanged |
 | `docs/` | Assumptions and data-quality log |
-| `scripts/explore/` | Original profiling scripts (reference only) |
 | `outputs/` | Generated tables (git-ignored) |
 
 Dependencies: one `requirements.txt`, direct dependencies pinned.
@@ -179,6 +178,13 @@ first, an assumption).
 
 Amount and delay hold one value per edge for the whole plan. A value that holds only for some
 weeks ("transfers take two weeks in February") needs dated edges, which are not built.
+
+One more fact sits on the object and is in no equation: **when the opening orders are due**
+(`obj.due`). It splits the opening level of each order resource by date: how many, the week they
+are due if the order carries a date, and when they were placed. Redwheel: 5,991 bikes on open
+orders; 2,385 past their date, 1,467 not due yet (none after week 9), 2,139 web orders with no
+date. No level, target or check reads it. A priority order does (below). A change may not cut
+open orders below the ones whose dates the object knows.
 
 ## Granularity
 
@@ -470,11 +476,49 @@ words for events do not cover a run limit. A stock correction (200
 fewer RW-9324 at Reno) is tested the same way: 200 more built, all RW-9324, and no date moves,
 because that SKU has stock to spare.
 
+## A priority order: what comes first when a line is short
+
+Design, a worked example and every number: [docs/RANKED_WALK.md](docs/RANKED_WALK.md).
+
+The plan's standing rule holds every bike to its target and, where a line cannot, keeps its bikes
+equally short in weeks. A scenario may now say more, as a **walk**: ordered steps, each over a
+**floor** that net inventory should not fall below.
+
+| Floor | Is | Below it |
+|---|---|---|
+| due | minus the open orders not yet due | a customer waits past their date |
+| owed | zero | a customer waits |
+| target | the weeks-of-supply target | the bike is short of cover |
+
+A step names a floor, which bikes, and how they share: evenly, or in a stated order. The solver
+takes the steps one at a time, holding each (`engine.decide_walk`). A scenario with no walk runs
+exactly as before.
+
+- **The facts are on the object** (`obj.due`, above). **The rule is on the scenario:** an order
+  with no date is due 7 days after it was placed (web orders ship in 2 to 10 days when the bike is
+  in stock; the plan is weekly, so 7 days and "at once" are the same plan). **The walk says what
+  comes first.**
+- **Eight rules** keep a walk sound (`walk.check`); one closes a trap: a bike cannot be ranked for
+  its target unless open orders are served first.
+- **Scenario P1** (built in, `scenarios.CASE_P1`): scenario A, with orders past their date first,
+  then every open order, then the target, the MTB carbon bikes in order RW-9304, RW-4418, RW-6416.
+  Result: no customer waits a day longer (orders cleared 14 Dec 2026, fill 96.4%, as in A);
+  RW-9304 is at target on 22 Feb 2027 and RW-4418 on 26 Jul, not 6 Sep; RW-6416 on 6 Sep as in A;
+  244 position-weeks below target, not 278. Each line builds as many bikes each week as in A: only
+  the mix moves. Ten plan checks, all passing.
+- The same order on every floor clears RW-9304's orders on 12 Oct 2026 and lifts fill to 97.4%.
+  On scenario B the order holds through both of a bike's positions (Reno and the PDC).
+- The standing rule written as a walk (one step: target, all, evenly) gives the same plan, cell
+  for cell.
+
+P1 is not yet listed in the planner UIs, which do not show a walk.
+
 ## Every tunable, in one list
 
 Everything a scenario can say is different is in one list, `redwheel/tunables.py`. A tunable is a
 planner's question with a form; filling the form gives either a change to one of the object's
-numbers or rows of the settings table. Nothing else is tunable, and nothing is defined twice.
+numbers, rows of the settings table, or an edit to its priority order. Nothing else is tunable,
+and nothing is defined twice.
 
 | Tunable | Changes | Where it sits in the model | Unit | Dated | Form fields | Default |
 |---|---|---|---|---|---|---|
@@ -489,19 +533,24 @@ numbers or rows of the settings table. Nothing else is tunable, and nothing is d
 | Ship from | rules | which site's stock is counted against a channel's orders (the pools); the routes themselves are always in the object | site | no | channel, site | web from the PDC |
 | Plan transfers | rules | whether the plan decides moves | yes / no | no | yes or no | yes |
 | Target | rules | a group's weeks-of-supply target, from a date | weeks of supply | yes | group, weeks, from | MTB carbon 18 from 6 Sep 2027 |
+| Priority order | priorities | the steps of the scenario's walk: which of a line's bikes comes first | bikes in order | no | line, bikes first to last, what the order decides | **P1** |
+| Orders with no date | priorities | the week an order with no date is due (orders past their date come first) | days | no | days | 7 |
 
 Every field has its choices, range and default (`TUNABLES[key].fields`). A date picks the plan
 week that contains it; "n weeks" is n whole plan weeks. The defaults of Line capacity, Demand and
 Build limit are E1, E2 and E3: filled with nothing changed, they plan exactly like those scenarios
-(tested). The rules tunables rebuild scenario B from A (tested).
+(tested). The rules tunables rebuild scenario B from A, and Priority order as it opens makes
+scenario P1 from A (both tested). Priority edits add up line by line; "Orders with no date" on a
+scenario with no priority order turns dates on, everything shared evenly.
 
 What the module gives, for any UI or an LLM:
 
 | Call | Does |
 |---|---|
 | `TUNABLES`, `table()` | the list; one row per tunable |
-| `make(key, **values)` | a filled form → an `Edit` (a `Change`, or settings rows); refuses a wrong field, naming it |
-| `apply(case, edits, **fields)` | the scenario with the edits (settings applied, changes added in order) |
+| `make(key, **values)` | a filled form → an `Edit` (a `Change`, settings rows, or walk edits); refuses a wrong field, naming it |
+| `apply(case, edits, **fields)` | the scenario with the edits (settings applied, changes added in order, the walk edited) |
+| `walk_lines(case)` | the scenario's priority order as numbered lines, e.g. "3. Target · MTB carbon line · in order: RW-9304, then RW-4418, then RW-6416" |
 | `check(case, edits)` | every reason it cannot run, in words, without planning: the settings against the network, each change against the object, a limit on runs the plan does not decide, an edit that changes nothing |
 | `describe(edit or change)`, `name_hint(change)` | in words, e.g. "MTB carbon line capacity · weeks of 1 Mar to 15 Mar 2027 · down (none)" |
 | `now(key, case, **values)` | what the scenario has there now, e.g. "375 a week", "no limit" |
@@ -536,6 +585,14 @@ scenario B from A: each exactly. A conditional shipping rule → unsupported, wi
 on the first attempt. `llm.propose`, the earlier settings-only version, is kept while the planner
 UIs call it.
 
+The priority order, live: "On the MTB carbon line, get RW-9304 to its target first, then RW-4418,
+then RW-6416" → exactly scenario P1. "Serve RW-6416's customers first, then …, and build their
+cover in the same order" → the same order on every floor. "RW-9835 should be the first road base
+bike to reach its target" → that one bike, the others evenly. "Treat an order with no date as due
+two weeks after it was placed" → 14 days. "Put the MTB carbon bikes in a priority order" → a
+question (which order, and what should it decide?). "Prioritise the MTB carbon line over the road
+lines" → unsupported: lines share no capacity. Each on the first attempt.
+
 ## What is general and what is Redwheel
 
 | Layer | What | Changes for another company |
@@ -566,13 +623,17 @@ built on two lines, ports and cross-docks. Redwheel has none of these, so none a
 | Demand that cannot be met waits; it never cancels | Assumption — consistent with the brief's backlog wording |
 | Dealer inventory is not ours and is not netted | Assumption — it is stock already sold to dealers |
 | Dealer stock counts (dated 09-02 to 09-07) are taken as of 2026-09-07 | Assumption |
+| A dealer or commercial order is due on its date (requested ship date, need-by) | Fact — the two order files; no dated order asks for a date before it was placed |
+| An order with no date (every web order) is due 7 days after it was placed | Assumption, a rule a scenario can change — shipped web orders took 2 to 10 days, median 6. Used only by a priority order |
+| A forecast order is due the week it arrives | Assumption — the forecast lines up with the week orders were placed (last year's dealer and commercial orders: correlation 0.94 with no shift; by date asked, best when moved three weeks earlier), so this counts a dealer order about three weeks before the dealer wants it. The base plan already nets orders this way |
+| Open orders booked for later weeks are not inside the forecast | Assumption — for the same reason; 52-week totals: 21,315 forecast, 21,780 ordered last year (dealer and commercial) |
 
 `BUILD_WEEKS` and `TRANSFER_WEEKS` are in `config.py`. Changing one is a one-line edit; the
 object and the tests follow it.
 
 ## Tests
 
-369 tests, all passing (`pytest`), plus 13 that call the LLM (`RUN_LLM_TESTS=1 pytest tests/test_llm_live.py`).
+515 tests, all passing (`pytest`), plus 19 that call the LLM (`RUN_LLM_TESTS=1 pytest tests/test_llm_live.py`).
 
 | File | What it checks |
 |---|---|
@@ -591,20 +652,29 @@ object and the tests follow it.
 | `test_llm.py`, `test_llm_live.py` | Both proposal loops (settings only; any tunable) with a fake model: the answer's shape, every field checked and none defaulted, failures sent back once with the reasons, what the model sees; then 13 live requests with known answers (8 for any tunable, 5 for settings) |
 | `test_app.py`, `test_planner.py`, `test_planner2.py` | Every page of the three UIs, and each flow a planner takes |
 | `test_tunables.py` | The one list: every form's defaults valid; the forms make exactly E1, E2, E3 and the stock correction, and the rules forms rebuild B from A; wrong fields refused with the reason; checks in words; every tunable in words; what is there now; differences between scenarios; every data tunable run through the solver with every plan check passing (a one-off order of 300: exactly 300 more of that SKU built) |
+| `test_walk.py` | The priority order, from the facts to the plan: the due table recounted from the three raw order files with the standard library; what "not yet due" means, by hand; each of the eight rules broken on purpose; a ranked step opened into one per bike, a bike's two positions kept together; the due floor per position on A and B; four examples worked by hand on two bikes (a customer past their date first; same dates, no change; an order with no date, 7 days against 14; a ranked target); then through `run_case`: the standing rule as a walk is the same plan, scenario P1's dates, the order on every floor, both on scenario B with all ten checks, a walk with an event |
 | `test_events_ui.py` | Events in the planner: plan weeks and dates; the forms make exactly events E1 and E2 (same numbers changed); events in words; what differs between two lists of events; the Events tab's charts (window, shading, the lowest SKU, capacity); the What-if card (invalid events refused with the reason, events checked together, added, removed, saved, run); Home, Compare, Settings and the facts for Ask |
 
 The object tests were checked by breaking the object on purpose, seven ways: transit stock released on
 the wrong week, web and dealer channels swapped, orders not carrying over, in-transit not counted
 as ours, builds landing at CMH, capacity carrying over, dealer stock counted as ours. A test
-failed every time.
+failed every time. The priority order was checked the same way: 40 faults planted one at a
+time in a copy of the repo (a due week off by one, the days for an undated order ignored, a ranked
+order reversed, each rule of a walk switched off, the walk not saved or not passed to the solver,
+a second line's order replacing the first, the two rounding tolerances put back). A test failed
+every time.
 
 ## Known limits
 
 - **No basis in the data for site or channel decisions.** Nothing says which site should serve
   whom or which channel comes first. The build plan does not depend on it (net position does not
   change with shipping or moving), but per-site and per-channel numbers need a prior from Redwheel.
-- **Orders are grouped per SKU × channel.** The object cannot promise a date for one specific
-  order, or serve oldest orders first.
+- **Orders are grouped per SKU × channel.** The object knows when each group of open orders is due
+  (`obj.due`) and a priority order can serve the overdue ones first, but it cannot promise a date
+  for one specific order.
+- **A priority order ranks bikes on a line, by a list.** Not channels or customers; not an order
+  computed from a measure; not yet shown in the planner UIs. Orders that arrive during the plan
+  are due the week they arrive.
 - **Road SKUs have stock on hand roughly equal to their open orders, and those orders are not
   shipping.** The data does not say why. The object would ship them in week 1.
 - **Quantities are continuous.** Builds are rounded to whole bikes afterwards.

@@ -2,8 +2,10 @@
 
 **Who waits when there is not enough, and how a planner gets to say so.**
 
-Status: a design, backed by a working prototype. No solver code has changed. 15 Nov 2026.
-The solver belongs to the solver session ([SOLVER.md](SOLVER.md)); this builds on what is written there.
+Status: **built and tested**, 15 Nov 2026. The planner-facing name is **Priority order**.
+Code: `redwheel/walk.py` (the walk, its rules, the floors), `engine.decide_walk` (the solver part,
+[SOLVER.md](SOLVER.md)), two forms in `redwheel/tunables.py`, one built-in example (scenario P1).
+Sections 1 to 3 are the idea; 4 to 7 are what is built; 8 to 10 are the proof and the limits.
 
 ---
 
@@ -94,7 +96,7 @@ first. The other floors were there all along, implied.
 
 ## 4. How this connects to the object
 
-Nothing is added to the model of the world. A floor is read from numbers the object already holds.
+A floor is read from the object. Two of the three needed nothing new. The third needed one fact.
 
 ```
  THE OBJECT                         A POSITION                     ITS FLOORS
@@ -103,155 +105,193 @@ Nothing is added to the model of the world. A floor is read from numbers the obj
  web orders for RW-4418     (−)      (one number per week)               (the object's order arrivals)
  dealer orders for RW-4418  (−)                                   owed  = 0
  commercial orders          (−)                                   due   = −(open orders not due yet)
-                                                                         (need-by dates in the order files)
+                                                                         (the object's due table)
 ```
 
-- A **position** is a set of the object's resources, added up with signs. It exists today: the routing rule
-  defines it (in scenario B there are two per bike, one at Reno and one at the PDC).
-- A **floor** is one number per position per week, computed from the object. Target is computed today. Owed
-  is zero. Due needs the need-by dates, which the order files have and the object does not yet carry.
+- A **position** is a set of the object's resources, added up with signs. The routing rule defines it (in
+  scenario B there are two per bike, one at Reno and one at the PDC).
+- A **floor** is one number per position per week.
 
-So the walk does not describe the world. It says which of the world's numbers the plan must protect, and in
-what order. It would carry over to any company whose world is in the object.
+**The one fact added: when the open orders are due.** The object held open orders as a count with no time.
+It now also holds a small table, `obj.due`: for each group of open orders, how many, the week they are due
+if the order carries a date, and when they were placed. It splits the opening level; it changes no level,
+no equation and no target. The brief says targets net out the backlog, all of it, and they still do.
 
-Is "due" worth having? The data says it is real: of 5,991 bikes on open orders, 2,385 were due before the
-snapshot, 1,467 are not due yet, and 2,139 (all web orders) carry no date.
+**What the order files say** (5,991 bikes on open orders):
+
+| | Who orders | Date on the order | Bikes open |
+|---|---|---|---|
+| Web | a consumer, one bike | none | 2,139 |
+| Dealer | a shop restocking its floor, about 6 bikes | requested ship date, about 3 weeks ahead | 2,914 |
+| Commercial | a rental fleet or a city, about 9 bikes | need-by date, about 6 weeks ahead | 938 |
+
+Of the dated ones, 2,385 are past their date and 1,467 are not due yet (none after week 9).
+
+**The rule for an order with no date.** A fact cannot settle this, so it is a rule of the scenario, with a
+default taken from the history:
+
+> An order is due on its own date. If it has none, it is due **7 days** after it was placed.
+
+Why 7: when a bike is in stock, a web order ships 2 to 10 days after it was placed (median 6). The plan is
+weekly, so "7 days" and "at once" give the same plan; 14 days does not. A planner can change the number
+(the form "Orders with no date"). Orders that arrive during the plan are due the week they arrive.
+
+So: **the object holds the facts, the scenario holds the rule, the walk says what comes first.**
 
 ---
 
 ## 5. The walk
 
-A **step** has three parts:
+A **step** has four parts:
 
 | Part | Choices |
 |---|---|
-| Floor | due · owed · target |
-| Which bikes | all, or a selection (a line, a list), written the way a change selects resources |
-| How they share | **evenly** (equally short, in weeks: today's rule) or **ranked** (one at a time, in a stated order) |
+| `floor` | due · owed · target |
+| `select` | which bikes: `{}` for all, or columns of the item table, e.g. `{"line_id": "mtb-carbon"}` (the way a change selects resources) |
+| `share` | **even** (equally short, in weeks: the standing rule) or **ranked** (one at a time) |
+| `order` | for ranked: the bikes, first served first. Bikes of the step left out follow, sharing evenly |
 
-A **walk** is steps in order. The solver takes step 1 and makes its shortfall as small as it can. It holds
-that result and takes step 2, and so on. Last, as today, it trims stock above target.
-
-The three rules from the example, written as walks:
-
-```
- Today                         1. target · all bikes · evenly
-
- Rank the bikes: Y first       1. target · all bikes · ranked: Y, X         ← the trap
-
- Customers, then stock         1. owed  · all bikes · evenly
-                               2. target · all bikes · ranked: Y, X
-```
-
-And as data, a walk is a short list of records, stored with the scenario next to its changes:
+A **walk** is steps in order, plus the days for an order with no date. The solver takes step 1 and makes
+its shortfall as small as it can. It holds that and takes step 2, and so on. Last it trims stock above
+target, as before. Scenario P1, as it is written in the code:
 
 ```
- Step(floor="owed",  who={},                        share="even")
- Step(floor="target", who={"line_id": "mtb-carbon"}, share="ranked", order=["RW-9304", "RW-4418", "RW-6416"])
- Step(floor="target", who={},                       share="even")      # every bike not in a target step yet
+ Walk(steps=(Step("due"),
+             Step("owed"),
+             Step("target", {"line_id": "mtb-carbon"}, "ranked", ("RW-9304", "RW-4418", "RW-6416")),
+             Step("target", {"line_id": ["road-base", "road-carbon", "mtb-base"]})),
+      no_date_days=7)
 ```
 
-A scenario with no walk gets today's rule, through today's code.
+and as the planner reads it:
+
+```
+ 1. Orders past their date · every bike · shared evenly
+ 2. All open orders · every bike · shared evenly
+ 3. Target · MTB carbon line · in order: RW-9304, then RW-4418, then RW-6416
+ 4. Target · MTB base, Road base and Road carbon lines · shared evenly
+```
+
+A scenario with no walk runs the standing rule through the code it always ran through.
+
+**Eight rules** keep a walk sound (`walk.check` names each one broken):
+
+1. A floor is due, owed or target; a share is even or ranked.
+2. A selection uses real columns and matches at least one bike.
+3. A ranked step lists bikes of its own selection, each once.
+4. On one floor a bike is in at most one step.
+5. Every bike is in a target step.
+6. A bike's steps climb: due, then owed, then target.
+7. **A ranked target step needs an owed step for the same bikes before it.** This is the trap of section 2,
+   closed: without it the first bike is built up to its target while customers of the others wait.
+8. The days are a whole number, 0 to 365.
 
 ---
 
 ## 6. What it does on Redwheel
 
-Scenario A, MTB carbon line. All measured with the prototype; every row passes all 9 plan checks, builds the
-same 94,429 bikes, and holds all targets from 6 Sep 2027.
+Run through the product (`scenarios.run_case`), not a prototype. Every row passes all 10 plan checks and
+builds the same 94,429 bikes. Each line builds the same number of bikes every week as before: only the mix
+between its bikes moves.
+
+**Scenario A** (today: orders cleared 14 Dec 2026, fill 96.4%, 278 position-weeks below target, all targets
+held from 6 Sep 2027):
 
 | Walk | Differs from today's plan | Customers | Stock |
 |---|---|---|---|
-| **target evenly** (today's rule, run as a walk) | **0 cells** | – | – |
-| **owed evenly → target evenly** | **0 cells** | – | – |
-| due evenly → owed evenly → target evenly | 35 cells, at most 24 bikes | no headline number moves | no headline number moves |
-| **owed evenly → target ranked** (9304, 4418, 6416) | 117 cells | **exactly as today**: every bike's orders cleared 14 Dec 2026, fill 96.4% | RW-9304 at target 22 Feb 2027 and RW-4418 on 26 Jul, not 6 Sep; RW-6416 on 6 Sep as today. 244 bike-weeks below target, not 278 |
-| owed ranked → target ranked | 159 cells | orders cleared 5 Oct, 9 Nov, 14 Dec, not all on 14 Dec; fill 97.4%; the same bike-weeks of waiting in total | as the row above |
-| target ranked (the trap) | 159 cells | RW-6416's customers wait until **26 Jul 2027**; fill 94.3%; **2.8 times** the bike-weeks of waiting | RW-9304 at target 26 Oct 2026, RW-4418 on 8 Mar 2027 |
+| target evenly (the standing rule, written as a walk) | **0 cells** | – | – |
+| due → owed → target, all evenly | 35 cells, at most 24 bikes | no headline number moves | no headline number moves |
+| **P1**: due → owed evenly, then target in order 9304, 4418, 6416 | 152 cells | **exactly as today**: every bike's orders cleared 14 Dec 2026, fill 96.4% | RW-9304 at target **22 Feb 2027**, RW-4418 **26 Jul**, not 6 Sep; RW-6416 on 6 Sep as today. 244 below, not 278 |
+| the same order on every floor ("orders too") | 173 cells | orders cleared 12 Oct, 9 Nov, 14 Dec, not all on 14 Dec; fill 97.4% | as the row above |
+| target in order, with no owed step (the trap) | refused by rule 7 | measured on the prototype before the rule closed it: RW-6416's customers wait until 26 Jul 2027, fill 94.3% | – |
+
+**Scenario B** (today: orders cleared 4 Jan 2027, fill 95.3%, 722 below, held from 27 Sep 2027):
+
+| Walk | Customers | Stock |
+|---|---|---|
+| due → owed → target, all evenly | as today | as today |
+| P1's order | as today | RW-9304 at target **19 Apr 2027**, RW-4418 **23 Aug**, not 27 Sep. 666 below, not 722 |
+| the same order on every floor | fill 96.6% | as the row above |
 
 What this shows:
 
-- **The walk contains today's rule.** The first two rows are the proof: same plan, cell for cell. Nothing
-  existing has to change, and "the plan serves customers first" is a true sentence about today.
-- **A ranked walk can be free for customers.** In the fourth row no customer waits a day longer; the ranking
-  only decides which bike gets its safety stock first.
-- **Urgency is real but small here.** Putting "due" first moves 35 cells and no headline. The three bikes on
-  a line are in the same state, so there is little to reorder.
-- **Ranking is a choice, not a gain.** Two bikes are healthy months early; the third is no later than today.
-  Whether that is worth it is the planner's call, which is the point of making it visible.
+- **The walk contains the standing rule.** First row: the same plan, cell for cell.
+- **A priority order can be free for customers.** In P1 no customer waits a day longer; the order only
+  decides which bike gets its cover first. Two bikes are healthy months sooner; the third is no later.
+- **Dates are real but small here.** Putting "due" first moves 35 cells and no headline: three of every
+  four open bikes are already late, and the bikes on a line are in the same state.
+- **It is a choice, not a gain.** Whether RW-9304 should come first is the planner's call. The point is that
+  the choice is now visible, written down, and one line to change.
 
 ---
 
 ## 7. How the order gets written
 
-A planner should not have to type bike ids in order. There are two layers.
+**By list.** A planner names a line and its bikes in order, in the form "Priority order", or says it in a
+sentence that Claude turns into the same form:
 
-**The rule** is what a person, a file, or Claude writes:
+> "On the MTB carbon line, get RW-9304 to its target first, then RW-4418, then RW-6416."
 
-> "After customers are served, build stock for the MTB carbon bikes with the most open orders first."
+The form has three fields: the line; the bikes, first to last; and what the order decides (who reaches the
+target first, or whose orders are cleared first as well). A second form, "Orders with no date", sets the
+days. Both sit in the one list of tunables (now 13), so the checks, the words and Claude come with them.
 
-**The walk** is what code produces from the rule and the scenario's own numbers:
+Claude was tested live on six requests: it fills the form exactly, lists one bike when only one is named,
+asks "in what order?" when none is given, and says a line cannot be put ahead of another line (lines share
+no capacity).
 
-```
- 1. owed   · all bikes  · evenly
- 2. target · MTB carbon · ranked: RW-9304 (1,435 on order), RW-4418 (1,310), RW-6416 (767)
- 3. target · the rest   · evenly
-```
-
-The walk is what gets saved, shown for approval, and given to the solver.
-
-Why split it:
-
-- **Claude picks the rule; the data sets the order.** Claude still never sees stock or orders. It names a
-  measure; code looks the numbers up.
-- **A static file and "prioritise the backlogged" end as the same thing:** a list. One is typed, the other
-  computed.
-- **The same rule gives a different walk on different data.** A stock correction changes who has the most
-  open orders. The walk is recomputed with the scenario, and the planner sees the new order before it runs.
-
-Measures a rule can name, with what they give on MTB carbon:
+**Not built: an order computed from a measure** ("the bike with the most open orders first"). The design
+allows it (compute a list, then proceed as above) but a list a planner can read is the firmer ground for
+now. If it is built, these are the measures the data offers on MTB carbon, and they disagree:
 
 | Measure | RW-4418 | RW-6416 | RW-9304 | Order |
 |---|---|---|---|---|
 | Open orders (bikes) | 1,310 | 767 | 1,435 | 9304, 4418, 6416 |
 | Orders already due at the snapshot (bikes) | 1,126 | 670 | 1,227 | 9304, 4418, 6416 |
-| Weeks below target at the snapshot | 36.0 | 35.6 | 38.9 | 9304, 4418, 6416 |
 | Forecast over the plan (bikes) | 16,363 | 9,822 | 12,408 | 4418, 9304, 6416 |
-| Price | the same for all three | | | a tie |
 
-Two rules the data forces: a measure must be **named**, because they disagree (forecast against open
-orders); and a **tie** must mean something, because they happen (price). A tie means "share evenly".
-
-Ranking only acts between bikes that compete for the same capacity: the bikes on one line. Ranking a road
-bike against a mountain bike changes nothing.
+A priority order acts only between bikes that share a line.
 
 ---
 
-## 8. What it asks of the solver
+## 8. How it runs
 
-For the solver session to judge; the prototype does it from outside, without changing `engine.py`.
+```
+ scenario.walk ──► walk.check          the eight rules
+               ──► walk.resolve        a ranked step becomes one step per bike; a bike's positions stay together
+               ──► walk.floors         due (from obj.due and the days), owed (0), target
+               ──► engine.decide_walk  one solve per step, each held; then stock above target and runs
+               ──► the tenth plan check: a later step is served only when every earlier step on the line was
+                                         met or held back
+```
 
-- One shortfall per floor, where today there is one. Same form: `shortfall >= floor − net inventory`.
-- One solve per step, each adding a row that holds the step before. Then a last solve for stock above
-  target and runs. The fourth walk above took 6 solves and half a second.
-- No walk given: today's single solve, untouched.
-- The shortcut of one solve with shrinking weights is not safe for a ranking: at weights 1, 0.1, 0.01 it
-  matched the staged walk; at 1, 0.01, 0.0001 one cell differed by 214 bikes.
-- One new plan check: a bike is not given units for a later step while an earlier step on its line is unmet.
+P1 takes 6 solves and about a second on scenario A; about 6 seconds on B, which has twice the positions.
 
 ## 9. What is not solved
 
-- **Which week.** When a shortfall cannot be avoided the solver does not care which week it lands in
-  (SOLVER.md, O28). A walk orders needs, not weeks.
-- **Surprises.** The plan still knows every event from week 1.
-- **Channels.** "Dealers before web" cannot act in scenario A: all three channels draw on one pool of stock.
-- **Left for later:** priorities that change on a date; a second measure to break ties.
+- **The planner UIs do not show a walk yet.** The logic, the forms and the words are ready
+  ([NOTE_TO_STREAMLIT_BOT.md](NOTE_TO_STREAMLIT_BOT.md)).
+- **"Stock them at the PDC."** A second choice for orders with no date: they carry no due date and are
+  protected by the target at the PDC. It only acts when web ships from the PDC (scenario B), and it means
+  dealers are served before web customers. Designed for, not offered yet.
+- **Dealer shelf stock.** A dealer order restocks a shop, and the shops report 2,000 bikes on hand (1.9
+  weeks of RW-9304). That says how much a late dealer order hurts. There is no forecast per dealer, so it is
+  not used.
+- **Future orders are due the week they arrive.** Last year's orders line up with the forecast by the week
+  they were placed, so a future dealer order is counted about three weeks before the dealer wants it. This
+  is how the base plan already works; it makes the due floor cautious.
+- **Which week** an unavoidable shortfall lands in (SOLVER.md, O28), and **surprises** (the plan knows every
+  event from week 1): unchanged.
 
 ## 10. Where the numbers come from
 
-`scripts/ranked_walk_probe/walk.py` prints the example in section 2 and every row of section 6.
-`measures.py` gives section 7's table; `ranked_proto.py` compares the staged walk with the one-solve
-shortcut. They are probes: they patch the solver from outside and will be replaced by tested code.
+- `tests/test_walk.py`: the due table recounted from the three raw order files; the rules, each broken on
+  purpose; four examples worked by hand on two bikes; every row of section 6 through `run_case`.
+- `tests/test_tunables.py`, `tests/test_llm.py`, `tests/test_llm_live.py`: the forms and Claude.
+- `tests/test_engine.py`: the solver part, including section 2's example.
+- The prototypes this design started from (`scripts/ranked_walk_probe/`, which patched the solver from
+  outside) are removed; they are in the history before commit a4b793e, and every number they produced is
+  now a test.
 
 Background: solving priorities one level at a time is preemptive goal programming (Hillier & Lieberman,
 ch. 16 supplement). SAP IBP writes demand priority as ordered segments, each fulfilled by fair share or in

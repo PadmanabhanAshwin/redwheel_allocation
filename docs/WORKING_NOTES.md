@@ -72,6 +72,21 @@ Decisions taken and items still open. Updated as we go; newest decisions at the 
 | O34 | **Break ties cleanly: a last step that keeps a what-if close to its base plan** (pinned by the user 15 Nov) | Equal SKUs on a line are a tie, and HiGHS breaks it arbitrarily: E1 (line down in March) also swaps 31 bikes between the MTB carbon SKUs in weeks 30–51, where nothing changed. Plan: a final stage in the solver, after every step is held, minimising the sum of |builds − base plan| (linear, two slack variables per run); the base is the scenario the what-if starts from. By construction no step's optimum moves; an event's effect becomes exactly the event's effect, SKU by SKU. Needs: the base plan passed to `decide` / `decide_walk` (from `run_case` of the parent), a test that A is unchanged and that E1 then differs from A only in weeks 26–28 and 53–57 on MTB carbon. Solver session. |
 | O35 | **Independent optimality check of the LP** (pinned by the user 15 Nov) | Every "optimum" rests on one solver, HiGHS dual simplex. Add a test that re-solves A and B with HiGHS's interior-point method (`linprog(..., method="highs-ipm")`) and checks the objective agrees to 1e-6, and that the walks' held steps agree the same way. Does not depend on the object session; the end-to-end walked scenario on B and E3 does (needs `Case.walk`). Solver session. |
 
+## Where the logic stands (object session, 15 Nov, evening)
+
+Stopped here, at the user's request, to formalise what exists. Per session, what to read:
+
+| Session | Read | What it needs from the logic |
+|---|---|---|
+| Deck | `docs/NOTE_TO_DECK_BOT.md` | nothing more: every number it may print is final and pinned by a test |
+| Solver | `docs/RANKED_WALK_NOTE_TO_SOLVER.md` | nothing from the object; O34 and O35 are its own |
+| UI | `docs/NOTE_TO_STREAMLIT_BOT.md` | carry a scenario's walk (O30, three lines), event words from `tunables` (then E3 and P1 can be listed), show `walk_lines` and `walk.results` |
+
+What exists: the object (six numbers and `due`), changes (rules 1 to 9), the settings table, the priority
+order (`walk.py`, eight rules), 13 tunables with words and checks, Claude filling any of them, scenarios A, B,
+E1 to E3 and P1, 10 plan checks, 515 offline tests and 19 live. What is not built: O30 to O33, surprises (O23,
+O25), capacity after week 121, `run_min`.
+
 ## Presentation plan (presentation 2026-11-16)
 
 **The story.** We turned Redwheel's nine files into one model of its supply chain. The build plan comes out of
