@@ -90,6 +90,18 @@ CASE_E3 = Case("E3", "Scenario E3 · RW-4418 frames late eight weeks", CASE_A.pr
                parent="A",
                changes=(Change("run_max", {"kind": "make", "item": "RW-4418"}, "set", 0, 60, 67,
                                "frames for RW-4418 late: none for the weeks of 25 Oct to 13 Dec 2027"),))
+CASE_E4 = Case("E4", "Scenario E4 · a fleet order lands", CASE_A.priors,
+               summary="Scenario A, with a commercial order for 300 RW-4418 (MTB carbon, size M) on top of the forecast "
+                       "in the week of 9 Nov 2026.",
+               parent="A",
+               changes=(Change("arrival", {"kind": "order", "item": "RW-4418", "location": "COMMERCIAL"}, "add", 300,
+                               10, 10, "a fleet order for 300 RW-4418, week of 9 Nov 2026"),))
+CASE_E5 = Case("E5", "Scenario E5 · RW-9304 built in lots of 50", CASE_A.priors,
+               summary="Scenario A, with RW-9304 (MTB carbon, size S) built in whole lots of 50: a fixed order quantity. "
+                       "The solver plans the flow; the build plan is cut into lots.",
+               parent="A",
+               changes=(Change("lot", {"kind": "make", "item": "RW-9304"}, "set", 50, 1, 121,
+                               "RW-9304 is built in lots of 50"),))
 EVENTS = {c.key: c for c in (CASE_E1, CASE_E2)}
 # E3 is kept out of EVENTS (which planner2 lists as built-in) until the planner can show a run limit in words.
 
@@ -422,6 +434,7 @@ def checks(R: dict) -> pd.DataFrame:
     cap = X[X.index.str.startswith("capacity|")].loc[:, weeks]
     runs, limit = R["runs"], rtn.run_limits(obj).reindex(index=R["runs"].index, columns=weeks)
     at_limit = (runs[weeks] >= limit - 0.5) & limit.notna()          # a task that ran all its limit allowed
+    lots_of = rtn.lots(obj).reindex(index=R["runs"].index, columns=weeks)
     below = ~R["at_target"]
     unexplained = 0
     for key in below.index:
@@ -431,7 +444,8 @@ def checks(R: dict) -> pd.DataFrame:
         # position (its make, and its move when the pool's stock is not at Reno) were at their limits.
         feed = [k for k in runs.index if k.split("|")[1] == sku
                 and (k.startswith("make|") or ("RENO" not in R["pools"][pool]["stock"] and k.startswith("move|")))]
-        held_back = (cap.loc[f"capacity||RENO/{R['line'][key]}"] < 0.5) | at_limit.loc[feed].any(axis=0)
+        own_lot = lots_of.loc[feed].max().max() if len(feed) else 1.0                   # room under a lot cannot be used
+        held_back = (cap.loc[f"capacity||RENO/{R['line'][key]}"] < own_lot - 0.5) | at_limit.loc[feed].any(axis=0)
         explained_to = held_back.cumprod().astype(bool)                # every week from 1 to u held back
         for t in below.columns[below.loc[key]]:
             if t - lead >= 1 and not explained_to[t - lead]:
@@ -439,16 +453,24 @@ def checks(R: dict) -> pd.DataFrame:
     closure = np.abs(rtn.levels(obj, lp.runs).values - lp.levels.values).max()
     whole = R["runs"]
     gap = whole.cumsum(axis=1) - lp.runs.loc[whole.index, whole.columns].cumsum(axis=1)
+    lot = rtn.lots(obj).reindex(index=whole.index, columns=whole.columns).max(axis=1)      # a task's largest lot, 1 if none
+    cap_of = obj.arrows[obj.arrows["resource_id"].str.startswith("capacity|")].set_index("task_id")["resource_id"]
+    line_lot = pd.Series({k: lot[[j for j in lot.index if cap_of.get(j) == cap_of.get(k)]].max() for k in lot.index})   # the line's largest lot
+    gap_lots = gap.div(line_lot, axis=0)
     below_lp = position_levels(lp.levels, R["positions"])[weeks] < R["target_units"] - 1e-6
+    pos_lot = pd.Series({k: lots_of.loc[[f for f in R["runs"].index if f.split("|")[1] == k[0]]].max().max() for k in below.index})
+    within_lot = (R["net"][weeks] >= R["target_units"].sub(pos_lot, axis=0)) & (pos_lot > 1).to_numpy()[:, None]
     rows = [
         ("Whole bikes, none negative", "", bool((R["runs"].values == np.round(R["runs"].values)).all()
                                                 and R["runs"].values.min() >= 0)),
         ("Capacity never exceeded; no stock level below zero", f"lowest level {X.values.min():.0f}", X.values.min() >= -1e-9),
         ("No task runs above its run limit", f"most above {rtn.over_limit(obj, R['runs']).values.max():.0f}",
          rtn.over_limit(obj, R["runs"]).values.max() <= 1e-9),
-        ("Whole-bike plan within 1 bike of the LP, cumulative, every task", f"{gap.values.min():.3f} to {gap.values.max():.3f}",
-         gap.values.min() > -1 and gap.values.max() < 1),
-        ("Rounding to whole bikes adds no missed targets", "", not (below & ~below_lp).values.any()),
+        ("Whole-bike plan within 1 bike of the LP, cumulative, every task" + (" (the line's largest lot where a lot is set)" if (lot > 1).any() else ""),
+         f"{gap.values.min():.3f} to {gap.values.max():.3f}" + (" bikes" if (lot > 1).any() else ""),
+         gap_lots.values.min() > -1 and gap_lots.values.max() < 1),
+        ("Rounding to whole bikes adds no missed targets" + (" (a bike built in lots may miss by less than a lot)" if (lot > 1).any() else ""),
+         "", not (below & ~below_lp & ~within_lot).values.any()),
         ("Closure: LP levels = the object's equation run with the LP's decisions", f"{closure:.1e}", closure < 1e-6),
         ("Rollup: pool positions + in transit (+ stock at sites serving no orders) = total net inventory",
          f"difference {rollup:.0f}", rollup < 1e-6),

@@ -452,6 +452,8 @@ its own object (capacity, stock), but do not list them.
 | **E1** MTB carbon line down three weeks | capacity of RENO/mtb-carbon set to 0, weeks 26–28 (1–15 Mar 2027) | 3: 1,125 → 0 | builds nothing on the line those weeks; the same 94,429 bikes, built at other times; MTB carbon holds targets from 4 Oct 2027, not 6 Sep |
 | **E2** RW-4418 dealer demand up 30% | dealer orders of RW-4418 scaled by 1.3, weeks 18–30 (4 Jan–29 Mar 2027) | 13: 636 → 827 | builds 191 more, all RW-4418; MTB carbon holds targets from 13 Sep 2027 |
 | **E3** RW-4418 frames late eight weeks | run limit of RW-4418's make task set to 0, weeks 60–67 (25 Oct–13 Dec 2027) | 8: no limit → 0 | builds the 1,394 RW-4418 it would have made in those weeks in the five weeks before (the line has room then); no other SKU, date or total moves |
+| **E4** a fleet order lands | 300 commercial orders for RW-4418 added in week 10 (9 Nov 2026) | 1: 7 → 307 | the line is full, so the 300 are built when capacity rises (weeks 53–54); MTB carbon holds targets from 13 Sep 2027, not 6 Sep; every open order cleared from 28 Dec 2026, not 14 Dec; the other lines do not move |
+| **E5** RW-9304 built in lots of 50 | lot of RW-9304's make task set to 50, every plan week | 121: 1 → 50 | every build of RW-9304 a whole lot; the line as full as in A; every date as in A; orders cleared a week later (21 Dec); 1,744 bike-weeks of RW-9304 carried above target: the cost of lots |
 
 In E1 nothing can be built ahead: in A the MTB carbon line already runs full every week from
 7 Sep 2026 to 30 Aug 2027. So the plan makes up the 1,125 bikes lost in March exactly, in the five
@@ -528,6 +530,7 @@ and nothing is defined twice.
 | One-off order | data | arrivals onto one SKU's orders from one channel, one week | bikes | yes | SKU, channel, week, bikes | RW-4418, commercial, 300 |
 | Build limit | data | run limit of make tasks (parts late or short) | bikes a week, each SKU | yes | SKUs, from, weeks, at most | **E3** |
 | Transfer limit | data | run limit of move tasks, Reno to the PDC | bikes a week, each SKU | yes | SKUs, from, weeks, at most | all SKUs, 20 a week |
+| Lot size | data | lot of a make task: the multiple it is built in (a fixed order quantity) | bikes a lot | no | SKU, lot | **E5**: RW-9304 in lots of 50 |
 | Build time | rules | delay on make edges | weeks | no | line, weeks | MTB carbon, 2 |
 | Transfer time | rules | delay on move edges | weeks | no | weeks | 2 |
 | Ship from | rules | which site's stock is counted against a channel's orders (the pools); the routes themselves are always in the object | site | no | channel, site | web from the PDC |

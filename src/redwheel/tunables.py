@@ -209,6 +209,13 @@ def _tunables() -> dict:
                 (Field("skus", "SKUs", "choice", (("all", "All SKUs (each SKU)"),) + sku, default="all"),
                  _date("first", "From", 10, H), replace(_weeks(H), default=4),
                  Field("most", "At most (bikes a week)", "int", default=20, min=0, max=20000), _why())),
+        Tunable("lots", "Lot size", "data", "lot", "task",
+                "Is a bike built in fixed lots (a fixed order quantity)? The plan then builds it in whole lots.",
+                "bikes a lot", False,
+                (Field("sku", "SKU", "choice", sku, default="RW-9304"),
+                 Field("lot", "Lot (bikes)", "int", default=50, min=2, max=2000,
+                       help="Whole lots, every week of the plan. 1 would change nothing."), _why()),
+                example="E5"),
         Tunable("build_time", "Build time", "rules", "delay", "edge",
                 "How many weeks from using a line's capacity to a bike in Reno stock?", "weeks", False,
                 (Field("line", "Line", "choice", line, default="mtb-carbon"),
@@ -320,6 +327,8 @@ def _build(key: str, v: dict):
         return Change("run_max", _scope(v, {"kind": "make"}), "set", int(v["most"]), *_span(v), why)
     if key == "transfer_limit":
         return Change("run_max", _scope(v, {"kind": "move"}), "set", int(v["most"]), *_span(v), why)
+    if key == "lots":
+        return Change("lot", {"kind": "make", "item": v["sku"]}, "set", int(v["lot"]), 1, plan_weeks(), why)
     row = lambda prior, applies_to, new, from_date="": {"prior": prior, "applies_to": applies_to,
                                                         "from_date": from_date, "new": new}
     if key == "build_time":
@@ -451,9 +460,10 @@ def check(case, edits=()) -> list[str]:
         decided = set(obj.tasks.loc[obj.tasks["kind"].isin(st["decides"]), "task_id"])
         for c in changes:
             ids, _ = ch.selected(obj, c.select)
-            if c.field == "run_max" and set(ids) - decided:
-                errs.append(f"{describe(c)}: the plan does not decide these runs in this scenario, so a limit would "
-                            "change nothing" + (" (it plans no transfers)" if c.select.get("kind") == "move" else ""))
+            if c.field in ("run_max", "lot") and set(ids) - decided:
+                errs.append(f"{describe(c)}: the plan does not decide these runs in this scenario, so a "
+                            f"{'limit' if c.field == 'run_max' else 'lot'} would change nothing"
+                            + (" (it plans no transfers)" if c.select.get("kind") == "move" else ""))
     return errs
 
 
@@ -479,6 +489,8 @@ def tunable_of(c: Change) -> str | None:
         return "extra_order" if c.op == "add" and c.from_t == c.to_t else "demand"
     if c.field == "run_max":
         return {"make": "build_limit", "move": "transfer_limit"}.get(kind)
+    if c.field == "lot" and kind == "make":
+        return "lots"
     return None
 
 
@@ -524,6 +536,8 @@ def effect(c: Change) -> str:
     tun = tunable_of(c)
     if c.field == "run_max":
         return "none" if v == 0 else f"at most {v:,g} a week"
+    if c.field == "lot":
+        return f"in lots of {v:,g}"
     if tun == "line_capacity":
         return "down (none)" if c.op == "set" and v == 0 else f"{v * 100:g}% of normal" if c.op == "scale" else \
             f"set to {v:,g} a week" if c.op == "set" else f"{v:+,g} a week"
@@ -709,6 +723,8 @@ def change_rows(changes, report: pd.DataFrame) -> pd.DataFrame:
         if c.field == "run_max":
             frm = "no limit" if np.isnan(r["before"]) else f"{r['before']:,.0f} in all"
             to = effect(c)
+        elif c.field == "lot":
+            frm, to = "any whole number", effect(c)
         else:
             frm, to = f"{r['before']:,.0f} bikes", f"{r['after']:,.0f} bikes"
         rows.append({"Tunable": TUNABLES[tunable_of(c)].name if tunable_of(c) else "Change",
@@ -741,6 +757,9 @@ def now(key: str, case, **values) -> str:
         if c.field == "run_max":
             lim = rtn.run_limits(obj).loc[ids, weeks]
             return "no limit" if lim.isna().all().all() else f"limits from {lim.min().min():,.0f} to {lim.max().max():,.0f} a week"
+        if c.field == "lot":
+            q = rtn.lots(obj).loc[ids, weeks]
+            return "any whole number" if (q == 1).all().all() else f"lots of {q.max().max():,.0f}"
         A = rtn.arrivals_all(obj).loc[ids, weeks]
         if tunable_of(c) == "line_capacity":
             lo, hi = A.min().min(), A.max().max()

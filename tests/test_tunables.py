@@ -30,17 +30,17 @@ def by_sku(R):
 
 def test_the_list_has_every_tunable_once_with_where_it_sits():
     t = tu.table()
-    assert t["key"].tolist() == ["stock", "line_capacity", "demand", "extra_order", "build_limit", "transfer_limit",
+    assert t["key"].tolist() == ["stock", "line_capacity", "demand", "extra_order", "build_limit", "transfer_limit", "lots",
                                  "build_time", "transfer_time", "ship_from", "plan_transfers", "target",
                                  "priority", "no_date"]
     assert t["Tunable"].is_unique and t["key"].is_unique
     assert dict(zip(t["key"], t["In the model"])) == {
         "stock": "opening", "line_capacity": "arrival", "demand": "arrival", "extra_order": "arrival",
-        "build_limit": "run limit", "transfer_limit": "run limit", "build_time": "delay", "transfer_time": "delay",
+        "build_limit": "run limit", "transfer_limit": "run limit", "lots": "lot", "build_time": "delay", "transfer_time": "delay",
         "ship_from": "routing", "plan_transfers": "decides", "target": "target", "priority": "steps",
         "no_date": "due week"}
     assert set(t.loc[t["Changes"] == "data", "key"]) == {"stock", "line_capacity", "demand", "extra_order",
-                                                          "build_limit", "transfer_limit"}
+                                                          "build_limit", "transfer_limit", "lots"}
     assert set(t.loc[t["Changes"] == "priorities", "key"]) == {"priority", "no_date"}
     assert set(t["Changes"]) == {"data", "rules", "priorities"}
     examples = dict(zip(t["key"], t["Example"]))
@@ -173,6 +173,7 @@ def test_every_tunable_in_words():
         "extra_order": "Commercial orders for RW-4418 · week of 1 Mar 2027 · +300 bikes",
         "build_limit": "RW-4418 builds · weeks of 25 Oct to 13 Dec 2027 · none",
         "transfer_limit": "Transfers to the PDC (each SKU) · weeks of 9 Nov to 30 Nov 2026 · at most 20 a week",
+        "lots": "RW-9304 builds · weeks of 7 Sep 2026 to 25 Dec 2028 · in lots of 50",
         "build_time": "Build time · MTB carbon · 2 weeks",
         "transfer_time": "Transfer time · Reno to the PDC · 2 weeks",
         "ship_from": "Ship from · Web orders · PDC",
@@ -396,3 +397,18 @@ def test_a_priority_order_made_with_the_form_plans_like_the_built_in_scenario():
     builtin = sc.run_case(sc.CASE_P1)
     assert (made["builds"].values == builtin["builds"].values).all()
     assert sc.checks(made)["pass"].all() and len(sc.checks(made)) == 10
+
+
+def test_lots_form_is_scenario_e5_and_reads_in_words():
+    """The 14th tunable: a lot size. Its default is E5; its words, its check against a scenario that does not build
+    the bike, and what is there now."""
+    e = tu.make("lots")
+    assert e.change == replace(sc.CASE_E5.changes[0], reason="")
+    assert tu.describe(e.change).startswith("RW-9304 builds · weeks of 7 Sep 2026 to ") and tu.describe(e.change).endswith(" · in lots of 50")
+    assert tu.check(sc.CASE_A, [e]) == []
+    assert tu.now("lots", sc.CASE_A) == "any whole number" and tu.now("lots", sc.CASE_E5) == "lots of 50"
+    with pytest.raises(ValueError):
+        tu.make("lots", lot=1)                                                     # 1 would change nothing
+    R = sc.run_case(sc.CASE_E5)
+    rows = tu.change_rows(sc.CASE_E5.changes, R["change_report"])
+    assert rows.iloc[0][["Tunable", "Change", "From", "To"]].tolist() == ["Lot size", "in lots of 50", "any whole number", "in lots of 50"]

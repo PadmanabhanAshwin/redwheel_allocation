@@ -29,7 +29,9 @@ position = stock − orders, negative when customers are waiting.
 
 Size: scenario A has 13,068 variables, 8,954 balance rows and 3,630 target rows. B has 16,698 variables. HiGHS solves
 either in under 0.2 s. Whole bikes come afterwards (`round_runs`, `scenarios.round_moves`), and the plan checks prove
-the rounding loses no target.
+the rounding loses no target. A task with a **lot** (the object's seventh number, a fixed order quantity) is cut into
+whole lots the same way: cumulative round-up to a lot, a lot taken back where the line is over, the room it leaves
+filled by the tasks most behind the LP (D26). The LP itself does not know lots; the exact version is a MIP, later.
 
 ## 2. What it minimises
 

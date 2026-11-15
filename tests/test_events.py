@@ -288,3 +288,44 @@ def test_a_saved_change_that_is_not_a_change_is_refused_on_load(tmp_path):
     with pytest.raises(ValueError, match="not a change"):
         store.load_all(tmp_path)
     assert ch.from_records(ch.to_records(sc.CASE_E2.changes)) == sc.CASE_E2.changes
+
+
+def test_event_4_a_fleet_order_when_the_line_is_full(A):
+    """300 RW-4418 for a commercial customer in the week of 9 Nov 2026 (plan week 10), on scenario A. The line is full,
+    so the 300 are built when capacity rises (weeks 53-54); MTB carbon holds its targets from 13 Sep 2027 instead of
+    6 Sep, every open order is cleared from 28 Dec 2026 instead of 14 Dec, and the other lines do not move."""
+    R = sc.run_case(sc.CASE_E4)
+    rep = R["change_report"].iloc[0]
+    assert (rep["field"], rep["op"], rep["value"], rep["cells"], rep["before"], rep["after"]) == ("arrival", "add", 300, 1, 7, 307)
+    d = (by_sku(R) - by_sku(A)).astype(int)
+    assert d.sum(axis=1)[lambda x: x != 0].to_dict() == {"RW-4418": 300}
+    mtb = ["RW-4418", "RW-6416", "RW-9304"]
+    assert d.loc[mtb].sum()[lambda x: x != 0].to_dict() == {53: 77, 54: 223}
+    assert (d.drop(index=mtb) == 0).all().all()
+    s = sc.scorecard(R)
+    assert str(sc.held_by_line(R).at["mtb-carbon", "CMH+RENO"].date()) == "2027-09-13"
+    assert str(s["Open orders cleared from"].date()) == "2026-12-28" and round(s["On-time fill rate"], 4) == 0.9564
+    all_checks_pass(R)
+
+
+def test_event_5_a_bike_built_in_lots(A):
+    """RW-9304 built in lots of 50 (a fixed order quantity), on scenario A. Every build of it is a whole lot; the line
+    stays as full as in A every week it was full (weeks 1-52, the lots' room goes to the line's other bikes); every
+    line's date is as in A; the cost is a week on the day every order is cleared (21 Dec, not 14 Dec), a little fill,
+    and 1,744 bike-weeks of RW-9304 carried above target. The other lines do not move."""
+    R = sc.run_case(sc.CASE_E5)
+    b, b0 = by_sku(R), by_sku(A)
+    assert (b.loc["RW-9304"] % 50 == 0).all()
+    mtb = ["RW-4418", "RW-6416", "RW-9304"]
+    assert (b.loc[mtb, 1:52].sum() == b0.loc[mtb, 1:52].sum()).all()
+    assert (b.drop(index=mtb) == b0.drop(index=mtb)).all().all()
+    assert sc.held_by_line(R).equals(sc.held_by_line(A))
+    s = sc.scorecard(R)
+    assert str(s["Open orders cleared from"].date()) == "2026-12-21" and round(s["On-time fill rate"], 4) == 0.9631
+    w = list(range(1, len(R["obj"].weeks) + 1))
+    above = (R["net"][w] - R["target_units"]).clip(lower=0).loc[[("RW-9304", "CMH+RENO")]].values.sum()
+    assert round(above) == 1744 and round((A["net"][w] - A["target_units"]).clip(lower=0).loc[[("RW-9304", "CMH+RENO")]].values.sum()) == 0
+    chk = sc.checks(R)
+    assert chk["pass"].all() and "largest lot" in chk["check"].iloc[3]
+    gap = R["runs"].cumsum(axis=1) - R["lp"].runs.loc[R["runs"].index].cumsum(axis=1)
+    assert gap.abs().values.max() < 50

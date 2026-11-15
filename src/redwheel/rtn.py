@@ -11,14 +11,16 @@ Generic. Nothing here knows about bikes or Redwheel; `aux_fns.build_object` maps
                 + arrival[r, t]
 
     0 <= runs[task, t] <= run_max[task, t]          (no limit where run_max is blank)
+    a whole-unit plan runs a task in multiples of lot[task, t]   (1 where lot is blank)
 
 Weeks t = 1..H. t = 0 is the opening level. A level is the quantity at the end of week t.
 Arrivals may be known past the plan, for weeks H+1..T (the outlook). Nothing is decided there; a target that
 looks ahead from late in the plan reads them.
 
-The numbers on the object, six in all: on a resource its opening level, its arrivals and its carry; on an arrow its
+The numbers on the object, seven in all: on a resource its opening level, its arrivals and its carry; on an arrow its
 amount and its delay; on a task its run limit, the most it can run in a week (e.g. none of a bike while its parts are
-missing). Carry is fixed by the resource's kind; the others are data.
+missing), and its lot, the multiple it runs in (a fixed order quantity; the LP plans the flow, the whole-unit plan is
+cut into lots). Carry is fixed by the resource's kind; the others are data.
 
 One more fact, which the equation does not use: when the opening orders are due (`due`). It splits an order
 resource's opening level by date, as far as the data knows: the week each order is due, or, for an order that
@@ -61,6 +63,7 @@ class RTN:
     arrivals: pd.DataFrame    # resource_id x t (1..H): what comes from outside
     outlook: pd.DataFrame | None = None   # resource_id x t (H+1..T): arrivals known after the plan (orders only)
     run_max: pd.DataFrame | None = None   # task_id x t (1..H): the most a task can run that week; NaN = no limit
+    lot: pd.DataFrame | None = None       # task_id x t (1..H): a task runs in multiples of this; NaN = 1 (any whole number)
     due: pd.DataFrame | None = None       # when the opening orders are due: resource_id, qty, due, placed (DUE_COLUMNS)
 
 # `due`: one row per group of opening orders on an order resource.
@@ -197,6 +200,12 @@ def validate(obj: RTN) -> None:
         need(list(lim.columns) == weeks, "run limit columns must be weeks 1..H")
         v = lim.to_numpy(float)
         need((np.isnan(v) | (v >= 0)).all(), "negative run limit")
+    if obj.lot is not None:
+        q = obj.lot
+        need(q.index.equals(pd.Index(tsk["task_id"])), "lots not indexed by tasks")
+        need(list(q.columns) == weeks, "lot columns must be weeks 1..H")
+        v = q.to_numpy(float)
+        need((np.isnan(v) | ((v >= 1) & (v % 1 == 0))).all(), "a lot must be a whole number of at least 1")
     if obj.due is not None:
         d = obj.due
         need(list(d.columns) == DUE_COLUMNS, f"the due table's columns must be {DUE_COLUMNS}")
@@ -260,6 +269,12 @@ def run_limits(obj: RTN) -> pd.DataFrame:
     if obj.run_max is not None:
         return obj.run_max
     return pd.DataFrame(np.nan, index=obj.tasks["task_id"].to_numpy(), columns=list(obj.weeks["t"]))
+
+
+def lots(obj: RTN) -> pd.DataFrame:
+    """The lot of every task in every week, task_id x t (1..H): 1 where none is set."""
+    base = pd.DataFrame(1.0, index=obj.tasks["task_id"].to_numpy(), columns=list(obj.weeks["t"]))
+    return base if obj.lot is None else obj.lot.astype(float).fillna(1.0)
 
 
 def over_limit(obj: RTN, runs: pd.DataFrame) -> pd.DataFrame:

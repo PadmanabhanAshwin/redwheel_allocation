@@ -113,14 +113,15 @@ def lowest_cover_first(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame
 
 
 def round_runs(obj: rtn.RTN, runs: pd.DataFrame) -> pd.DataFrame:
-    """Whole-number runs for tasks that draw one unit of a capacity resource per run.
+    """Whole-number runs, in whole lots where a task has a lot, for tasks that draw one unit of a capacity per run.
 
-    Per task, cumulative runs are rounded up, so a rounded plan is never behind the LP. A task's run
-    limit caps its week (the LP keeps to the limit, so this binds only when rounding up would pass
-    it). Where the rest would exceed a capacity in some week, the excess is taken back one unit at a
-    time from the tasks rounded up the most. Weeks are processed in order, so cumulative runs stay
-    within one unit of the LP: ahead by less than 1, or (only in a week the capacity is used up or
-    the task is at its limit) behind by less than 1."""
+    Per task, cumulative runs are rounded up to the next multiple of its lot (1 unless set), so a rounded plan is
+    never behind the LP by a lot or more. A task's run limit caps its week, rounded down to a whole lot. Where the
+    rest would exceed a capacity in some week, the excess is taken back one lot at a time from the tasks rounded up
+    the most, and room a lot leaves is filled by the tasks most behind the LP, a lot at a time. Weeks are processed
+    in order, so cumulative runs stay within the line's largest lot of the LP: ahead by less than that lot, or (only
+    in a week the capacity is used up or the task is at its limit) behind by less than it. A week may leave capacity
+    unused by less than the smallest lot that would fit: that is what lots cost."""
     a = obj.arrows[obj.arrows["task_id"].isin(runs.index)]
     cap_arrows = a[a["resource_id"].str.startswith("capacity|")]
     if not (cap_arrows["amount"] == -1).all() or cap_arrows["task_id"].duplicated().any():
@@ -130,19 +131,40 @@ def round_runs(obj: rtn.RTN, runs: pd.DataFrame) -> pd.DataFrame:
 
     lp_cum = runs.cumsum(axis=1)
     limit = rtn.run_limits(obj).reindex(index=runs.index, columns=runs.columns)
+    lot = rtn.lots(obj).reindex(index=runs.index, columns=runs.columns)
     out = pd.DataFrame(0, index=runs.index, columns=runs.columns, dtype=int)
     for cap_id, tasks in cap_arrows.groupby("resource_id")["task_id"]:
         tasks = list(tasks)
         done = pd.Series(0, index=tasks)                  # whole runs so far
         for t in runs.columns:
             k = int(round(obj.arrivals.at[cap_id, t]))
-            want = np.ceil(lp_cum.loc[tasks, t] - 1e-9).astype(int)    # cumulative, rounded up
+            q = lot.loc[tasks, t].astype(int)
+            want = (np.ceil(lp_cum.loc[tasks, t] / q - 1e-9) * q).astype(int)      # cumulative, up to a whole lot
             build = (want - done).clip(lower=0)
-            cap_t = np.floor(limit.loc[tasks, t].to_numpy(float) + 1e-9)       # a run limit, where there is one
+            cap_t = np.floor(limit.loc[tasks, t].to_numpy(float) / q.to_numpy() + 1e-9) * q.to_numpy()   # whole lots within a limit
             build = pd.Series(np.where(np.isnan(cap_t), build, np.minimum(build, cap_t)).astype(int), index=build.index)
-            for _ in range(int(build.sum()) - k):          # take back one unit at a time
+            took_back = int(build.sum()) > k
+            while int(build.sum()) > k:                    # take back one lot at a time
                 ahead = (done + build - lp_cum.loc[tasks, t])[build > 0]
-                build[ahead.idxmax()] -= 1
+                task = ahead.idxmax()
+                build[task] -= min(int(q[task]), int(build[task]))
+            # A lot taken back on a full line leaves room. Fill it, a lot at a time, with the task most behind the
+            # LP; when nobody is behind, with the unit tasks least ahead, never further ahead than the line's largest
+            # lot: the line stays as full as its lots allow, and every task stays within that lot of the LP. A line
+            # with room in the LP's own plan is not padded.
+            big = int(q.max())
+            while big > 1 and took_back:
+                ahead = done + build - lp_cum.loc[tasks, t]
+                room = k - int(build.sum())
+                fits = [x for x in tasks if int(q[x]) <= room
+                        and (np.isnan(cap_t[tasks.index(x)]) or build[x] + int(q[x]) <= cap_t[tasks.index(x)])]
+                behind = [x for x in fits if ahead[x] < -1e-6]
+                filler = (max(behind, key=lambda x: -ahead[x]) if behind
+                          else min([x for x in fits if int(q[x]) == 1 and ahead[x] + 1 < big - 1e-6],
+                                   key=lambda x: ahead[x], default=None))
+                if filler is None:
+                    break
+                build[filler] += int(q[filler])
             out.loc[tasks, t] = build.to_numpy()
             done += build
     return out

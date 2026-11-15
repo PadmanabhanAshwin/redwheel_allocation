@@ -10,26 +10,28 @@ targets, the solver, the checks) reads the new object, so a scenario needs no ot
     field         "opening"  a resource's level at week 0
                   "arrival"  what comes to a resource from outside each week
                   "run_max"  the most a task can run each week (no limit unless set)
+                  "lot"      the multiple a task runs in, a fixed order quantity (1 unless set)
     select        which resources or tasks: {column: value, or list of values}; every condition must hold.
                   `kind` is required, one kind per change: a resource kind (inventory, capacity, order) for
-                  opening and arrival, a task kind (make, move, ...) for run_max. Other columns: for resources
+                  opening and arrival, a task kind (make, move, ...) for run_max and lot. Other columns: for resources
                   item, location, resource_id and the columns of the item and location description tables (for
                   Redwheel: line_id, channel, ...); for tasks item, task_id and the item description columns.
     op            "set" replaces each selected number, "add" adds to each, "scale" multiplies each
     value         the number
-    from_t, to_t  arrival and run_max: the first and last week, both included, both required
+    from_t, to_t  arrival, run_max and lot: the first and last week, both included, both required
     reason        why, in words
 
 Rules. `check` returns every rule a list of changes breaks; `apply` refuses a list that breaks any.
 
     1. field, op and value are well formed; a set or scale value is not negative.
     2. The selection names one kind, uses only known columns, none of them present in two tables, and matches
-       at least one resource or task. The kind fits the field: resources for opening and arrival, tasks for run_max.
+       at least one resource or task. The kind fits the field: resources for opening and arrival, tasks for run_max
+       and lot.
     3. opening: no weeks; not on capacity (unused capacity is lost, so it has no opening level).
     4. arrival: 1 <= from_t <= to_t <= T. Weeks after the plan (H+1..T) only on order resources: nothing is
        decided there, and only targets read them.
     5. run_max: set only (a limit is stated, not scaled or added to); 1 <= from_t <= to_t <= H (tasks run only in
-       the plan).
+       the plan). lot: the same, and at least 1.
     6. No number goes below zero.
     7. A change that alters no number is refused (it is almost always a wrong week or a wrong selection).
     8. Changes apply in the order listed: a later change sees the result of an earlier one.
@@ -49,8 +51,8 @@ import pandas as pd
 
 from redwheel import rtn
 
-FIELDS = ("opening", "arrival", "run_max")
-TASK_FIELDS = ("run_max",)                    # fields that sit on tasks; the others sit on resources
+FIELDS = ("opening", "arrival", "run_max", "lot")
+TASK_FIELDS = ("run_max", "lot")              # fields that sit on tasks; the others sit on resources
 OPS = ("set", "add", "scale")
 
 
@@ -164,6 +166,9 @@ def _run(obj: rtn.RTN, changes: list, whole: bool):
     opening = obj.opening.astype(float).copy()
     A = rtn.arrivals_all(obj).astype(float).copy()
     L = rtn.run_limits(obj).astype(float).copy()
+    Q = (obj.lot.astype(float).copy() if obj.lot is not None
+         else pd.DataFrame(np.nan, index=L.index, columns=L.columns))          # NaN = 1: a lot that is set is a number
+    table = {"run_max": L, "lot": Q}
     T = int(A.columns.max())
     rows, problems = [], []
 
@@ -199,11 +204,14 @@ def _run(obj: rtn.RTN, changes: list, whole: bool):
                 errs.append(f"weeks must satisfy 1 <= first <= last <= {T}")
             elif kind in rtn.KINDS and kind != "order" and c.to_t > H:
                 errs.append(f"weeks after the plan ({H + 1}–{T}) can change only on order resources")
-        elif c.field == "run_max":
+        elif c.field in ("run_max", "lot"):
+            what = "a run limit" if c.field == "run_max" else "a lot"
             if c.op != "set":
-                errs.append("a run limit can only be set (not added to or scaled)")
+                errs.append(f"{what} can only be set (not added to or scaled)")
+            if c.field == "lot" and _number(c.value) and c.value < 1:
+                errs.append("a lot is at least 1")
             if not (isinstance(c.from_t, (int, np.integer)) and isinstance(c.to_t, (int, np.integer))):
-                errs.append("a run limit needs a first and a last week")
+                errs.append(f"{what} needs a first and a last week")
             elif not 1 <= c.from_t <= c.to_t <= H:
                 errs.append(f"weeks must satisfy 1 <= first <= last <= {H} (tasks run only in the plan)")
 
@@ -212,11 +220,13 @@ def _run(obj: rtn.RTN, changes: list, whole: bool):
                 old = opening.loc[ids].to_numpy()
             else:
                 weeks = list(range(int(c.from_t), int(c.to_t) + 1))
-                old = (L if c.field == "run_max" else A).loc[ids, weeks].to_numpy()
+                old = table.get(c.field, A).loc[ids, weeks].to_numpy()
             new = np.full_like(old, float(c.value)) if c.op == "set" else old + c.value if c.op == "add" else old * c.value
             if whole and c.op == "scale":
                 new = np.floor(new + 0.5 + 1e-9)      # halves up; the 1e-9 keeps 84.5 from landing at 84.4999...
             same = (new == old) | (np.isnan(new) & np.isnan(old))       # no limit stays no limit
+            if c.field == "lot":
+                same |= (new == 1) & np.isnan(old)                         # a lot of 1 is no lot
             dated = (obj.due.groupby("resource_id")["qty"].sum().reindex(ids).fillna(0).to_numpy()
                      if c.field == "opening" and kind == "order" and obj.due is not None else None)
             if (new < 0).any():
@@ -229,8 +239,8 @@ def _run(obj: rtn.RTN, changes: list, whole: bool):
             else:
                 if c.field == "opening":
                     opening.loc[ids] = new
-                elif c.field == "run_max":
-                    L.loc[ids, weeks] = new
+                elif c.field in table:
+                    table[c.field].loc[ids, weeks] = new
                 else:
                     A.loc[ids, weeks] = new
                 rows.append({"change": n, "field": c.field, "op": c.op, "value": c.value, "resources": len(ids),
@@ -239,12 +249,12 @@ def _run(obj: rtn.RTN, changes: list, whole: bool):
         problems += [f"change {n} ({describe(c)}): {e}" for e in errs]
     report = pd.DataFrame(rows, columns=["change", "field", "op", "value", "resources", "cells", "before", "after",
                                          "reason"])
-    return opening, A, L, report, problems
+    return opening, A, L, Q, report, problems
 
 
 def check(obj: rtn.RTN, changes: list, whole: bool = True) -> list[str]:
     """Every reason this list of changes cannot be applied to this object; empty when it can."""
-    return _run(obj, changes, whole)[4]
+    return _run(obj, changes, whole)[5]
 
 
 def apply(obj: rtn.RTN, changes: list, whole: bool = True) -> tuple[rtn.RTN, pd.DataFrame]:
@@ -252,7 +262,7 @@ def apply(obj: rtn.RTN, changes: list, whole: bool = True) -> tuple[rtn.RTN, pd.
     modified. The report says how many resources (for a run limit: tasks) and numbers each change touched and their
     total before and after (NaN before where a run limit had none), so what a change did can be read off, not
     assumed."""
-    opening, A, L, report, problems = _run(obj, changes, whole)
+    opening, A, L, Q, report, problems = _run(obj, changes, whole)
     if problems:
         raise ValueError("; ".join(problems))
     H = len(obj.weeks)
@@ -264,7 +274,8 @@ def apply(obj: rtn.RTN, changes: list, whole: bool = True) -> tuple[rtn.RTN, pd.
     arrivals = like(A.loc[:, list(range(1, H + 1))], obj.arrivals.to_numpy())
     outlook = None if obj.outlook is None else like(A.loc[:, list(obj.outlook.columns)], obj.outlook.to_numpy())
     limited = any(c.field == "run_max" for c in changes)        # an object with no limits keeps run_max None
+    lotted = any(c.field == "lot" for c in changes)
     out = replace(obj, opening=like(opening, obj.opening.to_numpy()).rename(obj.opening.name), arrivals=arrivals,
-                  outlook=outlook, run_max=L if limited else obj.run_max)
+                  outlook=outlook, run_max=L if limited else obj.run_max, lot=Q if lotted else obj.lot)
     rtn.validate(out)
     return out, report

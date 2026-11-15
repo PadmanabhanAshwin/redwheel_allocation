@@ -493,3 +493,24 @@ def test_walk_check_treats_a_bike_pinned_by_a_run_limit_as_held_back():
     chk = sc.checks(R)
     assert chk["pass"].all() and len(chk) == 10
     assert sc.walk_served_out_of_order(R) == 0
+
+
+def test_round_runs_in_whole_lots():
+    """Two bikes on a line of 10 a week. A is built in lots of 4. LP: A 2.5, 2.5, 2.5 (cumulative 2.5, 5, 7.5);
+    B 3, 3, 3. Lots: A's cumulative rounds up to 4, 8, 8 (builds 4, 4, 0); B rounds up to 3, 6, 9 (3, 3, 3). Week 1:
+    4 + 3 = 7 <= 10. Within one lot of the LP throughout (A ahead by 1.5, 3, 0.5)."""
+    from dataclasses import replace
+    obj = two_skus_one_line(capacity=10, H=3)
+    q = rtn.lots(obj).copy(); q.loc["make|A|L"] = 4
+    obj = replace(obj, lot=q)
+    R = engine.round_runs(obj, lp_runs([2.5, 2.5, 2.5], [3, 3, 3]))
+    assert R.loc["make|A|L"].tolist() == [4, 4, 0] and R.loc["make|B|L"].tolist() == [3, 3, 3]
+    # A full line: LP A 6, 6 (lots of 4), B 4, 4 on capacity 10. Week 1 wants A 8, B 4 = 12 > 10: a lot is taken
+    # back from A (most ahead) -> A 4, and the 2 freed go to B (ahead by 2, less than the line's lot of 4) -> B 6.
+    # Week 2: A 12 - 4 = 8, B 8 - 6 = 2: 10, full. Every task within the line's lot of the LP; the line stays full.
+    obj3 = two_skus_one_line(capacity=10, H=2)
+    q = rtn.lots(obj3).copy(); q.loc["make|A|L"] = 4; obj3 = replace(obj3, lot=q)
+    R = engine.round_runs(obj3, pd.DataFrame([[6, 6], [4, 4]], index=["make|A|L", "make|B|L"], columns=[1, 2], dtype=float))
+    assert R.loc["make|A|L"].tolist() == [4, 8] and R.loc["make|B|L"].tolist() == [6, 2]
+    gap = R.cumsum(axis=1) - pd.DataFrame([[6, 12], [4, 8]], index=R.index, columns=[1, 2])
+    assert gap.abs().values.max() < 4 and R.sum().tolist() == [10, 10]
