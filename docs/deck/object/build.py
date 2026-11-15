@@ -276,7 +276,7 @@ def network():
     g += sres(368, c, "inventory", "Reno", 104) + sar(472, c, 512, c, "−1") + stk(512, c, "move", 78)
     g += f'<path class="wire" style="stroke-width:2;stroke:{A1c}" d="M590 {c} L686 {c}"/><path d="M682 {c-6} l12 6 l-12 6 z" fill="{A1c}"/>' + txt(640, c - 10, "+1, 1 wk", 18, A1c, 700, "middle")
     g += sres(696, c, "inventory", "Columbus", 124)
-    return g + txt(110, 520, "Each edge carries an amount and a delay.", 18, GREY)
+    return g
 def mat(x, y, name, col, M):
     g = meq(x + 190, y - 44, name, 26, "middle", col) + "".join(txt(x + cx, y - 8, t_, 15, GREY, 700, "middle") for cx, t_ in [(150, "make"), (230, "move")])
     g += f'<path d="M{x+112} {y+4} h-8 v{34*4+6} h8 M{x+268} {y+4} h8 v{34*4+6} h-8" fill="none" stroke="{INK}" stroke-width="2"/>'
@@ -286,7 +286,7 @@ def mat(x, y, name, col, M):
     return g
 def matrices():
     g = head(900, 252, "2", "Edges by delay")
-    return g + mat(900, 352, f'A{v("", "0")}', A0c, A0) + mat(1210, 352, f'A{v("", "1")}', A1c, A1) + txt(900, 520, "same week", 18, A0c, 700) + txt(1210, 520, "one week later", 18, A1c, 700)
+    return g + mat(900, 352, f'A{v("", "0")}', A0c, A0) + mat(1210, 352, f'A{v("", "1")}', A1c, A1) + txt(900, 520, f'effect in week {it_("t")}', 18, A0c, 700) + txt(1210, 520, f'effect in week {it_("t")} + 1', 18, A1c, 700)
 def staircase():
     g = head(1560, 252, "3", "Every week")
     x0, y0, s = 1620, 318, 58
@@ -321,17 +321,21 @@ def dynamics():
         g += meq(110, y, kw, 23, "start", GREY) + meq(240, y, m, 27) + lines(240, y + 30, d, 16, GREY, 22)
     return g
 PBAR = f'<tspan style="{MF};text-decoration:overline">N</tspan>'
-EDITS = [("E1", "Line outage, MTB carbon, 3 weeks", "π", "capacity arrival 375 → 0 in 3 weeks"),
-         ("E4", "Commercial order, 300 RW-4418", "π", "order arrival +300 in 1 week"),
-         ("E3", "Frame supply interrupted, RW-4418, 8 weeks", PBAR, "run limit of make set to 0 in 8 weeks"),
-         ("B", "Build lead time 1 week; web orders served from Columbus", f'{A_("0")}, {A_("1")}', f'output entry of make moved from {A_("0")} to {A_("1")}; move added to the decisions'),
-         ("", "Purchased component, 2-week lead time (small example)", f'{A_("0")}, {A_("2")}', "one row (frames) and one column (buy) added")]
+EDITS = [("E1", "Line outage, MTB carbon, 3 weeks", "π", "capacity arrival 375 → 0 in 3 weeks", "built"),
+         ("E4", "Commercial order, 300 RW-4418", "π", "order arrival +300 in 1 week", "built"),
+         ("E3", "Frame supply interrupted, RW-4418, 8 weeks", PBAR, "run limit of make set to 0 in 8 weeks", "built"),
+         ("B", "Build lead time 1 week; web orders served from Columbus", f'{A_("0")}, {A_("1")}', f'output entry of make moved from {A_("0")} to {A_("1")}; move added to the decisions', "built; horizon-end effect open"),
+         ("P1", "Priority order on the MTB carbon line", "objective", "one step replaced by six ordered steps", "slides 5–6"),
+         ("", "Purchased component, 2-week lead time", f'{A_("0")}, {A_("2")}', "one row (frames) and one column (buy) added", "test only; purchases not in whole units")]
 SXX = 1040
 def edits():
-    g = vrule(990, 580, 1000) + txt(SXX, 604, B_("Scenarios as parameter changes") + f'<tspan style="fill:{GREY}"> formulation unchanged</tspan>', 23)
-    for i, (c, a, p, b) in enumerate(EDITS):
-        y = 656 + 70 * i
-        g += txt(SXX, y, c, 17, GREY, 700) + txt(SXX + 44, y, a, 18) + meq(SXX + 44, y + 28, p, 20, "start", AMB) + txt(SXX + 124, y + 28, b, 16, GREY)
+    g = vrule(990, 580, 1000) + txt(SXX, 604, B_("Generalization") + f'<tspan style="fill:{GREY}"> scenarios v parameters updated</tspan>', 23)
+    g += txt(1810, 604, "status", 15, GREY, 700, "end")
+    for i, (c, a, p, b, st) in enumerate(EDITS):
+        y = 652 + 60 * i
+        shown = st.startswith("slides")
+        g += txt(SXX, y, c, 17, GREY, 700) + txt(SXX + 48, y, a, 18, INK, 700 if shown else 400) + txt(1810, y, st, 15, INK if shown else GREY, 700 if shown else 400, "end")
+        g += (meq(SXX + 48, y + 25, p, 19) if p != "objective" else txt(SXX + 48, y + 25, p, 16)) + txt(SXX + 138, y + 25, b, 16, GREY)
     return g
 p4 = page(4, "Linear program", "", network() + vrule(860, 232, 530) + matrices() + vrule(1520, 232, 530) + staircase() + dynamics() + edits())
 
