@@ -242,8 +242,9 @@ def check(obj: rtn.RTN, changes: list, whole: bool = True) -> list[str]:
 
 def apply(obj: rtn.RTN, changes: list, whole: bool = True) -> tuple[rtn.RTN, pd.DataFrame]:
     """(a new object with the changes applied, a report with one row per change). The object passed in is not
-    modified. The report says how many resources and numbers each change touched and their total before and
-    after, so what a change did can be read off, not assumed."""
+    modified. The report says how many resources (for a run limit: tasks) and numbers each change touched and their
+    total before and after (NaN before where a run limit had none), so what a change did can be read off, not
+    assumed."""
     opening, A, L, report, problems = _run(obj, changes, whole)
     if problems:
         raise ValueError("; ".join(problems))

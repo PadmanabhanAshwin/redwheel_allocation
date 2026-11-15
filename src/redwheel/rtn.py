@@ -281,12 +281,11 @@ def weeks_of_supply(net: pd.DataFrame, demand: pd.DataFrame) -> pd.DataFrame:
 
 
 def utilisation(obj: RTN, X: pd.DataFrame) -> pd.DataFrame:
-    """Share of each capacity resource used per week: 1 - level left / capacity arrived. cap x t (1..H)."""
+    """Share of each capacity resource used per week: 1 - level left / capacity arrived. cap x t (1..H).
+    A week with no capacity (e.g. a line down) has no share: NaN."""
     cap = obj.resources.loc[obj.resources["kind"] == "capacity", "resource_id"]
     arrived = obj.arrivals.loc[cap]
-    if (arrived.values <= 0).any():
-        raise ValueError("utilisation needs capacity > 0 every week")
-    return 1 - X.loc[cap, arrived.columns] / arrived
+    return 1 - X.loc[cap, arrived.columns] / arrived.where(arrived > 0)
 
 
 # ---------- graph view ----------

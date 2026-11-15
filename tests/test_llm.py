@@ -1,6 +1,9 @@
 """LLM proposals, offline: a fake model stands in for the API, so these test the loop, not the model."""
 import json
+from dataclasses import replace
 from types import SimpleNamespace
+
+import pytest
 
 from redwheel import llm, priors, scenarios as sc
 
@@ -93,3 +96,148 @@ def test_explain_sends_only_the_facts_and_the_question():
     sent = client.calls[0]
     assert "FACT: A held 6 Sep 2027" in sent["messages"][0]["content"] and "Why is B later?" in sent["messages"][0]["content"]
     assert "Use only those facts" in sent["system"]
+
+
+# ---------------- any tunable: a request -> checked edits ----------------
+
+from redwheel import tunables as tu                                                     # noqa: E402
+from redwheel.changes import Change                                                     # noqa: E402
+
+def edit(tunable, reason="test", **fields):
+    """An edit as the model writes it: the tunable, its fields as name/value text pairs, and a reason."""
+    return {"tunable": tunable, "fields": [{"name": k, "value": str(v)} for k, v in fields.items()], "reason": reason}
+
+
+LINE_DOWN = edit("line_capacity", "MTB carbon line down for three weeks", line="mtb-carbon", first="2027-03-01", weeks=3,
+                 percent=0, why="maintenance")
+
+
+def edits_answer(edits=(), unsupported=(), question=""):
+    return {"edits": list(edits), "unsupported": list(unsupported), "question": question}
+
+
+def test_a_line_down_request_becomes_a_checked_edit():
+    client = FakeClient(edits_answer([LINE_DOWN]))
+    p = llm.propose_edits("The MTB carbon line is down for maintenance for three weeks from 1 March 2027.", sc.CASE_A, client)
+    assert p.ok and p.attempts == 1 and p.errors == []
+    assert p.edits[0].change == replace(sc.CASE_E1.changes[0], reason="maintenance")
+    assert p.words == ["MTB carbon line capacity · weeks of 1 Mar to 15 Mar 2027 · down (none)"]
+    assert p.reasons == ["MTB carbon line down for three weeks"]
+    assert p.scenario(key="X").changes == (p.edits[0].change,)
+    call = client.calls[0]
+    assert call["output_config"]["format"]["schema"] == llm.edits_schema() and call["thinking"] == {"type": "adaptive"}
+    assert call["system"] == llm.EDITS_SYSTEM
+    assert call["messages"][0]["content"] == llm.scenario_text(sc.CASE_A) + "\n\nRequest: " + \
+        "The MTB carbon line is down for maintenance for three weeks from 1 March 2027."
+
+
+def test_rules_and_data_together_and_the_rules_rebuild_b():
+    rules = [edit("ship_from", channel="WEB", site="PDC"), edit("ship_from", channel="DEALERS", site="Reno"),
+             edit("ship_from", channel="COMMERCIAL", site="Reno"), edit("plan_transfers", decide="yes")] + \
+            [edit("build_time", line=ln, weeks=1) for ln in ("road-base", "road-carbon", "mtb-base", "mtb-carbon")]
+    p = llm.propose_edits("describe B, with the MTB carbon line down", sc.CASE_A, FakeClient(edits_answer(rules + [LINE_DOWN])))
+    assert p.ok, p.errors
+    new = p.scenario()
+    assert priors.diff(new.priors, sc.CASE_B.priors) == [] and len(new.changes) == 1
+
+
+def test_edits_that_fail_a_check_go_back_once_with_the_reasons():
+    past = edit("line_capacity", line="mtb-carbon", first="2028-12-18", weeks=3, percent=0)     # weeks 120-122
+    still_wrong = edit("line_capacity", line="mtb-carbon", first="2027-03-01", weeks=3, percent=100)   # changes nothing
+    client = FakeClient(edits_answer([past]), edits_answer([LINE_DOWN]))
+    p = llm.propose_edits("line down", sc.CASE_A, client)
+    assert p.ok and p.attempts == 2
+    back = client.calls[1]["messages"][-1]["content"]
+    assert "weeks after the plan (122–156) can change only on order resources" in back
+    assert client.calls[1]["messages"][-2] == {"role": "assistant", "content": json.dumps(edits_answer([past]))}
+    client = FakeClient(edits_answer([still_wrong]), edits_answer([past]))
+    p = llm.propose_edits("line down", sc.CASE_A, client)
+    assert not p.ok and p.attempts == 2 and "can change only on order resources" in p.errors[0]
+    assert "Capacity (% of normal): 100 would change nothing" in client.calls[1]["messages"][-1]["content"]
+
+
+def test_a_limit_the_plan_cannot_use_goes_back():
+    limit = edit("transfer_limit", skus="all", first="2026-11-09", weeks=4, most=20)
+    p = llm.propose_edits("cap transfers at 20 a week", sc.CASE_A, FakeClient(edits_answer([limit]), edits_answer([limit])))
+    assert not p.ok and "plans no transfers" in p.errors[0]
+    assert llm.propose_edits("cap transfers at 20 a week", sc.CASE_B, FakeClient(edits_answer([limit]))).ok
+
+
+def test_an_unclear_or_unsupported_request_proposes_nothing():
+    p = llm.propose_edits("A line is down for the next two weeks.", sc.CASE_A,
+                          FakeClient(edits_answer(question="Which line is down?")))
+    assert not p.ok and p.edits == [] and p.question == "Which line is down?" and p.errors == []
+    p = llm.propose_edits("Ship web from Reno when the PDC is short.", sc.CASE_B,
+                          FakeClient(edits_answer(unsupported=["a rule that depends on stock"])))
+    assert not p.ok and p.edits == [] and p.unsupported == ["a rule that depends on stock"]
+    with pytest.raises(ValueError):
+        p.scenario()
+
+
+def test_the_edits_schema_is_small_strict_and_names_only_real_tunables_and_fields():
+    s = llm.edits_schema()
+    e = s["properties"]["edits"]["items"]
+    assert e["properties"]["tunable"]["enum"] == list(tu.TUNABLES)
+    assert set(e["properties"]["fields"]["items"]["properties"]["name"]["enum"]) == \
+        {f.key for t in tu.TUNABLES.values() for f in t.fields}
+    def strict(node):                                    # every object: additionalProperties false, all fields required
+        if isinstance(node, dict):
+            if node.get("type") == "object":
+                assert node["additionalProperties"] is False and set(node["required"]) == set(node["properties"])
+            for v in node.values():
+                strict(v)
+        elif isinstance(node, list):
+            for v in node:
+                strict(v)
+    strict(s)
+    text = json.dumps(s)
+    assert not any(k in text for k in ('"minimum"', '"maximum"', '"minLength"', '"maxLength"', '"multipleOf"', "anyOf"))
+    assert len(text) < 2000                              # one form per tunable as anyOf was refused as too large
+
+
+def test_the_instructions_carry_every_form_and_the_catalogue():
+    sys_ = llm.EDITS_SYSTEM
+    for t in tu.TUNABLES.values():
+        assert f"- {t.key} ({t.name};" in sys_
+        for f in t.fields:
+            assert f"    {f.key}: " in sys_
+    assert "RW-4418 (MTB carbon, size M)" in sys_ and "RW-9901 (MTB base, size L)" in sys_
+    assert "percent: a whole number from 0 to 200, not 100." in sys_
+    assert "line: one of road-base (Road base line), road-carbon (Road carbon line)" in sys_
+    assert "sku: a SKU id from the catalogue." in sys_
+
+
+def test_a_field_left_out_is_never_filled_by_a_default():
+    """'Slow the line to half' with percent left out must not become 0% (the default): it goes back as missing."""
+    no_percent = edit("line_capacity", line="mtb-carbon", first="2027-03-01", weeks=3)
+    client = FakeClient(edits_answer([no_percent]), edits_answer([no_percent]))
+    p = llm.propose_edits("slow the MTB carbon line to half for three weeks from 1 March 2027", sc.CASE_A, client)
+    assert not p.ok and p.errors == ["edit 1: Line capacity: missing field(s) ['percent']"]
+    assert "missing field(s) ['percent']" in client.calls[1]["messages"][-1]["content"]
+    bad = [edit("line_capacity", line="mtb-carbon", first="2027-03-01", weeks=3, percent=0, colour="red"),
+           edit("line_capacity", line="mtb-carbon", first="2027-03-01", weeks="three", percent=0)]
+    p = llm.propose_edits("x", sc.CASE_A, FakeClient(edits_answer(bad), edits_answer(bad)))
+    assert p.errors[0].startswith("edit 1: Line capacity: no field(s) ['colour']")
+    assert "Weeks: a number is needed" in p.errors[1]
+    p = llm.propose_edits("x", sc.CASE_A, FakeClient(edits_answer([edit("stock", sku="RW-9324", site="RENO", bikes=-200)])))
+    assert p.ok and p.edits[0].values["why"] == ""                    # `why` may be left out
+    twice = {"tunable": "stock", "reason": "x", "fields": [{"name": "sku", "value": "RW-9324"}, {"name": "site", "value": "RENO"},
+                                                         {"name": "bikes", "value": "-200"}, {"name": "bikes", "value": "-300"}]}
+    p = llm.propose_edits("x", sc.CASE_A, FakeClient(edits_answer([twice]), edits_answer([twice])))
+    assert p.errors == ["edit 1: Stock count: field bikes given twice"]
+
+
+def test_what_the_model_sees_is_the_scenario_in_words_and_no_data(m):
+    """Settings and changes in words, the tunables and the catalogue; no order ids and no stock or forecast numbers."""
+    client = FakeClient(edits_answer(question="?"))
+    llm.propose_edits("anything", sc.CASE_E1, client)
+    sent = client.calls[0]["system"] + json.dumps(client.calls[0]["messages"]) + json.dumps(client.calls[0]["output_config"])
+    assert not any(str(o) in sent for o in m["fact_orders"]["order_id"].head(50))
+    assert "1,250" not in sent and "1250" not in sent                   # RW-9324's stock at Reno
+    assert llm.scenario_text(sc.CASE_E1) == (
+        "Scenario: Scenario E1 · MTB carbon line down three weeks\n"
+        "Settings: Web orders ship from Either site; Dealer orders ship from Either site; Commercial orders ship from "
+        "Either site; plan transfers: no; build time: Road base same week, Road carbon same week, MTB base same week, "
+        "MTB carbon same week; transfer time Reno to the PDC: 1 week; targets: Road 8 weeks, then 10 weeks from "
+        "2028-01-03; MTB base 12 weeks; MTB carbon 15 weeks.\n"
+        "Changes already in this scenario: (1) MTB carbon line capacity · weeks of 1 Mar to 15 Mar 2027 · down (none).")

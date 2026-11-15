@@ -16,6 +16,7 @@ pip install -e .
 ```bash
 python src/main.py             # run the pipeline (or cell by cell in VS Code)
 pytest                         # everything offline; live LLM tests: RUN_LLM_TESTS=1 pytest tests/test_llm_live.py
+streamlit run planner3/app.py --theme.primaryColor=#1F2933 --client.toolbarMode=viewer   # the compact planner (deck's look), being built
 streamlit run planner2/app.py  # the planner (scenario-first UI) — start here
 streamlit run app/app.py       # first UI: report pages per scenario
 streamlit run planner/app.py   # second UI: scenario workbench (kept for reference)
@@ -31,8 +32,9 @@ without them.
 |---|---|
 | `data/` | The nine CSVs exactly as Redwheel shared them (never edited) |
 | `src/main.py` | The pipeline as `# %%` cells, calling the modules below |
-| `src/redwheel/` | `config` · `utils` (helpers) · `read` (one reader per file) · `aux_fns` (Redwheel logic) · `rtn` (the generic object) · `changes` (edits to the object's numbers, generic) · `engine` (the LP) · `scenarios` · `priors` (the settings table and its validator) · `llm` (proposals and grounded answers) · `store` (saved scenarios) |
+| `src/redwheel/` | `config` · `utils` (helpers) · `read` (one reader per file) · `aux_fns` (Redwheel logic) · `rtn` (the generic object) · `changes` (edits to the object's numbers, generic) · `engine` (the LP) · `scenarios` · `priors` (the settings table and its validator) · `tunables` (every tunable, in one list, with its form) · `llm` (requests → checked edits; grounded answers) · `store` (saved scenarios) |
 | `tests/` | One file per layer: the generic object by hand, master data, Redwheel as the object, the solver, scenarios and settings, the LLM loop, the UIs |
+| `planner3/` | The compact planner, three views with one question each: Plan (built) · What-if · Model (next). `reading` (what the Plan view says, no Streamlit, tested against the engine) · `charts` · `theme` (the deck's palette and type) · `ask` (one Ask box). Same engine, scenarios and saved files as `planner2/` |
 | `planner2/` | The planner: `home` · `scenario` · `whatif` · `compare` pages; `components` (settings in plain words, the settings editor), `charts`, `facts` (what the LLM may answer from), `state` (scenarios, drafts, cached runs) |
 | `app/` | First UI: `app.py` (navigation) · `ui.py` (shared data and styling, also used by `planner2`) · `views/` (one file per page; four are reused as `planner2` reference pages) |
 | `planner/` | Second UI (scenario workbench), kept unchanged |
@@ -502,6 +504,31 @@ What the module gives, for any UI or an LLM:
 The planner (`planner2/`) still uses its own words for events (`planner2/events.py`); they cover
 the first four data tunables. E3 joins its built-in list when its words come from this module.
 
+### A request in words → tunables, filled by Claude
+
+`llm.propose_edits(request, case)` turns a sentence into filled tunable forms for that scenario,
+checked before anyone sees them. Claude only fills forms; it never runs or changes the model.
+
+1. Claude gets the request, the scenario in words (its settings and the changes it already has),
+   the catalogue (sites, channels, lines, SKUs with line and size) and every tunable with its
+   fields, choices and ranges. No orders, forecasts, stock or customer data.
+2. It answers in a fixed shape: edits (each a tunable and all its fields), what no tunable can
+   express, and a question when the request does not say which line, SKU, channel, site or weeks.
+   Tunable and field names can only be real ones.
+3. Each edit goes through `tunables.make` (every field checked; a field left out is an error,
+   never a default) and `tunables.check` (against the network and the object, in words). Anything
+   that fails goes back to Claude once, with the reasons.
+4. The result is a proposal: the edits, in words, with the words of the request each carries out.
+   `proposal.scenario()` gives the scenario with them, for a person to review and run.
+
+Live, against the real model, with known answers (`RUN_LLM_TESTS=1`): "A line is down for the
+next two weeks" → a question ("Which line…?"), no edits. "The MTB carbon line is down for the next
+two weeks" → line capacity 0 in the weeks of 7 and 14 Sep 2026. "The road carbon line is down for
+all of March 2027" → the five weeks from 1 Mar. E1 and E2 in one sentence, E3, a stock count and
+scenario B from A: each exactly. A conditional shipping rule → unsupported, with the reason. Each
+on the first attempt. `llm.propose`, the earlier settings-only version, is kept while the planner
+UIs call it.
+
 ## What is general and what is Redwheel
 
 | Layer | What | Changes for another company |
@@ -538,7 +565,7 @@ object and the tests follow it.
 
 ## Tests
 
-359 tests, all passing (`pytest`), plus 5 that call the LLM (`RUN_LLM_TESTS=1 pytest tests/test_llm_live.py`).
+369 tests, all passing (`pytest`), plus 13 that call the LLM (`RUN_LLM_TESTS=1 pytest tests/test_llm_live.py`).
 
 | File | What it checks |
 |---|---|
@@ -554,7 +581,7 @@ object and the tests follow it.
 | `test_scenarios.py`, `test_priors.py` | Pools from the routing rule; the books balance across sites and in transit; every plan check on A and B; the settings table, and each rule that rejects a bad one |
 | `test_baseline.py` | The LP against the planner's rule, and that no feasible plan beats the LP on its own objective |
 | `test_report.py`, `test_demand.py` | Report figures; demand sources |
-| `test_llm.py`, `test_llm_live.py` | The propose, check, retry loop with a fake model; five live requests with known answers |
+| `test_llm.py`, `test_llm_live.py` | Both proposal loops (settings only; any tunable) with a fake model: the answer's shape, every field checked and none defaulted, failures sent back once with the reasons, what the model sees; then 13 live requests with known answers (8 for any tunable, 5 for settings) |
 | `test_app.py`, `test_planner.py`, `test_planner2.py` | Every page of the three UIs, and each flow a planner takes |
 | `test_tunables.py` | The one list: every form's defaults valid; the forms make exactly E1, E2, E3 and the stock correction, and the rules forms rebuild B from A; wrong fields refused with the reason; checks in words; every tunable in words; what is there now; differences between scenarios; every data tunable run through the solver with every plan check passing (a one-off order of 300: exactly 300 more of that SKU built) |
 | `test_events_ui.py` | Events in the planner: plan weeks and dates; the forms make exactly events E1 and E2 (same numbers changed); events in words; what differs between two lists of events; the Events tab's charts (window, shading, the lowest SKU, capacity); the What-if card (invalid events refused with the reason, events checked together, added, removed, saved, run); Home, Compare, Settings and the facts for Ask |

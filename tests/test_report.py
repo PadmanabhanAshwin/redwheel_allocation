@@ -98,3 +98,16 @@ def test_ship_asap_splits_net_position_exactly(obj, m):
     built, dem, shp = f["built"].sum(axis=1), f["demand"].sum(axis=1), f["shipped"].sum(axis=1)
     assert (f["on_hand"][0] + built - shp - f["on_hand"][121]).abs().max() < 1e-9
     assert (f["open_orders"][0] + dem - shp - f["open_orders"][121]).abs().max() < 1e-9
+
+
+def test_a_week_with_no_capacity_has_no_utilisation():
+    """E1: the MTB carbon line is down in weeks 26-28. Those weeks have no share used (not 0%, not full); every other
+    week is built over capacity as usual."""
+    from redwheel import scenarios as sc
+    R = sc.run_case(sc.CASE_E1)
+    u = rtn.utilisation(R["obj"], R["X"])
+    assert u.loc["capacity||RENO/mtb-carbon", [26, 27, 28]].isna().all()
+    assert u.drop(columns=[26, 27, 28]).notna().all().all() and u.loc[:, [26, 27, 28]].drop(index="capacity||RENO/mtb-carbon").notna().all().all()
+    assert u.min().min() >= 0 and u.max().max() <= 1 + 1e-12
+    by_year = aux_fns.utilisation_by_year(R["obj"], R["X"])
+    assert by_year.notna().all().all()
