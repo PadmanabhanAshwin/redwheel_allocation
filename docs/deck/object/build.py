@@ -433,33 +433,36 @@ def scenarios_page():
         ("Result notes", ["Build time delays delivery; it does not change the quantity built.",
                           "R+ is the plan: every target held from 4 Oct 2027."])])
     g += vrule(680, 376, 990)
-    # weeks of supply, MTB carbon, A / R / R+ against the 15-week target
-    sku = "RW-4418"; x0, x1, y0, y1 = 800, 1700, 450, 740; W1 = 60
-    X = lambda w: x0 + (w - 1) * (x1 - x0) / (W1 - 1); Y = lambda v: y1 - (v + 25) * (y1 - y0) / 42
-    g += txt(730, 400, B_("Weeks of supply, MTB carbon") + f'<tspan style="fill:{GREY}"> {sku}; below 0, customers waiting</tspan>', 19)
-    g += "".join(f'<line x1="{x0}" y1="{Y(v)}" x2="{x1}" y2="{Y(v)}" stroke="{RULE_C}" stroke-width="1"/>' + txt(x0 - 10, Y(v) + 5, f"{v}", 14, GREY, 400, "end") for v in (-20, -10, 0, 10))
-    g += f'<line x1="{x0}" y1="{Y(15)}" x2="{x1}" y2="{Y(15)}" stroke="{INK}" stroke-width="1.5" stroke-dasharray="6 5"/>' + txt(x0 - 10, Y(15) + 5, "target 15", 14, INK, 700, "end")
-    g += f'<line x1="{x0}" y1="{Y(0)}" x2="{x1}" y2="{Y(0)}" stroke="{LIGHT}" stroke-width="1.5"/>'
-    for k in ("A", "R", "R+"):
-        w = DN[k]["weeks_of_supply_mtb"][sku][:W1]
-        g += poly([(X(t), Y(v)) for t, v in zip(range(1, W1 + 1), w)], SC_C[k], 3 if k == "R+" else 2.5)
-        wt = WK_OF_DN(DN[k]["held_by_line"]["mtb-carbon"])
-        g += f'<circle cx="{X(wt)}" cy="{Y(15)}" r="6" fill="{SC_C[k]}" stroke="#fff" stroke-width="1.5"/>'
-    g += "".join(txt(X(t), y1 + 24, lab, 14, GREY, 400, "middle") for t, lab in [(1, "Sep 2026"), (18, "Jan 2027"), (35, "May 2027"), (53, "Sep 2027")])
-    g += "".join(f'<rect x="{1560 + 80 * i}" y="380" width="16" height="16" fill="{SC_C[k]}"/>' + txt(1582 + 80 * i, 394, k, 16, INK, 700) for i, k in enumerate(("A", "R", "R+")))
-    g += txt(x1, Y(15) - 10, "dot: the week the line holds its target", 13, GREY, 400, "end")
-    # table: every date, by line
+    # phase strip per line: customers waiting -> stock below target -> at target; one bar per scenario
+    x0, x1, W1 = 900, 1790, 70
+    X = lambda w: x0 + (w - 1) * (x1 - x0) / (W1 - 1)
+    PH = {"wait": tint(RED, .5), "below": "#d1d5db", "at": tint(GREEN, .5)}
+    g += txt(730, 400, B_("Each line, by scenario: customers waiting, then stock below target, then at target"), 19)
+    g += "".join(f'<rect x="{1150 + 210 * i}" y="422" width="16" height="16" fill="{c}"/>' + txt(1172 + 210 * i, 436, lab, 15, INK)
+                 for i, (c, lab) in enumerate([(PH["wait"], "customers waiting"), (PH["below"], "stock below target"), (PH["at"], "at target")]))
+    yy = 470; bottom = yy + 4 * 88 - 24
+    g += "".join(f'<line x1="{X(w)}" y1="462" x2="{X(w)}" y2="{bottom}" stroke="{RULE_C}" stroke-width="1"/>' for w in (18, 35, 53, 70))
+    for ln in LORDER:
+        g += txt(730, yy + 34, LNAME[ln], 18, INK, 700)
+        for i, k in enumerate(("A", "R", "R+")):
+            y = yy + i * 22; wc = cleared_week(DN[k]["owed_by_line_by_week"][ln]); wt = WK_OF_DN(DN[k]["held_by_line"][ln])
+            g += txt(x0 - 10, y + 14, k, 13, INK, 700 if k == "R+" else 400, "end")
+            if wc > 1: g += f'<rect x="{x0}" y="{y}" width="{X(wc) - x0}" height="18" fill="{PH["wait"]}"/>'
+            g += f'<rect x="{X(max(wc, 1))}" y="{y}" width="{X(wt) - X(max(wc, 1))}" height="18" fill="{PH["below"]}"/>'
+            g += f'<rect x="{X(wt)}" y="{y}" width="{x1 - X(wt)}" height="18" fill="{PH["at"]}"/>'
+            g += txt(X(wt) + 6, y + 14, fd(DW[wt]), 13, INK, 700 if k == "R+" else 400)
+        yy += 88
+    g += "".join(txt(X(w), bottom + 22, lab, 14, GREY, 400, "middle") for w, lab in [(1, "Sep 2026"), (18, "Jan 2027"), (35, "May 2027"), (53, "Sep 2027"), (70, "Jan 2028")])
     sc_ = ["A", "R", "R+"]
     rows = [("Every order cleared", [fd(D_(S[k]["Open orders cleared from"])) for k in sc_]),
             ("All targets held from", [fd(D_(S[k]["All targets held from"])) for k in sc_]),
-            ("On-time fill", [f'{100*S[k]["On-time fill rate"]:.1f}%' for k in sc_])] + \
-           [(f"Target held, {LNAME[ln]}", [fd(D_(DN[k]["held_by_line"][ln])) for k in sc_]) for ln in LORDER]
-    xs = [1380, 1580, 1790]; ty = 790
-    g += rule(780, 730, 1810) + f'<rect x="1610" y="{ty}" width="196" height="{24 * len(rows) + 40}" rx="8" fill="{tint(SC_C["R+"], .10)}"/>'
+            ("On-time fill", [f'{100*S[k]["On-time fill rate"]:.1f}%' for k in sc_])]
+    xs = [1380, 1580, 1790]; ty = 866
+    g += rule(856, 730, 1810) + f'<rect x="1610" y="{ty}" width="196" height="{26 * len(rows) + 40}" rx="8" fill="{tint(SC_C["R+"], .10)}"/>'
     g += "".join(txt(x, ty + 20, h, 14, GREY, 700, "end") for x, h in zip(xs, sc_))
     for i, (lab, vals) in enumerate(rows):
-        y = ty + 46 + 24 * i
-        g += txt(730, y, lab, 15, INK, 700 if i < 3 else 400) + "".join(txt(x, y, v_, 15, INK, 700 if j == 2 else 400, "end") for j, (x, v_) in enumerate(zip(xs, vals)))
+        y = ty + 48 + 26 * i
+        g += txt(730, y, lab, 16, INK, 700) + "".join(txt(x, y, v_, 16, INK, 700 if j == 2 else 400, "end") for j, (x, v_) in enumerate(zip(xs, vals)))
     return g
 p5 = page(5, "Scenarios A, R and R+", "", scenarios_page())
 
