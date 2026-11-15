@@ -115,7 +115,7 @@ Is it optimising anything? Yes, but less than "an LP" suggests, and the deck sho
 - **In B, also decided:** which pool the stock sits in, and when to transfer.
 - **Deliveries by a date: the most possible, checked (D28).** This is not a term in the objective; it is a property
   of the plans. `engine.fewest_owed` keeps the LP's rows and minimises one line's units owed in one week, which is the
-  same as maximising its deliveries by then. On A, R, R+ and R+'s four events, the plan's owed equals that minimum
+  same as maximising its deliveries by then. On A, R, R+ and R+'s four events, the plan's owed equals that minimum (with lots of 50, within 3 bikes in one week: the cost of lots)
   in every week (121) on every line (4), with 484 certified solves per scenario (`scenarios.most_delivered`). So "the
   most deliveries before a cutoff" would choose the same builds, and no cutoff objective is needed. It is checked, not
   a theorem: in principle the 0.1 total term could keep cover on a small SKU while a larger one on its line waits. On
@@ -193,11 +193,9 @@ divisor the plan used). `net`, `target_units`, `demand` and the shape of `builds
   a window with no demand still plans.
 - `tests/test_optimality.py`: every solve of every built-in scenario certified optimal from its own duals
   (`engine.certificate`: primal violation, dual violation, duality gap), and the same objective from interior point.
-- `tests/test_engine.py` (ties): the tie-break on a case with real ties; no ties in A, E1, E4, P1, R+, R+C27
+- `tests/test_engine.py` (ties): the tie-break on a case with real ties; no ties in A, E1, E4, P1, R+, R+C26
   (no run moves by more than the runs the hold tolerance buys at the run cost, + 0.5 bike: 1.88 on A, 2.35 on R+).
-- `tests/test_r_cases.py`: R and R+ pinned; R+LD (line down 2–16 Nov 2026: every lost bike a late order, 16 Nov–22 Feb) and R+E4 (E4's footprint); the Christmas closure
-  absorbed in 2027 (owed identical every week, 1,928 bikes built ahead) and not in 2026 (only MTB carbon, only
-  4 Jan–1 Feb 2027); the most delivered by every week on R+, R+C26, R+C27; a plan built later shows a gap of 100.
+- `tests/test_r_cases.py`: R and R+ pinned; on R+, the Christmas 2026 closure (only MTB carbon, only 4 Jan–1 Feb 2027), the fleet order (E4's footprint), lots of 50 (3 bikes a week late) and the priority order; the most delivered by every week on all six; a plan built later shows a gap of 100.
 - `tests/test_base_case.py`: the frozen base plan (TIMING re-pinned for D23; BUILT, 278 and the dates unchanged).
 - `tests/test_events.py`, `tests/test_baseline.py`: events and the LP against the planner's rule.
 - D23 was validated against an independent build of the LP from the previous commit's source with the divisor

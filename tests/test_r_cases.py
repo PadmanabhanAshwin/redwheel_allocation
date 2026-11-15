@@ -1,6 +1,7 @@
 """R and R+: scenario A with a build time (R: a week on every line; R+: two on the carbon lines, one on the base
-lines), and R+'s events. Pinned: each plan's dates; each event's footprint, the same as on A; the Christmas closure,
-absorbed in 2027 and not in 2026; and that every plan delivers the most any plan could by every week, on every line
+lines), and the live set on R+: the Christmas 2026 closure, the fleet order, lots of 50 and the priority order.
+Pinned: each plan's dates and footprint, and that every plan delivers the most any plan could by every week, on every
+line (with lots, within the 3 bikes the lots cost)
 (docs/WORKING_NOTES.md, O36 and D28)."""
 import numpy as np
 import pandas as pd
@@ -59,23 +60,6 @@ def test_r_and_r_plus_pinned(runs):
     assert all(n == (2 if "carbon" in ln else 1) for ln, n in runs["R+"]["case"].build_weeks.items())
 
 
-def test_a_line_down_while_customers_wait_makes_them_wait_longer(runs):
-    R, base = runs["R+LD"], runs["R+"]
-    lb, lb0 = line_builds(R), line_builds(base)
-    assert lines_that_moved(R, base) == ["mtb-carbon"]
-    assert (lb.loc["mtb-carbon", 9:11] == 0).all() and (lb0.loc["mtb-carbon", 9:11] == 375).all()
-    assert lb.sum(axis=1).equals(lb0.sum(axis=1))                            # all 1,125 made back
-    d = owed(R) - owed(base)
-    assert np.abs(d.drop("mtb-carbon").values).max() == 0
-    late = d.loc["mtb-carbon"]
-    assert late[:10].abs().max() == 0 and (late[11:25] > 0).all() and late[26:].abs().max() == 0
-    assert int(late.max()) == 1125 and int(late.sum()) == 11750               # every lost bike is a late order
-    s = sc.scorecard(R)
-    assert day(s["Open orders cleared from"]) == "2027-03-01"
-    assert s["On-time fill rate"] == pytest.approx(0.93250, abs=1e-4)
-    assert held(R)["mtb-carbon"] == "2027-11-01"
-
-
 def test_events_on_r_plus_leave_the_footprint_they_leave_on_a(runs):
     base, s0 = runs["R+"], sc.scorecard(runs["R+"])
     e4 = sc.scorecard(runs["R+E4"])
@@ -85,25 +69,6 @@ def test_events_on_r_plus_leave_the_footprint_they_leave_on_a(runs):
     assert day(e4["All targets held from"]) == "2027-10-11"
     assert day(e4["Open orders cleared from"]) == "2027-01-25"
     assert e4["On-time fill rate"] == pytest.approx(0.94017, abs=1e-5)
-
-
-def test_christmas_2027_is_absorbed_by_building_ahead(runs):
-    R, base = runs["R+C27"], runs["R+"]
-    lb, lb0 = line_builds(R), line_builds(base)
-    assert (lb[[68, 69]] == 0).all().all()                                   # every line closed both weeks
-    assert lb.sum(axis=1).equals(lb0.sum(axis=1))                            # the same bikes, every line
-    changed = [t for t in H if (lb[t] - lb0[t]).abs().max() > 0.5]
-    assert changed[0] >= 59 and changed[-1] == 69                            # only from 18 Oct 2027 to the closure
-    ahead = (lb.cumsum(axis=1) - lb0.cumsum(axis=1))
-    assert ahead.min().min() >= 0                                            # only ever earlier, never later
-    assert ahead.max(axis=1).to_dict() == lb0[[68, 69]].sum(axis=1).to_dict()   # what R+ built in the closed weeks
-    assert int(lb0[[68, 69]].sum().sum()) == 1928
-    assert (lb.loc["mtb-carbon", 60:67] == 580).all()                        # the line runs full ahead of it
-    assert np.abs((owed(R) - owed(base)).values).max() == 0                  # no customer waits, any week
-    assert held(R) == held(base)
-    s, s0 = sc.scorecard(R), sc.scorecard(base)
-    assert s["Open orders cleared from"] == s0["Open orders cleared from"]
-    assert s["On-time fill rate"] == pytest.approx(s0["On-time fill rate"], abs=1e-12)
 
 
 def test_christmas_2026_costs_january_not_december(runs):
@@ -124,13 +89,45 @@ def test_christmas_2026_costs_january_not_december(runs):
                        "road-carbon": "2027-09-27"}
 
 
-@pytest.mark.parametrize("key", ["R+", "R+C26", "R+C27"])
+@pytest.mark.parametrize("key", ["R", "R+", "R+C26", "R+E4", "R+E5", "R+P1"])
 def test_the_plan_delivers_the_most_possible_by_every_week(runs, key):
     d = sc.most_delivered(runs[key])
     assert d["plan"].shape == (4, 121)
-    assert d["gap"] <= 1e-6
+    if key == "R+E5":                                                        # lots cost 3 bikes, one week
+        g = (d["plan"] - d["fewest"]).stack()
+        assert g[g > 1e-6].round(6).to_dict() == {("mtb-carbon", 19): 3.0}
+    else:
+        assert d["gap"] <= 1e-6
     assert max(d["certificate"].values()) <= 1e-7
     assert d["fewest"].loc["mtb-carbon", 1] == pytest.approx(3592)          # not trivially zero
+
+
+def test_lots_of_50_on_r_plus(runs):
+    R, base = runs["R+E5"], runs["R+"]
+    b = R["builds"].set_axis(R["builds"].index.str.split("|").str[1])
+    assert (b.loc["RW-9304"] % 50 == 0).all() and b.loc["RW-9304"].sum() == 16300
+    assert lines_that_moved(R, base) == ["mtb-carbon"]
+    assert held(R) == held(base)
+    lb, lb0 = line_builds(R), line_builds(base)
+    cap = R["obj"].arrivals.loc["capacity||RENO/mtb-carbon", H]
+    full = [t for t in H if lb0.at["mtb-carbon", t] == cap[t]]
+    assert (lb.loc["mtb-carbon", full] == cap[full]).all()                  # never idle where R+ ran full
+    d = owed(R) - owed(base)
+    assert d.stack()[d.stack() != 0].to_dict() == {("mtb-carbon", 19): 3.0}
+    assert day(sc.scorecard(R)["Open orders cleared from"]) == "2027-01-18"
+
+
+def test_priority_order_on_r_plus(runs):
+    R, base = runs["R+P1"], runs["R+"]
+    s, s0 = sc.scorecard(R), sc.scorecard(base)
+    assert s["Bikes built"] == s0["Bikes built"] and held(R) == held(base)
+    assert s["Open orders cleared from"] == s0["Open orders cleared from"]
+    assert s["On-time fill rate"] == pytest.approx(s0["On-time fill rate"], abs=1e-12)
+    at = sc.held_from(R["at_target"]); wk = R["obj"].weeks.set_index("t")["week_start"]
+    first = {k[0]: day(wk[int(t)]) for k, t in at.items() if k[0] in ("RW-9304", "RW-4418", "RW-6416")}
+    assert first == {"RW-9304": "2027-05-31", "RW-4418": "2027-09-13", "RW-6416": "2027-10-04"}
+    assert lines_that_moved(R, base) == ["mtb-carbon", "road-carbon"]       # road carbon: the 'due' step
+    assert sc.checks(R)["pass"].all() and len(sc.checks(R)) == 10
 
 
 def test_the_deliveries_check_catches_a_plan_that_delivers_less(runs):

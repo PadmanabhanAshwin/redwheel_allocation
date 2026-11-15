@@ -134,30 +134,30 @@ CASE_RP = Case("R+", "Scenario R+ · build time by model",
                parent="R")
 
 
-def _on_rp(key: str, name: str, summary: str, changes: tuple) -> Case:
-    return Case(key, name, CASE_RP.priors, summary=summary, parent="R+", changes=changes)
+def _on_rp(key: str, name: str, summary: str, changes: tuple = (), walk: wk.Walk | None = None) -> Case:
+    return Case(key, name, CASE_RP.priors, summary=summary, parent="R+", changes=changes, walk=walk)
 
 
-CLOSED = "the plant closed for Christmas"
-CASE_RP_LD = _on_rp("R+LD", "Scenario R+ · MTB carbon line down three weeks",
-                    "Scenario R+, with the MTB carbon line down for the three weeks starting 2, 9 and 16 Nov 2026, "
-                    "while its customers are still waiting for the opening backlog.",
-                    (Change("arrival", {"kind": "capacity", "location": "RENO/mtb-carbon"}, "set", 0, 9, 11,
-                            "MTB carbon line down, weeks of 2-16 Nov 2026"),))
-CASE_RP_E4 = _on_rp("R+E4", "Scenario R+ · a fleet order lands",
-                    "Scenario R+, with a commercial order for 300 RW-4418 (MTB carbon, size M) on top of the forecast "
-                    "in the week of 9 Nov 2026.", CASE_E4.changes)
-CASE_RP_C27 = _on_rp("R+C27", "Scenario R+ · closed for Christmas 2027",
-                     "Scenario R+, with every line closed for the two weeks starting 20 and 27 Dec 2027. "
-                     "The plan knows in advance.",
-                     (Change("arrival", {"kind": "capacity"}, "set", 0, 68, 69,
-                             f"{CLOSED}, weeks of 20 and 27 Dec 2027"),))
+# The live set, on R+: one scenario per mechanism. Supply lost while customers wait, demand added on a full line, a
+# production rule, and a change to what the plan values. (Pruned 15 Nov: a line down in November and a Christmas
+# closure in 2027 showed nothing the 2026 closure does not; see docs/WORKING_NOTES.md D28.)
 CASE_RP_C26 = _on_rp("R+C26", "Scenario R+ · closed for Christmas 2026",
                      "Scenario R+, with every line closed for the two weeks starting 21 and 28 Dec 2026, while the "
                      "lines are still clearing the open orders.",
                      (Change("arrival", {"kind": "capacity"}, "set", 0, 16, 17,
-                             f"{CLOSED}, weeks of 21 and 28 Dec 2026"),))
-R_CASES = {c.key: c for c in (CASE_R, CASE_RP, CASE_RP_LD, CASE_RP_E4, CASE_RP_C27, CASE_RP_C26)}
+                             "the plant closed for Christmas, weeks of 21 and 28 Dec 2026"),))
+CASE_RP_E4 = _on_rp("R+E4", "Scenario R+ · a fleet order lands",
+                    "Scenario R+, with a commercial order for 300 RW-4418 (MTB carbon, size M) on top of the forecast "
+                    "in the week of 9 Nov 2026.", CASE_E4.changes)
+CASE_RP_E5 = _on_rp("R+E5", "Scenario R+ · RW-9304 built in lots of 50",
+                    "Scenario R+, with RW-9304 (MTB carbon, size S) built in whole lots of 50: a fixed order quantity. "
+                    "The solver plans the flow; the build plan is cut into lots.", CASE_E5.changes)
+CASE_RP_P1 = _on_rp("R+P1", "Scenario R+ · MTB carbon in priority order",
+                    "Scenario R+, with a priority order. Orders past their date come first, then every open order, "
+                    "then the target. The MTB carbon bikes reach their target one at a time: RW-9304, then RW-4418, "
+                    "then RW-6416. An order with no date is due seven days after it was placed.",
+                    walk=CASE_P1.walk)
+R_CASES = {c.key: c for c in (CASE_R, CASE_RP, CASE_RP_C26, CASE_RP_E4, CASE_RP_E5, CASE_RP_P1)}
 
 
 # ---------- pools: which stock faces which demand, read from the routing rule ----------

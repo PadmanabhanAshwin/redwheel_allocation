@@ -535,7 +535,7 @@ def test_the_tie_break_picks_the_optimal_plan_closest_to_a_base(base, want):
     assert p.short.values.max() == pytest.approx(0, abs=1e-6)          # the optimum, to the hold tolerance
 
 
-@pytest.mark.parametrize("key", ["A", "E1", "E4", "P1", "R+", "R+C27"])
+@pytest.mark.parametrize("key", ["A", "E1", "E4", "P1", "R+", "R+C26"])
 def test_the_scenarios_have_no_ties(key):
     """Every optimal plan is the solver's plan, to within the runs the tolerance buys (under 2 bikes): pulled toward a
     random plan, as far as the objective allows, no run moves by more than the runs the hold tolerance (1e-7 + 1e-9 x objective) buys at the run cost of

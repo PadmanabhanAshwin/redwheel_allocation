@@ -109,59 +109,64 @@ the code changes.
 - P1's ranking moves only MTB carbon (117 cells on its own). Its first step, "orders past their date first", covers
   every line and re-mixes road carbon in 14 cells in weeks 3–7 (at most 11 bikes in a cell). Say which step did what.
 
-## 7. 15 Nov, last: R+ is the build plan (supersedes the story in §5 and the table's role in §6)
+## 7. 15 Nov, final: the scenario set (supersedes §5, §6 and earlier drafts of this section)
 
-Read `docs/deck/deck_numbers.json` again, once. It now has 15 scenarios, 24 consistency rules (all hold) and
-`_meta.story`, which says what to show. §6's numbers are unchanged; only their role changes.
+**Read `docs/deck/deck_numbers.json` once more. It now holds only the final set: 7 scenarios and 14 consistency rules,
+all holding.** `_meta.story` says what goes where. The scenarios dropped from the file (B, B+E3, E1–E5 and P1 on A, a
+November line-down and a 2027 Christmas closure on R+) are not to be shown: each showed nothing the final set does
+not. They stay in the code for its tests.
 
-**The story.** A ships a bike the week it is built, and no plant does that. **R** is A with a week from the line to
-stock that can ship, and it shows why build time matters. **R+** gives the carbon lines two weeks and the base lines
-one: it is the build plan. Both build times are assumptions, because the data has no lead times; say so once.
-Stock stays pooled at Reno and the PDC, because the order files record no ship-from site. B's routing is therefore a
-what-if, not the plan.
+**Deck: A, R, R+.** A ships a bike the week it is built, and no plant does that. **R** adds a week from the line to
+stock. **R+** gives the carbon lines two weeks and the base lines one, and it is the build plan. The build times are
+assumptions, because the data has no lead times. Stock is pooled at Reno and the PDC, because the order files record
+no ship-from site.
 
-| Scenario | What changed | Bikes built | MTB carbon at target | Every order cleared | On-time fill |
-|---|---|---|---|---|---|
-| A | nothing (ships the week it is built) | 94,429 | 6 Sep 2027 | 14 Dec 2026 | 96.4% |
-| **R** | a week to build, every line | 94,429 | 20 Sep 2027 | 28 Dec 2026 | 95.5% |
-| **R+** (the plan) | carbon lines 2 weeks, base lines 1 | 94,429 | 4 Oct 2027 | 11 Jan 2027 | 94.8% |
-| R+LD | MTB carbon line down 3 weeks (2–16 Nov 2026) | 94,429 | 1 Nov 2027 (+4 weeks) | 1 Mar 2027 (+7 weeks) | 93.3% |
-| R+E4 | a fleet order: 300 RW-4418, week of 9 Nov 2026 | 94,729 | 11 Oct 2027 (+1, as on A) | 25 Jan 2027 (+2, as on A) | 94.0% |
-| R+C27 | closed for Christmas: 20 + 27 Dec 2027 | 94,429 | 4 Oct 2027 | 11 Jan 2027 | 94.8% |
-| R+C26 | closed for Christmas: 21 + 28 Dec 2026 | 94,429 | 25 Oct 2027 | 8 Feb 2027 | 93.8% |
+**Live, on R+: one scenario per mechanism.**
 
-**The live set, on R+:** line down (R+LD), fleet order (R+E4), then Christmas 2027 and Christmas 2026. Deck only: B, P1, E5 (lots of 50).
-Cut: E2. E1, E3 and E4 on A stay in the file for reference; R+E4 moves exactly as far as E4 moves A.
+| Scenario | What changed | Mechanism | Bikes built | MTB carbon at target | Every order cleared | On-time fill |
+|---|---|---|---|---|---|---|
+| A | – (ships the week it is built) | | 94,429 | 6 Sep 2027 | 14 Dec 2026 | 96.4% |
+| **R** | a week to build, every line | | 94,429 | 20 Sep 2027 | 28 Dec 2026 | 95.5% |
+| **R+** | carbon lines 2 weeks, base lines 1 | the plan | 94,429 | 4 Oct 2027 | 11 Jan 2027 | 94.8% |
+| R+C26 | closed for Christmas, 21 + 28 Dec 2026 | supply lost while customers wait | 94,429 | 25 Oct 2027 | 8 Feb 2027 | 93.8% |
+| R+E4 | a fleet order: 300 RW-4418, week of 9 Nov 2026 | demand added on a full line | 94,729 | 11 Oct 2027 | 25 Jan 2027 | 94.0% |
+| R+E5 | RW-9304 built in lots of 50 | a production rule | 94,462 | 4 Oct 2027 | 18 Jan 2027 | 94.8% |
+| R+P1 | priority order: past-due orders, then all orders, then RW-9304 → RW-4418 → RW-6416 | a change to what the plan values | 94,429 | 4 Oct 2027 | 11 Jan 2027 | 94.8% |
 
-**The line down, while customers wait (R+LD, moved from March to November at the user's call: more dynamic).** The line is full clearing the opening backlog, so every one of the 1,125 lost bikes becomes a late order, MTB carbon only, from 16 Nov 2026 (two weeks to build: the first missing bike would have landed then) to 22 Feb 2027, 11,750 bike-weeks. The line makes them back in winter, when demand is below its 375 a week. Every order cleared 1 Mar 2027, not 11 Jan. Chart `owed_by_line_by_week["mtb-carbon"]`, R+ against R+LD. (In March, the same stop only ate safety stock, down to 0.6 weeks of cover: no order late.)
-
-**Christmas, the pair that makes the point (one change each: every line's capacity 0 for two weeks):**
-- *2027, absorbed.* The lines have room in the autumn. Each line builds ahead as late as it can: the carbon lines run
-  full from 25 Oct 2027 (MTB carbon 305 → 580 a week), road base from 1 Nov, MTB base from 29 Nov. Together they build
-  ahead exactly what R+ would have built in the two closed weeks: 1,928 bikes. Stock above target builds up, peaks
-  in the closure (MTB carbon +1,051 in the week of 27 Dec 2027), and is back to R+'s level on every line by 10 Jan
-  2028. No customer waits longer in any week, and every date and the fill are unchanged. Chart it from `builds_by_line_by_week` with `capacity_by_line_by_week`, R+ against R+C27, weeks
-  55–72, plus `stock_above_target_by_line_by_week`.
-- *2026, it hurts.* The lines are already full, clearing the opening backlog, so nothing can be built ahead (road
-  base, the one line with room, builds 229 ahead). Only MTB carbon customers wait: from 4 Jan to 1 Feb 2027, up to 724
-  bikes, 2,169 bike-weeks. Everything is delivered by 8 Feb. **December's deliveries are not hit:** those bikes were on
-  the line before the closure, so with two weeks to build the closure costs January. Chart it from
+**What each one does, in a sentence:**
+- **Christmas 2026.** Three lines are full clearing the backlog, so they cannot build ahead; road base, the one line
+  with room, builds ahead exactly what it would have built in the closed weeks. Only MTB carbon customers wait: from
+  4 Jan to 1 Feb 2027, up to 724 bikes, 2,169 bike-weeks. **December's deliveries are not hit:** with two weeks to
+  build, those bikes were on the line before the closure, so the closure costs January. Chart
   `owed_by_line_by_week["mtb-carbon"]`, R+ against R+C26.
+- **The fleet order.** The line is full, so exactly 300 more bikes are built when capacity rises, and those customers
+  wait. MTB carbon reaches target a week later, and every order clears two weeks later. The other lines do not move.
+- **Lots of 50.** Every build of RW-9304 is a whole lot, and the total is rounded up to 16,300 (+33). No line's date
+  moves, and the line is never idle in a week R+ ran it full. The cost: 3 RW-9304 bikes a week late (11 Jan 2027),
+  so orders clear 18 Jan, plus stock carried above target.
+- **The priority order.** The same bikes, every line's date, the orders and the fill all stay as in R+. Only who
+  reaches target first changes: RW-9304 on 31 May 2027, RW-4418 on 13 Sep, RW-6416 on R+'s 4 Oct. The first step
+  (orders past their date first) covers every line, so road carbon re-mixes in a few early weeks. Say which step
+  did what.
 
-**The most deliveries by any date, proved (for the "why believe it" slide).** For A, R, R+ and the four R+ events,
-we solved for the fewest bikes any plan could leave owed, on each line in each of the 121 weeks (484 certified solves
-per scenario). The plan matches it every time (`deliveries` block, `largest_gap_bikes`: 0). Say: "No plan delivers
-more by any date." Do not say the solver maximises deliveries; it does not have to, because its plan already
-delivers the most. A plan that builds 100 bikes later shows a gap of 100 (the test).
+**The "why believe it" slide:**
+1. *Optimal, proved.* Every solve is certified from its own duals, and a second algorithm finds the same optimum.
+2. *The only optimal plan.* Pulled toward any other plan, it moves by under 2 bikes, which is what the solver's
+   tolerance allows.
+3. *The most deliveries by any date.* For every scenario we solved for the fewest bikes any plan could leave owed, on
+   each line in each of the 121 weeks. The plan matches it every time (`deliveries.largest_gap_bikes`: 0). The
+   exception is lots of 50, which is 3 bikes short in one week: that is the cost of building in lots. Say "no plan
+   delivers more by any date". Do not say the solver maximises deliveries.
+4. *Consistent.* Each change's footprint is exactly where the change is (the 14 rules in `_meta.consistency`).
 
-**Corrections and caveats:**
-- §6 fact 2 becomes: "Pulled toward any other plan, the optimum moves by under 2 bikes: what the solver's tolerance
-  allows." On R+ the 1.85 bikes it allows go to a build in the last week that never lands.
-- With a build time, the last weeks build nothing, because their bikes would land after week 121 (R: week 121;
-  R+: weeks 120–121 on the carbon lines, 121 on the base lines). End a builds chart at week 119, or label those weeks.
-- Words: "two weeks from the line to stock" or "two weeks to build"; "closed for Christmas"; "built ahead". Not
-  "lead-time offset" or "cutoff objective".
+**Caveats:**
+- With a build time, the last weeks build nothing, because their bikes would land after week 121 (R: week 121; R+:
+  weeks 120–121 on the carbon lines, 121 on the base lines). End a builds chart at week 119, or label those weeks.
+- Every change is known from week 1, and demand is the forecast taken as exact.
+- Words: "two weeks to build", "closed for Christmas", "built in lots of 50", "priority order". Not "FOQ", "lead-time
+  offset", "walk" or "LP objective".
 
-**For the UI:** `scenarios.R_CASES` holds R, R+ and the four R+ events. Their keys contain "+", so quote them
-anywhere a key goes into a URL or a widget key. The run is `sc.run_case(case)` as for every scenario, and the proof
-is `sc.most_delivered(R)` (about 7 s; precomputed in the file).
+**For the UI:** `scenarios.R_CASES` holds exactly the six non-A scenarios above (R, R+, R+C26, R+E4, R+E5, R+P1).
+Their keys contain "+", so quote them anywhere a key goes into a URL or a widget key. Run them with
+`sc.run_case(case)` as for every scenario. R+P1 carries a walk (`case.walk`), so its tenth check row applies. The
+deliveries proof is `sc.most_delivered(R)` (about 7 s; precomputed in the file).
