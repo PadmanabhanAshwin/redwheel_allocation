@@ -17,6 +17,10 @@ out = {"weeks": {int(t): str(d.date()) for t, d in R["obj"].weeks.set_index("t")
 out["on_target_week"] = min(t for t in T if all(out["short_weeks"][s][t - 1] == 0 for s in S))
 out["line_full_through"] = max(t for t in T if all(sum(out["builds"][s][u - 1] for s in S) == 375 for u in range(1, t + 1)))
 out["short_units"] = {s: [round(max(float(tu.at[ix[s], t] - net.at[ix[s], t]), 0)) for t in T] for s in S}
+dem = R["demand"]
+out["demand_all"] = {s: [float(dem.at[ix[s], t]) for t in T] for s in S}
+out["target_all"] = {s: [float(tu.at[ix[s], t]) for t in T] for s in S}
+out["net_all"] = {s: [float(net.at[ix[s], t]) for t in [0] + T] for s in S}
 sc_ = sc.scorecard(R)
 out["scorecard"] = {k: str(sc_[k]) for k in ("Open orders cleared from", "On-time fill rate", "Position-weeks below target", "All targets held from")}
 wk = list(range(1, len(R["obj"].weeks) + 1)); cleared = sc.held_from(R["flows"]["open_orders"][wk] < 0.5)

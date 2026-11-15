@@ -312,84 +312,151 @@ def col_decision(x):
             if h >= 24: g += f'<text x="{X(i)}" y="{top+h/2+7}" text-anchor="middle" style="font-size:19px;font-weight:700;fill:#fff">{val}</text>'
     g += f'<line x1="{x}" y1="{y0}" x2="{x+510}" y2="{y0}" stroke="#111827" stroke-width="2"/>'
     return g + "".join(f'<text x="{X(i)}" y="{y0+26}" text-anchor="middle" style="font-size:17px;fill:#6b7280">{dlab(i)}</text>' for i in range(1, 7))
-def burn_down():
-    x0, x1, yb, yt, TMAX = 200, 1070, 700, 300, 56
-    X = lambda t: x0 + t / TMAX * (x1 - x0); Y = lambda u: yb - u / 6000 * (yb - yt)
-    series = {sk: [BD["target_units"][sk][0] - BD["net"][sk][0]] + BD["short_units"][sk][:TMAX] for sk in SKUS}
-    g = '<text x="110" y="262" class="tag">BIKES BELOW TARGET ON THE LINE · ALL THREE, STACKED</text>'
-    for u in (0, 2000, 4000, 6000):
-        g += f'<line x1="{x0}" y1="{Y(u)}" x2="{x1}" y2="{Y(u)}" stroke="{"#111827" if u == 0 else "#e5e7eb"}" stroke-width="{2 if u == 0 else 1.5}"/><text x="{x0-12}" y="{Y(u)+6}" text-anchor="end" style="font-size:18px;fill:#6b7280">{u:,}</text>'
-    base = [0.0] * (TMAX + 1)
-    for sk in SKUS:
-        top = [base[t] + series[sk][t] for t in range(TMAX + 1)]
-        pts = " ".join(f"{X(t):.1f},{Y(top[t]):.1f}" for t in range(TMAX + 1)) + " " + " ".join(f"{X(t):.1f},{Y(base[t]):.1f}" for t in range(TMAX, -1, -1))
-        g += f'<polygon points="{pts}" fill="{COL[sk]}"/>'
-        g += f'<text x="{X(0)+14}" y="{Y(base[3]+0.3*(top[3]-base[3]))+7}" style="font-size:19px;font-weight:700;fill:#fff">{sk}</text>'
-        base = top
-    total0 = sum(series[sk][0] for sk in SKUS)
-    g += f'<text x="{X(0)+60}" y="{Y(total0)+4}" style="font-size:24px;font-weight:700;fill:#111827">← {total0:,.0f} at opening</text>'
-    wk_of = {v: int(k) for k, v in BD["weeks"].items()}
-    tc = wk_of[list(BD["orders_cleared"].values())[0]]; tt = BD["on_target_week"]
-    for t, l1, l2, anchor in [(tc, fmt_date(BD["weeks"][str(tc)]), "open orders cleared, all three bikes", "start"), (tt, fmt_date(BD["weeks"][str(tt)]), "all three bikes at target", "end")]:
-        g += f'<line x1="{X(t)}" y1="{yt+60}" x2="{X(t)}" y2="{yb}" stroke="#111827" stroke-width="2" stroke-dasharray="5 6"/><circle cx="{X(t)}" cy="{yb}" r="7" fill="#111827"/>'
-        dx = 12 if anchor == "start" else -12
-        g += f'<text x="{X(t)+dx}" y="{yt+82}" text-anchor="{anchor}" style="font-size:22px;font-weight:700;fill:#111827">{l1}</text><text x="{X(t)+dx}" y="{yt+110}" text-anchor="{anchor}" style="font-size:19px;fill:#111827">{l2}</text>'
-    g += f'<text x="{X(34)}" y="{Y(3550)}" text-anchor="middle" style="font-size:19px;fill:#6b7280">the line builds 375 of 375 every week until then</text>'
-    for t in (1, 14, 27, 40, 53):
-        d = datetime.date.fromisoformat(BD["weeks"][str(t)]); g += f'<text x="{X(t)}" y="{yb+28}" text-anchor="middle" style="font-size:18px;fill:#6b7280">{d.strftime("%b %Y")}</text>'
-    return g
-def split_bars():
-    X = lambda i: 1230 + (i - 1) * 100
-    g = '<text x="1180" y="262" class="tag">THE SPLIT OF THE 375 · FIRST SIX WEEKS</text>'
-    y0, hh = 700, 390
-    for i in range(1, 7):
+WK_OF = {v: int(k) for k, v in BD["weeks"].items()}
+def sdate(t): d = datetime.date.fromisoformat(BD["weeks"][str(t)]); return f"{d.day} {d.strftime('%b')}"
+OPEN_UNITS = {sk: BD["target_units"][sk][0] - BD["net"][sk][0] for sk in SKUS}
+T_CLEAR = WK_OF[list(BD["orders_cleared"].values())[0]]; T_TARGET = BD["on_target_week"]
+# Ranked order (customers shared equally, then stock for RW-9304, RW-4418, RW-6416): dates pinned by
+# tests/test_engine.py::test_walk_ranked_on_mtb_carbon. Not run here; refresh at the final run.
+RANKED_AT_TARGET = {"RW-9304": "2027-02-22", "RW-4418": "2027-07-26", "RW-6416": "2027-09-06"}
+RANKED_CLEARED = "2026-12-14"
+WAITC, STOCKC, AMB = "#b91c1c", "#9ca3af", "#b45309"
+GREEN = "#15803d"
+# ---------- 6: how the two rules split the line over the year
+ORDER = ["RW-9304", "RW-4418", "RW-6416"]
+TURN_END = {sk: WK_OF[RANKED_AT_TARGET[sk]] for sk in ORDER}
+SB = json.load(open(pathlib.Path(__file__).with_name("slide5_builds.json")))     # written by the solver session from run_case (scenario P1)
+assert all(SB["A"][sk][:52] == BD["builds"][sk][:52] for sk in SKUS), "the solver's file and the base-plan dump disagree on rule A"
+def sketch_B():
+    """Rule B's weekly builds: the solver's plan for scenario P1, from slide5_builds.json."""
+    return {sk: list(SB["P1"][sk][:56]) for sk in SKUS}
+# ---------- 5: two rules, two build plans
+def context():
+    g = '<text x="110" y="262" class="tag">THE CONTEXT · MTB CARBON LINE, 7 SEP 2026</text>'
+    g += f'<rect x="110" y="288" width="16" height="16" fill="{WAITC}"/><text x="134" y="302" style="font-size:17px;fill:#111827">owed to customers</text><rect x="320" y="288" width="16" height="16" fill="{STOCKC}"/><text x="344" y="302" style="font-size:17px;fill:#111827">target stock</text>'
+    sc = 400 / 2300; tot = 0
+    for r, sk in enumerate(SKUS):
+        y = 356 + r * 108; owed = -BD["net"][sk][0]; tg = BD["target_units"][sk][0]; tot += owed + tg
+        g += f'<rect x="110" y="{y-18}" width="18" height="18" fill="{COL[sk]}"/><text x="138" y="{y}" style="font-size:23px;font-weight:700;fill:#111827">{sk}</text><text x="560" y="{y}" text-anchor="end" style="font-size:21px;fill:#111827">needs <tspan font-weight="700">{owed+tg:,.0f}</tspan></text>'
+        g += f'<rect x="110" y="{y+14}" width="{owed*sc}" height="36" fill="{WAITC}"/><rect x="{110+owed*sc+2}" y="{y+14}" width="{tg*sc}" height="36" fill="{STOCKC}"/>'
+        g += f'<text x="122" y="{y+39}" style="font-size:18px;font-weight:700;fill:#fff">{owed:,.0f}</text><text x="{110+owed*sc+12}" y="{y+39}" style="font-size:18px;font-weight:700;fill:#111827">{tg:,.0f}</text>'
+    g += '<line x1="110" y1="672" x2="560" y2="672" stroke="#e5e7eb" stroke-width="2"/>'
+    g += f'<text x="110" y="716" style="font-size:30px;font-weight:700;fill:#111827">{tot:,.0f} bikes needed</text><text x="110" y="756" style="font-size:30px;font-weight:700;fill:#111827">375 built a week</text>'
+    return g + '<text x="110" y="794" class="note" style="font-size:20px">The line runs full for a year. Someone waits.</text>'
+BX = lambda j: 740 + j * 82                         # 13 four-week blocks
+def blocks(y0, data, hh=150, ref=None):
+    g = ""
+    for j in range(13):
         top = y0
         for sk in SKUS:
-            val = BD["builds"][sk][i - 1]; h = val / 375 * hh; top -= h
-            g += f'<rect x="{X(i)-38}" y="{top}" width="76" height="{h-1.5}" fill="{COL[sk]}"/>'
-            if h >= 24: g += f'<text x="{X(i)}" y="{top+h/2+7}" text-anchor="middle" style="font-size:19px;font-weight:700;fill:#fff">{val}</text>'
-    g += f'<line x1="1180" y1="{y0}" x2="1810" y2="{y0}" stroke="#111827" stroke-width="2"/>'
-    return g + "".join(f'<text x="{X(i)}" y="{y0+28}" text-anchor="middle" style="font-size:18px;fill:#6b7280">{dlab(i)}</text>' for i in range(1, 7))
-def beat(x, n, head, l1, l2):
-    return (f'<text x="{x}" y="806" style="font-size:25px;font-weight:700;fill:#111827">{n}. {head}</text>'
-            + f'<text x="{x}" y="846" class="note" style="font-size:21px;fill:#111827">{l1}</text><text x="{x}" y="876" class="note" style="font-size:21px;fill:#111827">{l2}</text>')
-p5 = page(5, "The line is the limit, so the plan decides who waits",
- '<text x="110" y="168" class="st">The base plan for the MTB carbon line and its three bikes, from 7 Sep 2026.</text>'
- + rule(204) + burn_down() + '<line x1="1130" y1="232" x2="1130" y2="740" stroke="#e5e7eb" stroke-width="2"/>' + split_bars() + rule(760)
- + beat(110, 1, "The line cannot keep up.", "It builds 375 a week against 5,657 needed, with", "new orders arriving. It runs full for a year.")
- + beat(680, 2, "So the only decision is the split.", "Week 1 leans to RW-9304, the furthest behind.", "After that the split holds steady.")
- + beat(1250, 3, "Today’s rule: share the wait equally.", "All three bikes clear their open orders on the", "same day, and reach target on the same day.")
- + rule(920)
- + '<text x="110" y="976" class="st">Change the rule and who waits changes. That rule is the priority order, on the next slide.</text>')
+            val = round(sum(data[sk][j * 4:j * 4 + 4]) / 4); h = val / 375 * hh; top -= h
+            g += f'<rect x="{BX(j)-34}" y="{top}" width="68" height="{h-1.5}" fill="{COL[sk]}"/>'
+            rv = ref and round(sum(ref[sk][j * 4:j * 4 + 4]) / 4)
+            if h >= 20 and rv and abs(val - rv) > 0.15 * rv: g += f'<text x="{BX(j)}" y="{top+h/2+6}" text-anchor="middle" style="font-size:16px;font-weight:700;fill:#fff">{val}</text>'
+    return g + f'<line x1="{BX(0)-40}" y1="{y0}" x2="{BX(12)+40}" y2="{y0}" stroke="#111827" stroke-width="2"/>'
+def rule_head(y, tag, text, result):
+    return (f'<text x="700" y="{y}" class="tag">{tag}</text><text x="700" y="{y+38}" style="font-size:25px;font-weight:700;fill:#111827">{text}</text>'
+            + f'<text x="1806" y="{y}" text-anchor="end" style="font-size:18px;font-weight:700;fill:#111827">{result}</text>')
+def bracket(j0, j1, y, lab, col):
+    x0, x1 = BX(j0) - 34, BX(j1) + 34
+    return f'<path d="M{x0} {y} v8 h{x1-x0} v-8" fill="none" stroke="{col}" stroke-width="2.5"/><text x="{(x0+x1)/2}" y="{y+32}" text-anchor="middle" style="font-size:18px;font-weight:700;fill:{col}">{lab}</text>'
+def two_plans():
+    A = {sk: BD["builds"][sk][:52] for sk in SKUS}; B = sketch_B()
+    g = rule_head(262, "RULE A · TODAY", "Share the line so every bike is equally far below its target.", f"all three at target {sdate(T_TARGET)} 2027")
+    g += blocks(470, A)
+    avg = [round(sum(A[sk][1:52]) / 51 / 10) * 10 for sk in SKUS]
+    g += f'<text x="{(BX(0)+BX(12))/2}" y="500" text-anchor="middle" style="font-size:18px;fill:#111827">about {avg[0]} / {avg[1]} / {avg[2]} a week, all year</text>'
+    g += rule_head(528, "RULE B · A RANKED PRIORITY ORDER", "Serve waiting customers first, overdue orders ahead. Then rebuild stock one bike at a time.", "numbers where B differs from A")
+    g += blocks(736, B, ref=A)
+    for j in range(13): g += f'<text x="{BX(j)}" y="760" text-anchor="middle" style="font-size:15px;fill:#6b7280">{sdate(j*4+1)}</text>'
+    j9, j4 = (TURN_END["RW-9304"] - 1) // 4, (TURN_END["RW-4418"] - 1) // 4; jc = (T_CLEAR - 1) // 4
+    g += bracket(0, jc - 1, 772, "customers first", "#6b7280") + bracket(jc, j9 - 1, 772, f"RW-9304 · at target {sdate(TURN_END['RW-9304'])}", COL["RW-9304"])
+    g += bracket(j9, j4 - 1, 772, f"RW-4418 · at target {sdate(TURN_END['RW-4418'])}", COL["RW-4418"]) + bracket(j4, 12, 772, f"RW-6416 · {sdate(TURN_END['RW-6416'])}", COL["RW-6416"])
+    return g
+def enc_box(x, w, head, lines_, note):
+    g = f'<rect x="{x}" y="874" width="{w}" height="128" rx="12" fill="#fff" stroke="{"#111827" if head[0] == "A" else AMB}" stroke-width="2.5"/>'
+    g += f'<text x="{x+22}" y="904" style="font-size:21px;font-weight:700;fill:#111827">{head}</text>'
+    for i, (kind, t) in enumerate(lines_):
+        y = 934 + i * 30
+        g += meq(x + 22, y, t, fs=22) if kind == "m" else f'<text x="{x+22}" y="{y}" style="font-size:18px;fill:#111827">{t}</text>'
+    return g
+SUB = lambda t: f'<tspan dy="7" style="font-size:14px">{t}</tspan><tspan dy="-7"> </tspan>'
+NET = f'({v("target", "k,t")} − {v("net", "k,t")})<tspan dy="-9" style="font-size:14px">+</tspan><tspan dy="9"> </tspan>÷ {v("demand", "k,t")}'
+p5 = page(5, "Two rules for a full line, and the build plans they give",
+ '<text x="110" y="168" class="st">Slide 4 left the objective to the planner. Here it is filled in two ways. Bars are builds per week, averaged over four weeks.</text>'
+ + rule(204) + context() + '<line x1="630" y1="232" x2="630" y2="810" stroke="#e5e7eb" stroke-width="2"/>' + two_plans() + rule(826)
+ + '<text x="110" y="856" class="tag">HOW EACH RULE IS ENCODED · SAME VARIABLES, SAME CONSTRAINTS, A DIFFERENT OBJECTIVE</text>'
+ + enc_box(110, 780, "A · one solve",
+           [("m", f'{v("gap", "k,t")} = {NET}'),
+            ("m", f'minimise  Σ{v("", "t")} max{v("", "k")} {v("gap", "k,t")}'),
+            ("t", "net = stock − open orders. One floor: the target.")], "")
+ + enc_box(920, 890, "B · one solve per step, each held before the next",
+           [("m", f'floors:  {v("due")} = −(orders not yet due)   ·   {v("owed")} = 0   ·   {v("target")}'),
+            ("m", f'step {v("j")}:  minimise  Σ{v("", "t")} max{v("", "k in step")} ({v("floor")} − {v("net")})<tspan dy="-9" style="font-size:14px">+</tspan><tspan dy="9"> </tspan>÷ {v("demand")},  then hold it at its optimum'),
+            ("t", "steps here:  due, all bikes  →  owed, all  →  target: RW-9304  →  RW-4418  →  RW-6416  →  target, other lines")], "")
+ + '<text x="110" y="1032" class="note" style="font-size:16px">Both plans are the solver’s: scenario A, and A with this priority order (scenario P1). Same variables and constraints; only the objective differs.</text>')
 
-# ---------- 6: a different priority order
-CX_, CY_ = "#111827", "#b45309"
-def orow(y, name, tag, steps, bx, by, out):
-    g = f'<text x="110" y="{y-34}" style="font-size:26px;font-weight:700;fill:#111827">{name}</text>' + (f'<text x="110" y="{y-70}" style="font-size:16px;font-weight:700;letter-spacing:2px;fill:#b91c1c">{tag}</text>' if tag else "")
-    g += lines(110, y + 4, steps, cls="cell", dy=32).replace('class="cell"', 'class="cell" style="font-size:20px"')
-    for i in range(4):
-        x = 760 + i * 104; top = y + 50
-        for val, col in ((by[i], CY_), (bx[i], CX_)):
-            h = val * 11
-            if val:
-                top -= h
-                g += f'<rect x="{x-36}" y="{top}" width="72" height="{h-1.5}" fill="{col}"/><text x="{x}" y="{top+h/2+7}" text-anchor="middle" style="font-size:18px;font-weight:700;fill:#fff">{val}</text>'
-        g += f'<text x="{x}" y="{y+76}" text-anchor="middle" style="font-size:16px;fill:#6b7280">week {i+1}</text>'
-    g += f'<line x1="712" y1="{y+50}" x2="1120" y2="{y+50}" stroke="#111827" stroke-width="2"/>'
-    return g + lines(1220, y - 20, out, cls="st", dy=36).replace('class="st"', 'class="st" style="font-size:24px"') + rule(y + 104)
-p6 = page(6, "A different priority order, the same object and solver",
- '<text x="110" y="168" class="st">A small example. Bikes X and Y share a line that builds 10 a week. X has 10 customers waiting, Y has none. Each should hold 20 in stock.</text>'
+def nets_B():
+    """Net inventory under rule B: opening + the solver's builds − the forecast, week by week."""
+    B = sketch_B(); out = {}
+    for sk in SKUS:
+        n = [BD["net_all"][sk][0]]
+        for t in range(1, 57): n.append(n[-1] + B[sk][t - 1] - BD["demand_all"][sk][t - 1])
+        out[sk] = n
+    return out
+GX = lambda j: 560 + j * 170                       # grid columns: opening, then 13 four-week periods
+def tint(hexcol, a): r, g_, b_ = (int(hexcol[i:i + 2], 16) for i in (1, 3, 5)); return f"rgb({int(255-(255-r)*a)},{int(255-(255-g_)*a)},{int(255-(255-b_)*a)})"
+RH = 27
+def pill(x, y, h, letter, col): return f'<rect x="{x}" y="{y}" width="26" height="{h}" rx="6" fill="{col}"/><text x="{x+13}" y="{y+h/2+6}" text-anchor="middle" style="font-size:16px;font-weight:700;fill:#fff">{letter}</text>'
+def grid_block(top, sk, role, A, B, nA, nB):
+    g = f'<rect x="110" y="{top-17}" width="18" height="18" fill="{COL[sk]}"/><text x="138" y="{top}" style="font-size:22px;font-weight:700;fill:#111827">{sk}</text><text x="250" y="{top}" class="note" style="font-size:18px">{role}</text>'
+    per = lambda arr, j: round(sum(arr[j * 8:j * 8 + 8]))
+    rows = [("Orders in (forecast)", [None] + [per(BD["demand_all"][sk], j) for j in range(7)], "ctx"),
+            ("Target stock", [round(BD["target_all"][sk][0])] + [round(BD["target_all"][sk][j * 8 + 7]) for j in range(7)], "ctx"),
+            ("built", [None] + [per(A[sk], j) for j in range(7)], "built"),
+            ("end of period: backlog (−) or stock", [round(nA[sk][0])] + [round(nA[sk][j * 8 + 8]) for j in range(7)], "net"),
+            ("built", [None] + [per(B[sk], j) for j in range(7)], "builtB"),
+            ("end of period: backlog (−) or stock", [round(nB[sk][0])] + [round(nB[sk][j * 8 + 8]) for j in range(7)], "net")]
+    tgt = rows[1][1]; builtA = rows[2][1]; y1 = top + 30
+    g += pill(110, y1 + 2 * RH - 19, 2 * RH - 4, "A", "#111827") + pill(110, y1 + 4 * RH - 19, 2 * RH - 4, "B", AMB)
+    for r, (lab, vals, kind) in enumerate(rows):
+        y = y1 + r * RH
+        ctx = kind == "ctx"
+        g += f'<text x="{110 if ctx else 148}" y="{y}" style="font-size:17px;font-weight:{700 if kind == "net" else 400};fill:{"#6b7280" if ctx else "#111827"}">{lab}</text>'
+        for j, val in enumerate(vals):
+            if val is None: continue
+            fill, col, w = None, ("#6b7280" if ctx else "#111827"), 400
+            if kind == "net":
+                if val < 0: fill, col, w = tint(WAITC, 0.14), WAITC, 700
+                elif val >= tgt[j] - 1: fill, col, w = tint(GREEN, 0.14), GREEN, 700
+                else: fill = "#eef0f3"
+            if fill: g += f'<rect x="{GX(j)-64}" y="{y-19}" width="128" height="{RH-3}" rx="4" fill="{fill}"/>'
+            if kind == "net" and val >= tgt[j] - 1: g += f'<rect x="{GX(j)-64}" y="{y-19}" width="128" height="{RH-3}" rx="4" fill="none" stroke="{GREEN}" stroke-width="2"/>'
+            g += f'<text x="{GX(j)+56}" y="{y}" text-anchor="end" class="cell" style="font-size:17px;font-weight:{w};fill:{col}">{val:,}</text>'
+    if sk == ORDER[-1]:                                    # rule B's last bike: the run of periods ending with no stock
+        vals = rows[5][1]; zs = [j for j, v in enumerate(vals) if v == 0]; y = y1 + 5 * RH
+        if zs: g += f'<rect x="{GX(zs[0])-68}" y="{y-23}" width="{GX(zs[-1])-GX(zs[0])+136}" height="{RH+5}" rx="6" fill="none" stroke="{AMB}" stroke-width="2" stroke-dasharray="5 4"/>'
+    return g
+def grid_head(y):
+    g = f'<text x="{GX(0)+56}" y="{y}" text-anchor="end" style="font-size:16px;font-weight:700;fill:#111827">opening</text>'
+    return g + "".join(f'<text x="{GX(j+1)+56}" y="{y}" text-anchor="end" style="font-size:16px;font-weight:700;fill:#111827">{sdate(j*8+1)} – {sdate(j*8+8)}</text>' for j in range(7))
+A_ = {sk: BD["builds"][sk][:56] for sk in SKUS}; B_ = sketch_B(); nA_ = {sk: BD["net_all"][sk] for sk in SKUS}; nB_ = nets_B()
+ROLE = {ORDER[0]: "first in rule B’s order", ORDER[1]: "second", ORDER[2]: "last"}
+p6 = page(6, "The two plans as a planner’s grid",
+ '<text x="110" y="168" class="st">Eight-week periods. End of period = previous end + built − orders in. Once at target, every bike stays there.</text>'
  + rule(204)
- + "".join(f'<text x="{x}" y="250" class="tag">{h}</text>' for x, h in [(110, "PRIORITY ORDER"), (712, "BUILDS PER WEEK"), (1220, "WHAT HAPPENS")])
- + f'<rect x="960" y="234" width="16" height="16" fill="{CX_}"/><text x="982" y="249" style="font-size:17px;font-weight:600;fill:#111827">X</text><rect x="1020" y="234" width="16" height="16" fill="{CY_}"/><text x="1042" y="249" style="font-size:17px;font-weight:600;fill:#111827">Y</text>'
- + orow(370, "Today’s rule", "", ["1. target · both bikes · shared evenly"], [10, 5, 5, 5], [0, 5, 5, 5],
-        ["X’s customers are served in week 1.", "Then both build stock together."])
- + orow(590, "Rank the bikes: Y first", "THE TRAP", ["1. target · Y", "2. target · X"], [0, 0, 10, 10], [10, 10, 0, 0],
-        ["Y fills its stock first.", "X’s customers wait until week 3."])
- + orow(810, "Customers, then Y first", "", ["1. owed   · both bikes · shared evenly", "2. target · Y", "3. target · X"], [10, 0, 0, 10], [0, 10, 10, 0],
-        ["X’s customers are served in week 1.", "Then Y gets its stock before X."])
- + '<text x="110" y="966" class="st">A priority has two parts: which need comes first, then which bike. “Owed” is the floor at zero: nobody waiting.</text>'
- + '<text x="110" y="1010" class="note">Each row is a test of the solver. On Redwheel, today’s rule written as a one-step priority order gives the same plan, cell for cell.</text>')
+ + pill(110, 222, 28, "A", "#111827") + '<text x="148" y="242" style="font-size:19px;fill:#111827"><tspan font-weight="700">Rule A · today.</tspan> Every bike equally far below its target.</text>'
+ + pill(760, 222, 28, "B", AMB) + '<text x="798" y="242" style="font-size:19px;fill:#111827"><tspan font-weight="700">Rule B · ranked.</tspan> Customers first (overdue orders ahead), then stock for RW-9304, RW-4418, RW-6416 in turn.</text>'
+ + grid_head(284)
+ + "".join(grid_block(318 + i * 196, sk, ROLE[sk], A_, B_, nA_, nB_) + (rule(318 + i * 196 + 176) if i < 2 else "") for i, sk in enumerate(ORDER))
+ + rule(892)
+ + f'<rect x="110" y="910" width="40" height="22" rx="4" fill="{tint(WAITC, 0.14)}"/><text x="160" y="927" style="font-size:17px;fill:#111827">backlog</text>'
+ + f'<rect x="260" y="910" width="40" height="22" rx="4" fill="#eef0f3"/><text x="310" y="927" style="font-size:17px;fill:#111827">stock, below target</text>'
+ + f'<rect x="500" y="910" width="40" height="22" rx="4" fill="{tint(GREEN, 0.14)}" stroke="{GREEN}" stroke-width="2"/><text x="550" y="927" style="font-size:17px;fill:#111827">at target</text>'
+ + f''
+ + '<text x="110" y="970" class="st"><tspan class="b">A</tspan> lifts all three together. <tspan class="b">B</tspan> fills them in turn: RW-9304 and RW-4418 reach target 28 and 6 weeks sooner.</text>'
+ + '<text x="110" y="1008" class="st"><tspan class="b">The price:</tspan> RW-6416 holds no stock until July, so any miss in its forecast reaches its customers.</text>'
+ + '<text x="110" y="1044" class="note" style="font-size:17px">Both are the solver’s plans; the end rows follow from built and orders in.</text>')
 pages = [p1, p2, p3, p4, p5, p6]
 head = f'<!doctype html><html><head><meta charset="utf-8"><style>{CSS}</style></head><body>'
 (out / "object.html").write_text(head + "".join(pages) + "</body></html>")
