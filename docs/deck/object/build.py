@@ -321,21 +321,22 @@ def dynamics():
         g += meq(110, y, kw, 23, "start", GREY) + meq(240, y, m, 27) + lines(240, y + 30, d, 16, GREY, 22)
     return g
 PBAR = f'<tspan style="{MF};text-decoration:overline">N</tspan>'
-EDITS = [("E1", "Line outage, MTB carbon, 3 weeks", "π", "capacity arrival 375 → 0 in 3 weeks", "built"),
-         ("E4", "Commercial order, 300 RW-4418", "π", "order arrival +300 in 1 week", "built"),
-         ("E3", "Frame supply interrupted, RW-4418, 8 weeks", PBAR, "run limit of make set to 0 in 8 weeks", "built"),
-         ("B", "Build lead time 1 week; web orders served from Columbus", f'{A_("0")}, {A_("1")}', f'output entry of make moved from {A_("0")} to {A_("1")}; move added to the decisions', "built; horizon-end effect open"),
-         ("P1", "Priority order on the MTB carbon line", "objective", "one step replaced by six ordered steps", "slides 5–6"),
-         ("", "Purchased component, 2-week lead time", f'{A_("0")}, {A_("2")}', "one row (frames) and one column (buy) added", "test only; purchases not in whole units")]
+EDITS = [("R", "Build time 1 week, every line", f'{A_("0")}, {A_("1")}', f'output entry of make moved from {A_("0")} to {A_("1")}', "deck"),
+         ("R+", "Build time 2 weeks on carbon lines, 1 on base lines", f'{A_("1")}, {A_("2")}', f'output entry of make in {A_("2")} for carbon, {A_("1")} for base', "deck: the plan"),
+         ("R+C26", "Plant closed, weeks of 21 and 28 Dec 2026", "π", "capacity arrival set to 0, every line, 2 weeks", "live"),
+         ("R+E4", "Commercial order, 300 RW-4418, week of 9 Nov 2026", "π", "order arrival +300 in 1 week", "live"),
+         ("R+P1", "Priority order on the MTB carbon line", "objective", "one step replaced by six ordered steps", "live"),
+         ("R+E5", "RW-9304 built in lots of 50", "lot", "applied when rounding the LP solution; exact form is a MIP", "live; outside the LP"),
+         ("", "Purchased component, 2-week lead time", f'{A_("0")}, {A_("2")}', "one row (frames) and one column (buy) added", "test only")]
 SXX = 1040
 def edits():
     g = vrule(990, 580, 1000) + txt(SXX, 604, B_("Generalization") + f'<tspan style="fill:{GREY}"> scenarios v parameters updated</tspan>', 23)
     g += txt(1810, 604, "status", 15, GREY, 700, "end")
     for i, (c, a, p, b, st) in enumerate(EDITS):
-        y = 652 + 60 * i
-        shown = st.startswith("slides")
-        g += txt(SXX, y, c, 17, GREY, 700) + txt(SXX + 48, y, a, 18, INK, 700 if shown else 400) + txt(1810, y, st, 15, INK if shown else GREY, 700 if shown else 400, "end")
-        g += (meq(SXX + 48, y + 25, p, 19) if p != "objective" else txt(SXX + 48, y + 25, p, 16)) + txt(SXX + 138, y + 25, b, 16, GREY)
+        y = 648 + 52 * i
+        shown = st.startswith("deck")
+        g += txt(SXX, y, c, 17, GREY, 700) + txt(SXX + 76, y, a, 18, INK, 700 if shown else 400) + txt(1810, y, st, 15, INK if shown else GREY, 700 if shown else 400, "end")
+        g += (meq(SXX + 76, y + 23, p, 18) if p not in ("objective", "lot") else txt(SXX + 76, y + 23, p, 16)) + txt(SXX + 166, y + 23, b, 16, GREY)
     return g
 p4 = page(4, "Linear program", "", network() + vrule(860, 232, 530) + matrices() + vrule(1520, 232, 530) + staircase() + dynamics() + edits())
 
