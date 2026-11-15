@@ -222,13 +222,21 @@ def run_case(case: Case) -> dict:
     if inert:                                   # e.g. a limit on transfers in a scenario where the plan decides none
         raise ValueError(f"scenario {case.key}: a run limit on tasks the plan does not decide would change nothing: "
                          + ", ".join(inert))
-    lp = engine.decide(obj, free, tu.loc[keys], wd.loc[keys],
-                       pd.Series({k: sku.at[k[0], "line_id"] for k in keys}), positions=pos, w_run=1e-6)
+    grp = pd.Series({k: sku.at[k[0], "line_id"] for k in keys})
+    floors, steps = None, None
+    if getattr(case, "walk", None):                 # a ranked walk (docs/RANKED_WALK.md): the object session's module
+        from redwheel import walk as wk             # turns the scenario's walk into floors and steps for the solver
+        floors, steps = wk.solver_input(case, obj, pos, tu)
+    if steps:
+        lp = engine.decide_walk(obj, free, tu.loc[keys], wd.loc[keys], grp, floors, steps, positions=pos, w_run=1e-6)
+    else:
+        lp = engine.decide(obj, free, tu.loc[keys], wd.loc[keys], grp, positions=pos, w_run=1e-6)
     make_ids = [k for k in free if k.startswith("make|")]
     builds = engine.round_runs(obj, lp.runs.loc[make_ids])
     moves = round_moves(obj, lp.runs.loc[[k for k in free if k.startswith("move|")]], builds)
     R = _finish(case, m, obj, pool_def, pos, pd.concat([builds, moves]).astype(float), lp, demand, tw, tu)
     R["weekly_demand"] = wd                         # the divisor the plan used: weeks short = units short / this
+    R["walk"] = {"floors": floors, "steps": steps} if steps else None
     R["change_report"] = change_report
     return R
 
@@ -316,6 +324,53 @@ def held_by_line(R: dict) -> pd.DataFrame:
     return out.unstack()
 
 
+def _feeds(R: dict, key) -> list:
+    """The decided tasks that add to a position: its make, and its move when the pool's stock is not at Reno."""
+    sku, pool = key
+    return [k for k in R["lp"].runs.index if k.split("|")[1] == sku
+            and (k.startswith("make|") or ("RENO" not in R["pools"][pool]["stock"] and k.startswith("move|")))]
+
+
+def walk_served_out_of_order(R: dict) -> int:
+    """How often the plan served a later step while an earlier one could still have used the line.
+
+    On the LP's own runs and levels. For each step i, line and week t: if a position in step i is below the step's
+    floor at t, and the tasks that feed it were not at their run limit in week t - lead, then every position on that
+    line given a run in week t - lead must itself be below the floor of step i or of an earlier step it is in
+    (its run served that step, not a later one). Counts (position, week) pairs that break this."""
+    walk = R["walk"]
+    if not walk:
+        return 0
+    lp, pos = R["lp"], R["positions"]
+    weeks = list(R["target_units"].columns)
+    net = position_levels(lp.levels, pos)[weeks]
+    limit = rtn.run_limits(R["obj"]).reindex(index=lp.runs.index, columns=weeks)
+    at_limit = (lp.runs[weeks] >= limit - 1e-6) & limit.notna()
+    ran = lp.runs[weeks] > 1e-6
+    lead = {k: lead_weeks(R["case"], R["pools"][k[1]], R["line"][k]) for k in pos}
+    feeds = {k: _feeds(R, k) for k in pos}
+    steps = walk["steps"]
+    below, at_floor = {}, {}                  # step index -> {position: weeks below its floor / not above it by a bike}
+    for i, (f_i, members) in enumerate(steps):
+        floor = walk["floors"][f_i]
+        gap = {s: net.loc[[s]].iloc[0] - floor.loc[[s], weeks].iloc[0] for s in members}
+        below[i] = {s: set(g.index[g < -0.01]) for s, g in gap.items()}    # a hundredth of a bike: the held step's slack
+        at_floor[i] = {s: set(g.index[g < 0.5]) for s, g in gap.items()}   # at the floor: the step keeps it there
+    bad = set()
+    for i in below:
+        for s, wks in below[i].items():
+            for t in wks:
+                u = t - lead[s]
+                if u < 1 or at_limit.loc[feeds[s], u].any():
+                    continue                                              # could not have been helped that week
+                for s2 in pos:
+                    if R["line"][s2] != R["line"][s] or s2 == s or not ran.loc[feeds[s2], u].any():
+                        continue
+                    if not any(t in at_floor[i2].get(s2, ()) for i2 in range(i + 1)):
+                        bad.add((s2, u))                                  # ran, yet above every floor up to this step
+    return len(bad)
+
+
 def checks(R: dict) -> pd.DataFrame:
     """Checks on a case's plan, computed from the run."""
     case, obj, lp, X = R["case"], R["obj"], R["lp"], R["X"]
@@ -368,4 +423,8 @@ def checks(R: dict) -> pd.DataFrame:
         ("Below target only when the line ran full (or the SKU was at its run limit) every week up to the lead time before",
          f"{int(below.values.sum())} position-weeks below, {unexplained} unexplained", unexplained == 0),
     ]
+    if R.get("walk"):
+        out_of_order = walk_served_out_of_order(R)
+        rows.append(("Walk: a later step is served only when every earlier step on the line was met or held back",
+                     f"{len(R['walk']['steps'])} steps, {out_of_order} served out of order", out_of_order == 0))
     return pd.DataFrame(rows, columns=["check", "value", "pass"])

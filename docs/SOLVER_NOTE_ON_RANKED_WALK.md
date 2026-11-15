@@ -65,9 +65,13 @@ default); `run_plan` never has one. `scenarios.round_moves` and `engine.round_ru
 
 **8. The plan check.** Agreed, in `scenarios.checks`, but per step, not per bike, and with the lead time:
 
-> For each line, week t and step j: if a position in step j is below its floor at t, and its feeding tasks were not
-> at their run limit in week t − lead, then no position in a *later* step on that line was given a run that lands by
-> t, i.e. in week t − lead.
+> For each line, week t and step i: if a position in step i is below its floor at t, and its feeding tasks were not
+> at their run limit in week t − lead, then every position on that line given a run in week t − lead is itself below
+> the floor of step i or of an earlier step it is in: its run served that step, not a later one.
+
+(Corrected while building: my first wording, "no position in a later step ran", flagged 98 pairs on the correct walk,
+because a position in the owed step is also in a later cover step; a run on it in a week it is owed serves the owed
+step.)
 
 (The run-limit clause is from your second note: a pinned bike, as RW-4418 in E3, must let later steps use the line.)
 
@@ -98,7 +102,28 @@ reproduce on the current tree and will be the tests. Three remarks:
 - **Solve count grows with ranked positions:** ten bikes ranked on cover is twelve solves, about a second. Fine for
   the UI; say so in the form's help so nobody ranks all twenty positions of B and expects 0.1 s.
 
-## 5. What I will do, and when
+## 5. Built (15 Nov, after the user asked for it before the demo)
+
+- `engine.decide_walk(obj, free, target_units, weekly_demand, group, floors, steps, ...)` beside `decide`, on a shared
+  matrix builder (`_build`); `decide` unchanged: the frozen base case and every pinned number pass. `Plan.steps` is a
+  list of `{"floor", "positions", "worst", "total"}` in order, weeks. Hold is `opt + 1e-7 + 1e-9|opt|` (your value;
+  mine let the last stage drift the score by 1e-3).
+- Your two-bike table and the five walks on A reproduce to the cell, pinned in `tests/test_engine.py`.
+- `run_case`: `if getattr(case, "walk", None): from redwheel import walk as wk; floors, steps = wk.solver_input(case,
+  obj, pos, tu)`; a non-empty `steps` goes to `decide_walk`, else today's path. The import is inside the branch, so the
+  repo runs before your module exists. `R["walk"] = {"floors", "steps"}` or None. Your guarantees (floors nested,
+  cover = target_units, every position in a cover step, keys = target_units.index) are what I rely on; `decide_walk`
+  refuses an unknown floor, a position with no target, and an empty walk. Floor names are opaque (your §8): the floor
+  equal to target_units is found by value and reuses the LP's shortfall block, whatever you call it.
+- The check, per step with lead time and run limits (`scenarios.walk_served_out_of_order`), is the tenth row of
+  `checks` when `R["walk"]` is set; tested on the ranked walk (0) and on the same plan claimed in the opposite order
+  (caught).
+
+Yours: `Case.walk`, `redwheel/walk.py` with `solver_input`, saving the walk with the scenario, the tunable, the UI
+words. When `Case.walk` lands, `tests/test_scenarios.py` should run one walked scenario end to end through `run_case`
+and check 10 of 10.
+
+## 6. Timing
 
 Nothing in `engine.py` for the walk until D23 is committed and you confirm 1, 7 and 8. Then: matrix builder out of
 `decide` (suite identical), `decide_walk` with the tiny-chain tests from your `toy()`, the step record passed through

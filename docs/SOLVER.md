@@ -60,6 +60,31 @@ window. It stays linear because the divisor is data. The exact measure is not us
 only when the forecast never falls, so in general it needs integer variables. A window with less than 1 unit a week
 of demand is counted at 1, so nothing is divided by zero.
 
+## 2a. A walk over floors (`decide_walk`, D24)
+
+The same LP with the objective stated as ordered steps ([RANKED_WALK.md](RANKED_WALK.md)). A floor is a level net
+position should not fall below: **target** (target units), **owed** (0), **due** (minus the open orders not yet due).
+Floor names are opaque to the solver; the floor equal to target units reuses the LP's own shortfall block.
+A step is (floor, positions); the walk is the steps in order. For each step: minimise w_worst × Σ the step's largest
+shortfall in weeks per line and week + w_short × its total, then hold it at its optimum (+ 1e-7 + 1e-9 × |optimum|).
+Last, stock above target and runs, with every step held. The single step (target, every position) gives `decide`'s plan
+cell for cell. A ranked step arrives as one step per position, so the solver only ever shares evenly.
+
+```
+ short_f[s,t] >= floor_f[s,t] - net[s,t]        one block per floor used (the target floor's block is `short`)
+ worst_j[g,t] >= short_f[s,t] / weekly_demand   one block per step j, for the step's positions
+ step j:  minimise  w_worst·Σ worst_j + w_short·Σ short_f/d (its positions)   then hold
+```
+
+`Plan.steps` records each step's worst and total at its optimum; `Plan.objective` stays the score on the even rule,
+so every plan is comparable on one yardstick. Not a single solve with shrinking weights: that differs from the exact
+walk at some weights (RANKED_WALK.md §5). The plan check "Walk: a later step is served only when every earlier step
+on the line was met or held back" (`scenarios.walk_served_out_of_order`) counts, on the LP's own runs, the (position,
+week) pairs where a position ran while another on its line was below the floor of a step and not held back by a run
+limit (lead time included), and the position that ran was not itself below the floor of that step or an earlier one. The walk reaches the solver through `Case.walk` and
+`redwheel.walk.solver_input(case, obj, positions, target_units) -> (floors, steps)` (the object session's module);
+`run_case` carries it as `R["walk"]`.
+
 ## 3. What the objective decides, and what it does not
 
 Is it optimising anything? Yes, but less than "an LP" suggests, and the deck should say so.
@@ -83,8 +108,8 @@ Is it optimising anything? Yes, but less than "an LP" suggests, and the deck sho
   `aux_fns.compare_plans` gives the LP 278 position-weeks below target and all targets held from 6 Sep 2027. The
   planner's lowest-cover-first rule gives 335 and 1 May 2028, with the same 94,429 bikes.
 - **In B, also decided:** which pool the stock sits in, and when to transfer.
-- **Not decided:** shipping (projected afterwards: oldest orders first, as soon as stock exists, O10), priorities
-  between SKUs (every week short counts the same), anything after week 121 (O14). Events are known from week 1 (O25).
+- **Not decided:** shipping (projected afterwards: oldest orders first, as soon as stock exists, O10), anything after
+  week 121 (O14). Priorities between SKUs are decided only when a scenario carries a walk (§2a). Events are known from week 1 (O25).
 
 ## 4. D23: why the divisor changed, and what moved
 
@@ -102,8 +127,11 @@ about 6 weeks ahead of the other two until mid-2027. The solver levelled one mea
 
 Unchanged in A, B, E1, E2 and E3: every SKU's total, every line's total in every week, every line's date
 (MTB carbon 6 Sep / 27 Sep / 4 Oct / 13 Sep / 6 Sep 2027), position-weeks below target (278 in A, 722 in B), and 9 of 9
-checks. E1's SKU re-mix around the stoppage is smaller (week 25: +3 / −2 / −1, was +15 / −9 / −6). One date
+checks. E1's SKU re-mix around the stoppage is smaller (week 25: +3 / −2 / −1, was +15 / −9 / −6). One line date
 moves, and only off the built-in list: E3 under B's rules is held from 27 Dec 2027 (was 1 Nov). See O28.
+**Also moved, found by the object session:** the week every open order is cleared is a week earlier (A and E1: 14 Dec
+2026, was 21 Dec; B: 4 Jan 2027, was 11 Jan; E2: 14 Dec, was 28 Dec), with the same on-time fill. The scorecard was
+not in my first comparison, which looked at line dates and totals.
 
 Same change, same reason: `forward_sum` now reads a part-week target (the Target form allows 0.5 to 52 weeks) as
 whole weeks plus that share of the next week, which is how `weeks_of_supply` reads it. At 15.5 weeks the plan used to

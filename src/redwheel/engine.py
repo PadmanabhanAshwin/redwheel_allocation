@@ -22,7 +22,7 @@ See docs/SOLVER.md.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -37,7 +37,8 @@ class Plan:
     runs: pd.DataFrame      # task_id x t (1..H), free tasks only
     levels: pd.DataFrame    # resource_id x t (0..H), as the LP sees them
     short: pd.DataFrame     # item x t (1..H), units below target
-    objective: float
+    objective: float        # the score on decide's objective (for a walk: a yardstick, not what was minimised)
+    steps: list = field(default_factory=list)   # a walk's record: per step, its floor, positions, worst and total (weeks)
 
 
 def window_demand(target_units: pd.DataFrame, target_weeks: pd.DataFrame, floor: float = 1.0) -> pd.DataFrame:
@@ -167,19 +168,20 @@ def forward_sum(demand: pd.DataFrame, n: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def decide(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekly_demand: pd.Series | pd.DataFrame,
-           group: pd.Series, w_worst: float = 1.0, w_short: float = 0.1, w_excess: float = 0.001,
-           positions: dict | None = None, w_run: float = 0.0) -> Plan:
-    """free: task ids the LP may run. target_units: position x t (1..H). group: position -> fairness group.
-    weekly_demand: position x t (1..H), the units a week that turn units short into weeks short (`window_demand`);
-    a Series is one number per position, the same every week.
+@dataclass
+class _LP:
+    """The LP as matrices, and where each block of variables sits: runs, levels, short, excess, worst."""
+    c: np.ndarray; A_ub: sparse.csr_matrix; b_ub: list; A_eq: sparse.csr_matrix; b_eq: list; bounds: np.ndarray
+    H: int; nF: int; nR: int; nI: int; nG: int
+    o_run: int; o_lvl: int; o_short: int; o_exc: int; o_worst: int; n_var: int
+    items: list; groups: list; group_ix: list; members: dict; dv: np.ndarray
+    free: list; res: pd.DataFrame; opening: np.ndarray
+    w_worst: float; w_short: float; w_excess: float; w_run: float
 
-    A position is what a target is set on. By default there is one per item: all our inventory of the item
-    minus all its orders. `positions` replaces that with {key: {resource_id: sign}}, e.g. one per (item, pool);
-    target_units, weekly_demand and group are then indexed by those keys.
 
-    w_run: a small cost per task run. Needed when some stock is outside every position (e.g. a site that may
-    not ship): without it, building or moving stock there is free and the LP may do it for no reason."""
+def _build(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekly_demand, group: pd.Series,
+           w_worst: float, w_short: float, w_excess: float, positions: dict | None, w_run: float) -> _LP:
+    """The LP as matrices: see `decide` for the arguments."""
     H = len(obj.weeks)
     res = obj.resources.reset_index(drop=True)
     items = list(target_units.index)
@@ -263,14 +265,144 @@ def decide(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekly_dem
     upper[o_run:o_lvl] = np.where(np.isnan(lim), np.inf, lim).ravel()      # run(i, t) = o_run + i*H + t-1
     bounds = np.column_stack([np.zeros(n_var), upper])
 
+    return _LP(c=c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=bounds, H=H, nF=nF, nR=nR, nI=nI, nG=nG,
+               o_run=o_run, o_lvl=o_lvl, o_short=o_short, o_exc=o_exc, o_worst=o_worst, n_var=n_var,
+               items=items, groups=groups, group_ix=[groups.index(group[s]) for s in items], members=members,
+               dv=dv, free=free, res=res, opening=opening, w_worst=w_worst, w_short=w_short, w_excess=w_excess,
+               w_run=w_run)
+
+
+def _dot(c: np.ndarray, x: np.ndarray) -> float:
+    return float((c * x).sum())         # not c @ x: Accelerate's matmul warns spuriously on macOS
+
+
+def _solve(c, A_ub, b_ub, A_eq, b_eq, bounds) -> np.ndarray:
     sol = linprog(c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs")
     if sol.status != 0:
         raise RuntimeError(f"LP not solved: {sol.message}")
-    x = sol.x
+    return sol.x
 
-    weeks = list(range(1, H + 1))
-    runs = pd.DataFrame(x[o_run:o_lvl].reshape(nF, H), index=free, columns=weeks)
-    levels = pd.DataFrame(x[o_lvl:o_short].reshape(nR, H), index=res["resource_id"], columns=weeks)
-    levels.insert(0, 0, opening)
-    short = pd.DataFrame(x[o_short:o_exc].reshape(nI, H), index=items, columns=weeks)
-    return Plan(runs=runs, levels=levels, short=short, objective=float(sol.fun))
+
+def _plan(lp: _LP, x: np.ndarray, objective: float, steps: list | None = None) -> Plan:
+    weeks = list(range(1, lp.H + 1))
+    runs = pd.DataFrame(x[lp.o_run:lp.o_lvl].reshape(lp.nF, lp.H), index=lp.free, columns=weeks)
+    levels = pd.DataFrame(x[lp.o_lvl:lp.o_short].reshape(lp.nR, lp.H), index=lp.res["resource_id"], columns=weeks)
+    levels.insert(0, 0, lp.opening)
+    short = pd.DataFrame(x[lp.o_short:lp.o_exc].reshape(lp.nI, lp.H), index=lp.items, columns=weeks)
+    return Plan(runs=runs, levels=levels, short=short, objective=float(objective), steps=steps or [])
+
+
+def decide(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekly_demand: pd.Series | pd.DataFrame,
+           group: pd.Series, w_worst: float = 1.0, w_short: float = 0.1, w_excess: float = 0.001,
+           positions: dict | None = None, w_run: float = 0.0) -> Plan:
+    """free: task ids the LP may run. target_units: position x t (1..H). group: position -> fairness group.
+    weekly_demand: position x t (1..H), the units a week that turn units short into weeks short (`window_demand`);
+    a Series is one number per position, the same every week.
+
+    A position is what a target is set on. By default there is one per item: all our inventory of the item
+    minus all its orders. `positions` replaces that with {key: {resource_id: sign}}, e.g. one per (item, pool);
+    target_units, weekly_demand and group are then indexed by those keys.
+
+    w_run: a small cost per task run. Needed when some stock is outside every position (e.g. a site that may
+    not ship): without it, building or moving stock there is free and the LP may do it for no reason."""
+    lp = _build(obj, free, target_units, weekly_demand, group, w_worst, w_short, w_excess, positions, w_run)
+    x = _solve(lp.c, lp.A_ub, lp.b_ub, lp.A_eq, lp.b_eq, lp.bounds)
+    return _plan(lp, x, _dot(lp.c, x))
+
+
+def decide_walk(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekly_demand: pd.Series | pd.DataFrame,
+                group: pd.Series, floors: dict, steps: list, w_worst: float = 1.0, w_short: float = 0.1,
+                w_excess: float = 0.001, positions: dict | None = None, w_run: float = 0.0) -> Plan:
+    """The same LP, with the objective stated as a walk over floors (docs/RANKED_WALK.md).
+
+    floors: {name: position x t (1..H)}, levels net position should not fall below. Names are opaque; the floor
+            equal to target_units (the planner's "target") reuses the LP's own shortfall block.
+    steps:  [(floor name, [position keys]), ...] in order. Each step shares evenly among its positions, within
+            a group: a ranked step is given as one step per position.
+
+    For each step in turn: minimise w_worst * sum over groups and weeks of the step's largest shortfall in weeks
+    + w_short * the step's total shortfall in weeks, then hold that at its optimum. Last, minimise stock above
+    target and runs with every step held. With the one step (the target floor, every position) this is `decide`.
+    Plan.steps records each step's worst and total at its optimum; Plan.objective is the score on `decide`'s
+    objective (the yardstick every plan is scored on), not the walk's."""
+    lp = _build(obj, free, target_units, weekly_demand, group, w_worst, w_short, w_excess, positions, w_run)
+    H, nI, nG = lp.H, lp.nI, lp.nG
+    is_target = {f: np.allclose(F.loc[lp.items, range(1, H + 1)].values, target_units.values) for f, F in floors.items()}
+    if not steps:
+        raise ValueError("a walk needs at least one step")
+    pos_ix = {s: i for i, s in enumerate(lp.items)}
+    for f, keys in steps:
+        if f not in floors:
+            raise ValueError(f"step on unknown floor {f!r}")
+        if not keys or not all(k in pos_ix for k in keys):
+            raise ValueError(f"step on floor {f!r} names a position that has no target")
+
+    # ---- new variables: one shortfall block per floor other than cover, one worst block per step ----
+    used = [f for f in dict.fromkeys(f for f, _ in steps) if not is_target[f]]
+    n0 = lp.n_var
+    o_floor = {f: lp.o_short for f in floors if is_target[f]}            # the target floor is the LP's short block
+    for f in used:
+        o_floor[f] = n0; n0 += nI * H
+    o_step = []
+    for _ in steps:
+        o_step.append(n0); n0 += nG * H
+    n = n0
+
+    def lvl(r, t): return lp.o_lvl + r * H + (t - 1)
+    rows, cols, vals, rhs = [], [], [], []
+    k = 0
+    for f in used:                                              # -net - short_f <= -floor_f
+        F = floors[f].loc[lp.items, range(1, H + 1)].to_numpy(float)
+        for si, s in enumerate(lp.items):
+            for t in range(1, H + 1):
+                for r, sg in lp.members[s]:
+                    rows.append(k); cols.append(lvl(r, t)); vals.append(-sg)
+                rows.append(k); cols.append(o_floor[f] + si * H + t - 1); vals.append(-1.0)
+                rhs.append(-F[si, t - 1]); k += 1
+    for j, (f, keys) in enumerate(steps):                       # short_f / d - worst_j <= 0, for the step's positions
+        for s in keys:
+            si = pos_ix[s]
+            for t in range(1, H + 1):
+                rows.append(k); cols.append(o_floor[f] + si * H + t - 1); vals.append(1.0 / lp.dv[si, t - 1])
+                rows.append(k); cols.append(o_step[j] + lp.group_ix[si] * H + t - 1); vals.append(-1.0)
+                rhs.append(0.0); k += 1
+    new = sparse.csr_matrix((vals, (rows, cols)), shape=(k, n))
+    A_ub = sparse.vstack([sparse.hstack([lp.A_ub, sparse.csr_matrix((lp.A_ub.shape[0], n - lp.n_var))]), new]).tocsr()
+    b_ub = list(lp.b_ub) + rhs
+    A_eq = sparse.hstack([lp.A_eq, sparse.csr_matrix((lp.A_eq.shape[0], n - lp.n_var))]).tocsr()
+    bounds = np.vstack([lp.bounds, np.column_stack([np.zeros(n - lp.n_var), np.full(n - lp.n_var, np.inf)])])
+
+    # ---- the walk: one solve per step, each held at its optimum; then stock above target and runs ----
+    held, record = [], []
+    for j, (f, keys) in enumerate(steps):
+        c_tot = np.zeros(n)                                                   # the step's total shortfall in weeks
+        for s in keys:
+            si = pos_ix[s]
+            c_tot[o_floor[f] + si * H:o_floor[f] + (si + 1) * H] = 1.0 / lp.dv[si]
+        c_wst = np.zeros(n); c_wst[o_step[j]:o_step[j] + nG * H] = 1.0  # its largest shortfall per group and week
+        cj = w_worst * c_wst + w_short * c_tot
+        x = _solve(cj, A_ub, b_ub, A_eq, lp.b_eq, bounds)
+        for c_h, limit in held:                                               # earlier steps still at their optimum
+            if _dot(c_h, x) > limit + 1e-6:
+                raise RuntimeError("a held step moved: the walk's rows are wrong")
+        opt = _dot(cj, x)
+        limit = opt + 1e-7 + 1e-9 * abs(opt)                                   # HiGHS's own tolerance, scaled
+        A_ub = sparse.vstack([A_ub, sparse.csr_matrix(cj)]).tocsr(); b_ub = b_ub + [limit]
+        held.append((cj, limit))
+        record.append({"floor": f, "positions": list(keys), "worst": _dot(c_wst, x), "total": _dot(c_tot, x)})
+    c_last = np.zeros(n)
+    c_last[lp.o_run:lp.o_lvl] = w_run
+    for si in range(nI):
+        c_last[lp.o_exc + si * H:lp.o_exc + (si + 1) * H] = w_excess / lp.dv[si]
+    x = _solve(c_last, A_ub, b_ub, A_eq, lp.b_eq, bounds)
+    for c_h, limit in held:
+        if _dot(c_h, x) > limit + 1e-6:
+            raise RuntimeError("a held step moved: the walk's rows are wrong")
+
+    # the yardstick: this plan scored on decide's objective
+    short = x[lp.o_short:lp.o_exc].reshape(nI, H) / lp.dv
+    excess = x[lp.o_exc:lp.o_worst].reshape(nI, H) / lp.dv
+    gix = np.asarray(lp.group_ix)                                   # an array: a list reads as column names
+    worst = sum(short[gix == g].max(axis=0).sum() for g in range(nG))
+    score = w_worst * worst + w_short * short.sum() + w_excess * excess.sum() + w_run * x[lp.o_run:lp.o_lvl].sum()
+    return _plan(lp, x[:lp.n_var], score, record)

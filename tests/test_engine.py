@@ -352,3 +352,127 @@ def test_a_window_with_no_demand_still_plans():
     k = [p for p in R["positions"] if p[0] == "RW-9324"][0]
     assert R["target_units"].at[k, 1] == 0 and R["weekly_demand"].at[k, 1] == 1.0
     assert sc.checks(R)["pass"].all()
+
+
+# ---------------- a walk over floors (docs/RANKED_WALK.md) ----------------
+
+def two_bikes_one_owed():
+    """Two bikes X (item A) and Y (item B) on one line of 10 a week, four weeks, no new demand. X: 10 on order.
+    Both should hold 20. A week of demand is 10 for both, so weeks short = bikes short / 10."""
+    obj = two_skus_one_line(capacity=10, H=4)
+    obj.opening["order|A|C"] = 10
+    tgt = pd.DataFrame([[20.0] * 4, [20.0] * 4], index=["A", "B"], columns=[1, 2, 3, 4])
+    return obj, tgt, pd.Series({"A": 10.0, "B": 10.0}), pd.Series({"A": "L", "B": "L"}), {"target": tgt, "owed": tgt * 0}
+
+
+@pytest.mark.parametrize("steps, x, y", [
+    ([("owed", ["A", "B"]), ("target", ["A", "B"])], [10, 5, 5, 5], [0, 5, 5, 5]),       # = today's rule
+    ([("target", ["B"]), ("target", ["A"])], [0, 0, 10, 10], [10, 10, 0, 0]),             # Y first: X's customers wait
+    ([("owed", ["A", "B"]), ("target", ["B"]), ("target", ["A"])], [10, 0, 0, 10], [0, 10, 10, 0]),
+])
+def test_walk_on_two_bikes(steps, x, y):
+    obj, tgt, d, g, floors = two_bikes_one_owed()
+    p = engine.decide_walk(obj, ["make|A|L", "make|B|L"], tgt, d, g, floors, steps, w_run=1e-6)
+    assert p.runs.loc["make|A|L"].round(3).tolist() == x and p.runs.loc["make|B|L"].round(3).tolist() == y
+    assert [s["floor"] for s in p.steps] == [f for f, _ in steps]
+    assert np.abs(rtn.levels(obj, p.runs).values - p.levels.values).max() < 1e-6              # still the object's equation
+
+
+def test_walk_records_each_step_and_scores_on_the_even_rule():
+    """Y before X: step 1 (Y's cover) is 1 week short in all (week 1 only), step 2 (X's cover) 9 weeks in all.
+    Plan.objective is the even rule's score of that plan: X is 3, 3, 2, 1 weeks short (the worst each week, 9) and
+    the total is 10 weeks, so 9 + 0.1 x 10 = 10.0, against 6.0 for today's plan (worse on that yardstick: the walk
+    chose a different objective, not a better plan)."""
+    obj, tgt, d, g, floors = two_bikes_one_owed()
+    p = engine.decide_walk(obj, ["make|A|L", "make|B|L"], tgt, d, g, floors, [("target", ["B"]), ("target", ["A"])])
+    assert [(s["floor"], s["positions"], round(s["worst"], 5), round(s["total"], 5)) for s in p.steps] == [
+        ("target", ["B"], 1.0, 1.0), ("target", ["A"], 9.0, 9.0)]
+    today = engine.decide(obj, ["make|A|L", "make|B|L"], tgt, d, g)
+    assert round(p.objective, 5) == 10.0 and round(today.objective, 5) == 6.0
+    assert round(engine.objective_value(obj, p.runs, tgt, d, g), 5) == 10.0
+
+
+def test_walk_refuses_bad_input():
+    obj, tgt, d, g, floors = two_bikes_one_owed()
+    free = ["make|A|L", "make|B|L"]
+    with pytest.raises(ValueError, match="at least one step"):
+        engine.decide_walk(obj, free, tgt, d, g, floors, [])
+    with pytest.raises(ValueError, match="unknown floor"):
+        engine.decide_walk(obj, free, tgt, d, g, floors, [("due", ["A"])])
+    with pytest.raises(ValueError, match="no target"):
+        engine.decide_walk(obj, free, tgt, d, g, floors, [("target", ["A", "Z"])])
+    same = engine.decide_walk(obj, free, tgt, d, g, {"any name": tgt}, [("any name", ["A", "B"])])    # names are opaque
+    assert same.runs.round(6).equals(engine.decide(obj, free, tgt, d, g).runs.round(6))
+
+
+@pytest.fixture(scope="module")
+def walks_on_A():
+    """Scenario A's inputs, and the walks of RANKED_WALK.md measured as whole-bike plans."""
+    from redwheel import scenarios as sc
+    R = sc.run_case(sc.CASE_A)
+    o, H, keys = R["obj"], len(R["obj"].weeks), list(R["positions"])
+    tu, wd = R["target_units"].loc[keys], R["weekly_demand"].loc[keys]
+    grp, free = pd.Series({k: R["line"][k] for k in keys}), list(R["lp"].runs.index)
+    order = [k for s in ("RW-9304", "RW-4418", "RW-6416") for k in keys if k[0] == s]
+    rest = [k for k in keys if k not in order]
+    floors = {"target": tu, "owed": tu * 0}
+
+    def run(steps):
+        lp = engine.decide_walk(o, free, tu, wd, grp, floors, steps, positions=R["positions"], w_run=1e-6)
+        builds = engine.round_runs(o, lp.runs)
+        net = sc.position_levels(rtn.levels(o, builds), R["positions"])
+        at = net[list(range(1, H + 1))] >= tu - 1e-6
+        R2 = dict(R, runs=builds.astype(float), builds=builds, lp=lp, X=rtn.levels(o, builds), net=net, at_target=at,
+                  flows=sc.ship_from_levels(*sc._split(rtn.levels(o, builds), R["positions"])))
+        date = o.weeks.set_index("t")["week_start"]
+        held = sc.held_from(at)
+        return {"lp": lp, "diff": int((builds.values != R["builds"].loc[builds.index].values).sum()),
+                "below": int((~at).values.sum()), "checks": bool(sc.checks(R2)["pass"].all()),
+                "fill": round(sc.scorecard(R2)["On-time fill rate"], 4),
+                "cleared": str(sc.scorecard(R2)["Open orders cleared from"].date()),
+                "mtb at target": [str(date[int(held[k])].date()) for k in order]}
+    return R, keys, order, rest, run
+
+
+def test_walk_with_one_step_is_todays_plan(walks_on_A):
+    R, keys, order, rest, run = walks_on_A
+    one = run([("target", keys)])
+    assert one["diff"] == 0 and abs(one["lp"].objective - R["lp"].objective) < 1e-4      # the held step's slack
+    assert run([("owed", keys), ("target", keys)])["diff"] == 0        # owed first, shared evenly: already what it does
+
+
+def test_walk_ranked_on_mtb_carbon(walks_on_A):
+    """Orders owed shared evenly, then cover ranked RW-9304, RW-4418, RW-6416 on MTB carbon (RANKED_WALK.md): the
+    first two reach target 28 and 6 weeks earlier, the last on the same date; every order cleared as today."""
+    R, keys, order, rest, run = walks_on_A
+    r = run([("owed", keys)] + [("target", [k]) for k in order] + [("target", rest)])
+    assert r["diff"] == 117 and r["below"] == 244 and r["checks"]
+    assert r["cleared"] == "2026-12-14" and r["fill"] == 0.9635
+    assert r["mtb at target"] == ["2027-02-22", "2027-07-26", "2027-09-06"]
+    assert len(r["lp"].steps) == 5 and all(s["worst"] >= 0 for s in r["lp"].steps)
+
+
+def test_walk_ranked_on_orders_too(walks_on_A):
+    """Orders owed ranked the same way, then cover ranked: RW-9304's customers are cleared first; fill rises
+    from 96.4% to 97.4% with the same dates."""
+    R, keys, order, rest, run = walks_on_A
+    r = run([("owed", [k]) for k in order] + [("owed", rest)] + [("target", [k]) for k in order] + [("target", rest)])
+    assert r["diff"] == 159 and r["below"] == 244 and r["checks"] and r["fill"] == 0.9738
+    assert r["mtb at target"] == ["2027-02-22", "2027-07-26", "2027-09-06"]
+
+
+def test_walk_check_passes_the_walk_and_catches_a_plan_that_served_out_of_order(walks_on_A):
+    """scenarios.checks gets a tenth row when a run carries a walk: a later step is served only when every earlier
+    step on the line was met or held back. The ranked walk passes it (0 out of order). The same plan claimed to be
+    the walk in the opposite order (RW-6416 first) is caught: RW-9304 was served while RW-6416 was below cover."""
+    from redwheel import scenarios as sc
+    R, keys, order, rest, run = walks_on_A
+    steps = [("owed", keys)] + [("target", [k]) for k in order] + [("target", rest)]
+    r = run(steps)
+    R2 = dict(R, lp=r["lp"], walk={"floors": {"target": R["target_units"], "owed": R["target_units"] * 0}, "steps": steps})
+    chk = sc.checks(R2)
+    assert chk["check"].iloc[-1].startswith("Walk:") and chk["pass"].iloc[-1] and "0 served out of order" in chk["value"].iloc[-1]
+    assert sc.walk_served_out_of_order(R2) == 0
+    R2["walk"]["steps"] = [("owed", keys)] + [("target", [k]) for k in order[::-1]] + [("target", rest)]
+    assert sc.walk_served_out_of_order(R2) > 50
+    assert sc.walk_served_out_of_order(dict(R, walk=None)) == 0 and len(sc.checks(R)) == 9        # no walk: no row
