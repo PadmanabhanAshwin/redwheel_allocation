@@ -190,3 +190,16 @@ def test_balance_per_sku(which, A, B):
     built = R["builds"].groupby(R["builds"].index.str.split("|").str[1]).sum().sum(axis=1)
     forecast = R["flows"]["demand"].groupby(level="item").sum().sum(axis=1)
     assert np.abs((net[0] + built - forecast - net[H]).values).max() < 1e-9
+
+
+def test_rollup_counts_stock_at_a_site_that_serves_no_orders():
+    """Every channel ships from the PDC: Reno serves no orders, so its stock is in no pool. The books must still
+    balance: pools + in transit + Reno stock = total net inventory."""
+    from dataclasses import replace
+    from redwheel import priors
+    t = priors.table((("CMH", "WEB"), ("CMH", "DEALERS"), ("CMH", "COMMERCIAL")), build_weeks=1, transfer_weeks=1,
+                     decides=("make", "move"), lines=sc.LINES)
+    R = sc.run_case(replace(sc.CASE_B, key="X", priors=t))
+    assert list(R["pools"]) == ["CMH"]
+    c = sc.checks(R)
+    assert c["pass"].all(), c[~c["pass"]].to_string()

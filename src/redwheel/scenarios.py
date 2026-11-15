@@ -296,7 +296,12 @@ def checks(R: dict) -> pd.DataFrame:
     f = R["flows"]
     pools_net = R["net"].groupby("item").sum()
     total = rtn.net_position(obj, X).loc[pools_net.index]
-    rollup = np.abs((pools_net + R["transit"].reindex(pools_net.index).fillna(0)).values - total.values).max()
+    pooled = {site for p in R["pools"].values() for site in p["stock"]}
+    unpooled = pd.DataFrame(0.0, index=pools_net.index, columns=pools_net.columns)
+    for site in [s for s in SITES if s not in pooled]:            # a site that serves no orders: stock waits there
+        unpooled += X.loc[[rtn.resource_id("inventory", i, site) for i in pools_net.index]].set_axis(pools_net.index)
+    rollup = np.abs((pools_net + R["transit"].reindex(pools_net.index).fillna(0) + unpooled).values
+                    - total.values).max()
     cap = X[X.index.str.startswith("capacity|")].loc[:, weeks]
     full_to = (cap < 0.5).cumprod(axis=1).astype(bool)
     below = ~R["at_target"]
@@ -318,7 +323,8 @@ def checks(R: dict) -> pd.DataFrame:
          gap.values.min() > -1 and gap.values.max() < 1),
         ("Rounding to whole bikes adds no missed targets", "", not (below & ~below_lp).values.any()),
         ("Closure: LP levels = the object's equation run with the LP's decisions", f"{closure:.1e}", closure < 1e-6),
-        ("Rollup: pool positions + in transit = total net inventory", f"difference {rollup:.0f}", rollup < 1e-6),
+        ("Rollup: pool positions + in transit (+ stock at sites serving no orders) = total net inventory",
+         f"difference {rollup:.0f}", rollup < 1e-6),
         ("Shipping projection: nothing negative; on hand − open orders = net inventory", "",
          bool(min(f["on_hand"].values.min(), f["open_orders"].values.min(), f["shipped"].values.min()) >= -1e-9
               and np.abs((f["on_hand"] - f["open_orders"] - R["net"]).values).max() < 1e-9)),

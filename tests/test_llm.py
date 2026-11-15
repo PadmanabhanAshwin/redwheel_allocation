@@ -75,3 +75,21 @@ def test_no_order_or_sku_data_goes_to_the_model(obj, m):
     sent = client.calls[0]["system"] + json.dumps(client.calls[0]["messages"])
     assert not any(s in sent for s in m["dim_sku"]["sku"])                 # no SKU ids
     assert not any(str(o) in sent for o in m["fact_orders"]["order_id"].head(50))
+
+
+# ---------------- explain: answers about computed results ----------------
+
+class TextClient(FakeClient):
+    def _create(self, **kw):
+        self.calls.append(kw)
+        return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text=self.answers.pop(0))],
+                               usage=SimpleNamespace(input_tokens=10, output_tokens=5))
+
+
+def test_explain_sends_only_the_facts_and_the_question():
+    client = TextClient("B holds targets three weeks later.")
+    out = llm.explain("Why is B later?", "FACT: A held 6 Sep 2027; B held 27 Sep 2027.", client)
+    assert out["answer"] == "B holds targets three weeks later."
+    sent = client.calls[0]
+    assert "FACT: A held 6 Sep 2027" in sent["messages"][0]["content"] and "Why is B later?" in sent["messages"][0]["content"]
+    assert "Use only those facts" in sent["system"]

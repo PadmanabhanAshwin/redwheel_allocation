@@ -15,9 +15,15 @@ pip install -e .
 
 ```bash
 python src/main.py             # run the pipeline (or cell by cell in VS Code)
-pytest                         # master data, the object, and the equation
-streamlit run app/app.py      # planner UI
+pytest                         # everything offline; live LLM tests: RUN_LLM_TESTS=1 pytest tests/test_llm_live.py
+streamlit run planner2/app.py  # the planner (scenario-first UI) — start here
+streamlit run app/app.py       # first UI: report pages per scenario
+streamlit run planner/app.py   # second UI: scenario workbench (kept for reference)
 ```
+
+The LLM features (What-if "describe the change", "Ask about this plan", "Ask why they differ") use the Anthropic API
+with credentials from the environment (`ANTHROPIC_API_KEY`) or an `ant auth login` profile. Everything else works
+without them.
 
 ## Layout
 
@@ -25,9 +31,11 @@ streamlit run app/app.py      # planner UI
 |---|---|
 | `data/` | The nine CSVs exactly as Redwheel shared them (never edited) |
 | `src/main.py` | The pipeline as `# %%` cells, calling the modules below |
-| `src/redwheel/` | `config` · `utils` (helpers) · `read` (one reader per file) · `aux_fns` (Redwheel logic) · `rtn` (the generic object) |
+| `src/redwheel/` | `config` · `utils` (helpers) · `read` (one reader per file) · `aux_fns` (Redwheel logic) · `rtn` (the generic object) · `engine` (the LP) · `scenarios` · `priors` (the settings table and its validator) · `llm` (proposals and grounded answers) · `store` (saved scenarios) |
 | `tests/` | `test_rtn` (generic object, by hand) · `test_master` · `test_object` (Redwheel as the object) |
-| `app/` | Streamlit UI: `app.py` (navigation) · `ui.py` (shared data and styling) · `views/` (one file per page) |
+| `planner2/` | The planner: `home` · `scenario` · `whatif` · `compare` pages; `components` (settings in plain words, the settings editor), `charts`, `facts` (what the LLM may answer from), `state` (scenarios, drafts, cached runs) |
+| `app/` | First UI: `app.py` (navigation) · `ui.py` (shared data and styling, also used by `planner2`) · `views/` (one file per page; four are reused as `planner2` reference pages) |
+| `planner/` | Second UI (scenario workbench), kept unchanged |
 | `docs/` | Assumptions and data-quality log |
 | `scripts/explore/` | Original profiling scripts (reference only) |
 | `outputs/` | Generated tables (git-ignored) |

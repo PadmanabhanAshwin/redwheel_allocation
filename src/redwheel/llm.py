@@ -170,3 +170,33 @@ def propose(request: str, table: pd.DataFrame, obj: rtn.RTN, client=None) -> Pro
                       + "\nCorrect the changes (answer with the full change list again), or, if the request cannot "
                         "be done within these rules, propose no changes and say why under unsupported."}]
     return out
+
+
+# ---------------- answers about results (read-only) ----------------
+
+EXPLAIN_SYSTEM = """You answer a supply planner's question about plans already computed by a linear programme. The
+facts below the question are everything you know: settings, dates and numbers taken from the computed plans.
+
+- Use only those facts. Do not estimate, forecast, or compute new figures beyond simple differences between given
+  numbers. Never invent a number, date, SKU or reason.
+- When several facts bear on the answer, connect them (for example a setting that differs and a date that moved), but
+  say "likely" when the facts show a link without proving it.
+- If the facts do not answer the question, say so in one sentence and name what is missing.
+- At most 120 words. Plain sentences, no headings, no bullet lists unless comparing three or more items."""
+
+
+def explain(question: str, facts: str, client=None) -> dict:
+    """Answer a question about computed plans from a facts sheet only. Returns {"answer", "usage"}; never changes
+    anything. The facts sheet is built by the caller from computed results (no orders or customer data)."""
+    if client is None:
+        import anthropic
+        client = anthropic.Anthropic()
+    r = client.beta.messages.create(
+        model=MODEL, max_tokens=4000, system=EXPLAIN_SYSTEM,
+        messages=[{"role": "user", "content": f"FACTS\n{facts}\n\nQUESTION\n{question}"}],
+        output_config={"effort": EFFORT},
+        betas=["server-side-fallback-2026-07-01"], extra_body={"fallbacks": "default"})
+    if r.stop_reason == "refusal":
+        raise RuntimeError("the model declined the question")
+    text = "".join(b.text for b in r.content if b.type == "text").strip()
+    return {"answer": text, "usage": {"input_tokens": r.usage.input_tokens, "output_tokens": r.usage.output_tokens}}
