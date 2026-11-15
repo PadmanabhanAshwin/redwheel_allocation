@@ -276,7 +276,7 @@ def network():
     g += sres(368, c, "inventory", "Reno", 104) + sar(472, c, 512, c, "−1") + stk(512, c, "move", 78)
     g += f'<path class="wire" style="stroke-width:2;stroke:{A1c}" d="M590 {c} L686 {c}"/><path d="M682 {c-6} l12 6 l-12 6 z" fill="{A1c}"/>' + txt(640, c - 10, "+1, 1 wk", 18, A1c, 700, "middle")
     g += sres(696, c, "inventory", "Columbus", 124)
-    return g + txt(110, 520, "Each edge: an amount and a delay.", 18, GREY)
+    return g + txt(110, 520, "Each edge carries an amount and a delay.", 18, GREY)
 def mat(x, y, name, col, M):
     g = meq(x + 190, y - 44, name, 26, "middle", col) + "".join(txt(x + cx, y - 8, t_, 15, GREY, 700, "middle") for cx, t_ in [(150, "make"), (230, "move")])
     g += f'<path d="M{x+112} {y+4} h-8 v{34*4+6} h8 M{x+268} {y+4} h8 v{34*4+6} h-8" fill="none" stroke="{INK}" stroke-width="2"/>'
@@ -297,23 +297,34 @@ def staircase():
             col = A0c if i == j else A1c if i == j + 1 else None
             g += f'<rect x="{x0+s*j}" y="{y0+s*i}" width="{s}" height="{s}" fill="{tint(col, .18) if col else "#fff"}" stroke="{RULE_C}" stroke-width="1.5"/>'
             if col: g += meq(x0 + s * j + s / 2, y0 + s * i + s / 2 + 8, f'A{v("", "0" if i == j else "1", 14)}', 22, "middle", col)
-    return g + txt(1560, 520, "The LP’s rows.", 18, GREY)
+    return g + txt(1560, 520, "Constraint matrix of the LP.", 18, GREY)
+SUMV = lambda sub: f'Σ{v("", sub)} '
+NB = lambda sub: f'<tspan style="{MF};text-decoration:overline">N</tspan><tspan dy="7" dx="1" style="{MF};font-size:19px">{sub}</tspan><tspan dy="-7" style="font-size:10px"> </tspan>'
+DYN = f'{v("X", "t")}{E_("=")}C{v("X", "t−1")}{PL}<tspan fill="{A0c}">A{v("", "0")}{v("N", "t")}</tspan>{PL}<tspan fill="{A1c}">A{v("", "1")}{v("N", "t−1")}</tspan>{PL}{v("π", "t")}'
+LPROWS = [("minimise", f'{SUMV("t")}{SUMV("g")}max{v("", "k∈g")} {v("u", "k,t")}{PL}0.1 {SUMV("t")}{SUMV("k")}{v("u", "k,t")}',
+           "Objective, set by the planner.", f'Largest shortfall on each production line {it_("g")}, then the total.'),
+          ("subject to", DYN, "Dynamics, from the network.", "Levels carried, runs of this week, runs landing, arrivals π."),
+          ("", f'{v("X", "t")}{E_("≥")}0, 0{E_("≤")}{v("N", "t")}{E_("≤")}{NB("t")}',
+           "Feasibility.", "Capacity not exceeded (C = 0), stock not negative (C = 1); run limits."),
+          ("where", f'{v("u", "k,t")}{E_("=")}max(0, {v("target", "k,t")} − {v("net", "k,t")}){E_("/")}{v("d", "k,t")}',
+           f'Shortfall of SKU {it_("k")}, in weeks of demand.', f'net = stock − open orders, rows of {it_("X")}; {it_("d")} = weekly demand over the target window.')]
 def dynamics():
-    g = rule(560) + meq(960, 624, f'{v("X", "t")}{E_("=")}C{v("X", "t−1")}{PL}<tspan fill="{A0c}">A{v("", "0")}{v("N", "t")}</tspan>{PL}<tspan fill="{A1c}">A{v("", "1")}{v("N", "t−1")}</tspan>{PL}{v("π", "t")}{E_("≥")}0', 32, "middle")
-    g += txt(960, 664, "levels  =  levels carried  +  this week’s runs  +  last week’s runs landing  +  arrivals", 18, GREY, 400, "middle")
+    g = rule(556)
+    for i, (kw, m, a, b) in enumerate(LPROWS):
+        y = 608 + 50 * i
+        g += meq(110, y, kw, 25, "start", GREY) + meq(250, y, m, 28) + txt(1010, y - 10, a, 17, INK, 700) + txt(1010, y + 12, b, 17, GREY)
     return g
-EDITS = [("MTB carbon line down 3 weeks (E1)", "π: capacity 375 → 0, three entries"),
-         ("Fleet order for 300 RW-4418 (E4)", "π: +300 on its commercial orders, one entry"),
-         ("RW-4418 frames late 8 weeks (E3)", "run limit of make RW-4418 = 0, eight entries"),
-         ("Build takes a week; Columbus ships web orders (B)", f'make’s +1 moves from A{v("", "0", 13)} to A{v("", "1", 13)}; move runs are decided'),
-         ("A bought frame, 2-week lead time (small example)", f'one new row (frames), one new column (buy), its +1 in A{v("", "2", 13)}')]
+EDITS = [("E1", "Line outage, MTB carbon, 3 weeks", "π", "capacity 375 → 0; 3 entries"),
+         ("E4", "Commercial order, 300 RW-4418", "π", "orders +300; 1 entry"),
+         ("E3", "Frame supply interrupted, RW-4418, 8 weeks", NB("").replace('<tspan dy="7" dx="1" style="' + MF + ';font-size:19px"></tspan>', ""), "run limit of make = 0; 8 entries"),
+         ("B", "Build lead time 1 week; web orders served from Columbus", f'A{v("", "0", 13)}, A{v("", "1", 13)}', "make’s +1 moves to the later matrix; move becomes a decision"),
+         ("", "Bought component, 2-week lead time (small example)", f'A{v("", "0", 13)}, A{v("", "2", 13)}', "one row (frames), one column (buy)")]
 def edits():
-    g = rule(700) + txt(110, 744, B_("A change in the supply chain is an edit to these numbers") + f'<tspan style="fill:{GREY}"> the solver is not rewritten</tspan>', 23)
-    for i, (a, b) in enumerate(EDITS):
-        y = 786 + 32 * i
-        g += txt(110, y, a, 19) + txt(760, y, b, 19, INK, 700)
-    g += rule(934) + txt(110, 976, B_("Objective, set by the planner") + " each SKU’s weeks short of target; the worst SKU on each production line first, then the total.", 19)
-    g += meq(110, 1016, f'min Σ{v("", "weeks")} Σ{v("", "lines")} max{v("", "SKUs on the line")} {it_("weeks short")}{PL}0.1 Σ{v("", "weeks")} Σ{v("", "SKUs")} {it_("weeks short")}, {it_("weeks short")}{E_("=")}max(0, target − net) / weekly demand', 21)
+    g = rule(800) + txt(110, 842, B_("Scenarios are parameter edits") + f'<tspan style="fill:{GREY}"> the program above is unchanged</tspan>', 23)
+    g += "".join(txt(x, 876, h, 15, GREY, 700) for x, h in [(110, "scenario"), (860, "parameter"), (1010, "edit")])
+    for i, (c, a, p, b) in enumerate(EDITS):
+        y = 908 + 29 * i
+        g += txt(110, y, c, 18, GREY, 700) + txt(160, y, a, 18) + meq(860, y, p, 21) + txt(1010, y, b, 18)
     return g
 p4 = page(4, "Linear program", "", network() + vrule(860, 232, 530) + matrices() + vrule(1520, 232, 530) + staircase() + dynamics() + edits())
 
