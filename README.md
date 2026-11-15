@@ -117,6 +117,10 @@ level[r, t] = carry[r] · level[r, t−1]
 
 - `carry` is 1 for inventory and orders (what is left carries into next week) and 0 for capacity
   (unused capacity is lost).
+- `runs[task, t]` is what the plan decides, never below zero and never above the task's **run
+  limit** that week, where it has one: `0 ≤ runs[task, t] ≤ run_max[task, t]`. A limit says how
+  many times a task can run at most, e.g. no RW-4418 built while its frames are late. With no
+  limit, only the levels bound a task (a build needs line capacity, a transfer needs stock).
 - `arrival` is what comes from outside: forecast onto order resources, weekly capacity onto
   capacity resources, nothing onto inventory.
 - Every level must stay ≥ 0. For capacity: a line cannot build more than it has. For inventory: a
@@ -149,8 +153,9 @@ The full object reduces to this exactly, every SKU, every week (tested).
 
 ## Every number in the object
 
-The equation reads five kinds of number and nothing else. This is the complete list of what a
-scenario can say is different about the world.
+The object holds six kinds of number and nothing else: five the equation reads, and the run
+limit, which bounds what the plan may decide. This is the complete list of what a scenario can say
+is different about the world.
 
 | Number | Sits on | Weeks | Redwheel's base value | A change may |
 |---|---|---|---|---|
@@ -159,9 +164,11 @@ scenario can say is different about the world.
 | **carry** | resource | – | 1 for inventory and orders, 0 for capacity | nothing: fixed by the kind of resource |
 | **amount** | edge | – | one unit of line capacity and one bike per build; one bike per move or shipment | not yet |
 | **delay** | edge | – | build 0 weeks, transfer 1 week, delivery 0 weeks | build time per line and transfer time, through the settings table |
+| **run limit** | task | 1–121 | none (any task may run as often as the levels allow) | set, over a date range: the most a task can run each week |
 
-What the plan decides is `runs[task, week]` for weeks 1–121, never below zero. A task the plan
-does not decide has runs of zero. What follows from the equation is `level[resource, week]`,
+What the plan decides is `runs[task, week]` for weeks 1–121, never below zero and never above its
+run limit. A task the plan does not decide has runs of zero; a run limit on one is refused, since
+it would change nothing. What follows from the equation is `level[resource, week]`,
 never below zero.
 
 Shipping is not decided today: fulfil runs are zero in the solver, and what ships each week is
@@ -332,8 +339,9 @@ A change edits numbers of the object for one scenario. The base object is never 
 `changes.apply(object, changes)` returns a new object and a report, and everything after that (the
 equation, the targets, the solver, the checks) reads the new object.
 
-**Built** for the opening level and the arrivals (`changes.py`, generic, tested by hand on the tiny
-supply chain and on Redwheel's object). A scenario carries a list of changes (`Case.changes`),
+**Built** for the opening level, the arrivals and the run limits (`changes.py`, generic, tested by
+hand on the tiny supply chain and on Redwheel's object, and against a second implementation on
+random changes). A scenario carries a list of changes (`Case.changes`),
 `run_case` applies them to the object before anything else reads it, and they are saved with the
 scenario. A what-if, or a copy, keeps the changes of the scenario it starts from: it changes
 settings, not the world.
@@ -342,25 +350,28 @@ One row per change:
 
 | Column | Meaning | Example |
 |---|---|---|
-| field | which number: `opening` or `arrival` | arrival |
-| selection | which resources: conditions on kind, item, location, or any column of the item and location description tables. Every condition must hold | kind = capacity, location = RENO/mtb-carbon |
+| field | which number: `opening` or `arrival` (on resources), `run_max` (on tasks) | arrival |
+| selection | which resources or tasks: conditions on kind, item, location (resources only), or any column of the item description table (and, for resources, the location table). Every condition must hold | kind = capacity, location = RENO/mtb-carbon |
 | operation | `set` replaces each selected number, `add` adds to each, `scale` multiplies each | set |
 | value | the number | 0 |
-| from, to | arrival only: the first and last week, both included | weeks 26 to 28 (1–15 Mar 2027) |
+| from, to | arrival and run limit: the first and last week, both included | weeks 26 to 28 (1–15 Mar 2027) |
 | reason | why, in words | line down for maintenance |
 
 The rules. A list of changes that breaks any of them is refused, with every broken rule named:
 
 1. Field, operation and value are well formed; a set or scale value is not negative.
-2. The selection names exactly one kind of resource, uses only known columns (none that exists in
-   two tables), and matches at least one resource.
+2. The selection names exactly one kind, uses only known columns (none that exists in two
+   tables), and matches at least one resource or task. The kind fits the field: a resource kind
+   (inventory, capacity, order) for opening and arrival, a task kind (make, move) for a run limit.
 3. An opening change has no weeks, and capacity has no opening level.
 4. An arrival change gives both weeks, with 1 ≤ first ≤ last ≤ 156. Weeks after the plan
    (122–156) can change only on order resources: nothing is decided there, and only targets read
    them.
-5. No number goes below zero.
-6. A change that alters no number is refused: it is almost always a wrong week or selection.
-7. Changes apply in the order listed, so a later change sees the result of an earlier one.
+5. A run limit is set, never added to or scaled, and gives both weeks with 1 ≤ first ≤ last ≤ 121:
+   tasks run only in the plan.
+6. No number goes below zero.
+7. A change that alters no number is refused: it is almost always a wrong week or selection.
+8. Changes apply in the order listed, so a later change sees the result of an earlier one.
 
 **Whole units.** Redwheel's object counts whole bikes. A set or add value must be a whole number,
 and a scaled number is rounded to the nearest whole unit, halves up (65 bikes × 1.3 = 84.5 → 85).
@@ -387,7 +398,8 @@ What a planner says, and what it is:
 | The stock count was wrong | change | opening level | built (tested) |
 | A bike takes a week to build | change | delay on make edges | built (`build_weeks` setting) |
 | Transfers now take two weeks | change | delay on move edges | built (`transfer_weeks` setting) |
-| Frames are late: none of one SKU for four weeks | prior | max 0 on that SKU's make runs, dated | planned |
+| Frames are late: none of one SKU for eight weeks | change | run limit 0 on that SKU's make task, dated | built (scenario E3) |
+| At most 20 a week of a SKU go to the PDC | change | run limit 20 on that SKU's move task, dated | built (tested on B) |
 | The PDC stops serving commercial | prior | routing rule | built |
 | Target goes from 15 to 12 weeks | prior | target | built |
 | Lock the first four weeks | prior | fixed on those runs | not built |
@@ -396,10 +408,10 @@ What a planner says, and what it is:
 
 1. The base object, built once from the files.
 2. The scenario's changes are applied to it, giving the scenario's object.
-3. The scenario's priors are read against that object: positions, targets, limits, and which
-   runs are decided.
-4. The linear programme chooses the runs.
-5. Runs are rounded to whole bikes, within capacity.
+3. The scenario's priors are read against that object: positions, targets, and which runs are
+   decided. A run limit on a run that is not decided is refused.
+4. The linear programme chooses the runs, each within its run limit.
+5. Runs are rounded to whole bikes, within capacity and within the run limits.
 6. Levels follow from the equation, and the checks run on the result.
 
 Steps 2 to 6 are one code path for every scenario (`scenarios.run_case`); the base case has no
@@ -428,6 +440,7 @@ its own object (capacity, stock), but do not list them.
 |---|---|---|---|
 | **E1** MTB carbon line down three weeks | capacity of RENO/mtb-carbon set to 0, weeks 26–28 (1–15 Mar 2027) | 3: 1,125 → 0 | builds nothing on the line those weeks; the same 94,429 bikes, built at other times; MTB carbon holds targets from 4 Oct 2027, not 6 Sep |
 | **E2** RW-4418 dealer demand up 30% | dealer orders of RW-4418 scaled by 1.3, weeks 18–30 (4 Jan–29 Mar 2027) | 13: 636 → 827 | builds 191 more, all RW-4418; MTB carbon holds targets from 13 Sep 2027 |
+| **E3** RW-4418 frames late eight weeks | run limit of RW-4418's make task set to 0, weeks 60–67 (25 Oct–13 Dec 2027) | 8: no limit → 0 | builds the 1,394 RW-4418 it would have made in those weeks in the five weeks before (the line has room then); no other SKU, date or total moves |
 
 In E1 nothing can be built ahead: in A the MTB carbon line already runs full every week from
 7 Sep 2026 to 30 Aug 2027. So the plan makes up the 1,125 bikes lost in March exactly, in the five
@@ -435,7 +448,16 @@ weeks from 6 Sep 2027, out of capacity that A leaves spare. The other three line
 as in A. On MTB carbon the line's total is the same as A's in every week except those eight, but the
 mix of its three SKUs shifts around the stoppage (week 25: RW-9304 +15, RW-4418 -9, RW-6416 -6; week
 29 smaller; one-bike swaps between SKUs in weeks 33–52, a tie the solver breaks differently). The line
-holds its targets from 4 Oct 2027, the week the catch-up ends. A stock correction (200
+holds its targets from 4 Oct 2027, the week the catch-up ends.
+
+E3 is absorbed: the plan knows the frames are late, and the line has spare capacity in the weeks
+before, so it builds ahead and every target is held as in A. Shorter slips, and slips while the
+line is full, are absorbed too, by building the line's other bikes in the gap: in Redwheel the
+line's total capacity is the limit, not any one bike. The cost shows only in the objective (stock
+carried above target before the gap). E3 gives exactly the same optimum (objective, every run,
+every level) as the same event written without a run limit: a separate frames supply that RW-4418
+uses one of per bike, none arriving in those weeks. E3 is not yet listed in the planner, whose
+words for events do not cover a run limit. A stock correction (200
 fewer RW-9324 at Reno) is tested the same way: 200 more built, all RW-9324, and no date moves,
 because that SKU has stock to spare.
 

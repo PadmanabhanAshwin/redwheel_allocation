@@ -142,7 +142,7 @@ def test_shipping_never_uses_stock_the_plan_transfers_out_later():
 @pytest.mark.parametrize("which", ["A", "B"])
 def test_every_check_passes(which, A, B):
     c = sc.checks({"A": A, "B": B}[which])
-    assert len(c) == 8 and c["pass"].all(), c[~c["pass"]].to_string()
+    assert len(c) == 9 and c["pass"].all(), c[~c["pass"]].to_string()
 
 
 def test_scenario_b_is_whole_and_close_to_the_lp(B):

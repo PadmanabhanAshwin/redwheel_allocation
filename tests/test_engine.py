@@ -28,6 +28,29 @@ def test_unreachable_target_builds_flat_out_then_stops():
     assert p.short.loc["A"].round(9).tolist() == [12, 2, 0, 0]
 
 
+def limited_tiny(week1_max):
+    """The tiny chain with at most week1_max of A built in week 1 (its parts are short)."""
+    from dataclasses import replace
+    obj = tiny()
+    lim = rtn.run_limits(obj).copy()
+    lim.loc["make|A|L", 1] = week1_max
+    return replace(obj, run_max=lim)
+
+
+@pytest.mark.parametrize("week1_max, runs, short", [
+    (0, [0, 8, 0, 0], [8, 0, 0, 0]),         # nothing in week 1: short 8 (6 - (2 - 4)); the 8 come in week 2
+    (3, [3, 5, 0, 0], [5, 0, 0, 0]),         # 3 in week 1: short 5; the other 5 come in week 2
+    (8, [8, 0, 0, 0], [0, 0, 0, 0]),         # a limit that does not bind changes nothing
+])
+def test_a_run_limit_holds_a_build_back_and_the_plan_makes_it_up_after(week1_max, runs, short):
+    obj = limited_tiny(week1_max)
+    p = engine.decide(obj, ["make|A|L"], pd.DataFrame([[6, 6, 6, 6]], index=["A"], columns=[1, 2, 3, 4], dtype=float),
+                      pd.Series({"A": 1.0}), pd.Series({"A": "L"}))
+    assert p.runs.loc["make|A|L"].round(9).tolist() == runs
+    assert p.short.loc["A"].round(9).tolist() == short
+    assert np.abs(rtn.levels(obj, p.runs).values - p.levels.values).max() < 1e-9      # still the object's equation
+
+
 def test_build_delay_lands_a_week_later():
     """Build takes 1 week: week 1 cannot be helped (short 2); a week-1 build of 8 covers week 2."""
     obj, p = decide_tiny([0, 6, 6, 6], build_delay=1)
@@ -121,6 +144,24 @@ def test_round_up_when_capacity_allows():
     assert R.loc["make|A|L"].tolist() == [1, 0, 0]          # cumulative 0.2, 0.4, 0.6 -> 1, 1, 1
 
 
+def test_round_keeps_to_a_run_limit_and_catches_up_after():
+    """Week 1 has room for one bike: A and B are each 0.5 in the LP, so A (ahead by as much, listed first) gives its
+    unit back and is behind by 0.5. Week 2: A's LP is 2.0, its limit; rounding up would build 3 to catch up, the limit
+    allows 2, so A stays behind by 0.5. Week 3 has no limit: A builds the one it owes."""
+    obj = two_skus_one_line(capacity=10)
+    obj.arrivals.loc["capacity||L", 1] = 1
+    runs = lp_runs([0.5, 2.0, 0], [0.5, 0, 0])
+    free = engine.round_runs(obj, runs)
+    assert free.loc["make|A|L"].tolist() == [0, 3, 0]                   # no limit: caught up in week 2
+    from dataclasses import replace
+    lim = rtn.run_limits(obj).copy()
+    lim.loc["make|A|L", 2] = 2
+    R = engine.round_runs(replace(obj, run_max=lim), runs)
+    assert R.loc["make|A|L"].tolist() == [0, 2, 1] and R.loc["make|B|L"].tolist() == [1, 0, 0]
+    gap = R.cumsum(axis=1) - runs.cumsum(axis=1)
+    assert gap.values.min() > -1 and gap.values.max() < 1                  # still within one bike of the LP
+
+
 def test_round_takes_back_when_line_is_full():
     R = engine.round_runs(two_skus_one_line(), lp_runs([1.5, 1.5, 0], [1.5, 1.5, 0]))
     assert R.sum().tolist() == [3, 3, 0]                    # never above capacity 3
@@ -210,3 +251,18 @@ def test_without_a_run_cost_idle_stock_is_free():
     _, costed = decide_dc(route_delay=2, target=[0, 0, 6, 6], w_run=1e-6)
     assert costed.runs.loc["make|A|L"].sum() == pytest.approx(8)
     assert free_builds.runs.loc["make|A|L"].sum() >= 8 - 1e-9          # may be more: nothing stops it
+
+
+def test_transfer_rounding_keeps_to_a_run_limit_when_catching_up():
+    """Tiny chain: 5 of A at F, 3 more built in week 2. The LP moves 6 to D in week 1 and 2 in week 2. Whole bikes:
+    week 1 can move only the 5 that are there (behind by 1). Week 2 would catch up with 3, but at most 2 may move that
+    week: 2 move, and the one owed follows in week 3, which has no limit."""
+    from dataclasses import replace
+    from redwheel import scenarios as sc
+    obj = tiny()
+    builds = pd.DataFrame([[0, 3, 0, 0]], index=["make|A|L"], columns=[1, 2, 3, 4], dtype=float)
+    lp_moves = pd.DataFrame([[6, 2, 0, 0]], index=["move|A|F>D"], columns=[1, 2, 3, 4], dtype=float)
+    assert sc.round_moves(obj, lp_moves, builds).loc["move|A|F>D"].tolist() == [5, 3, 0, 0]     # no limit: caught up in week 2
+    lim = rtn.run_limits(obj).copy()
+    lim.loc["move|A|F>D", 2] = 2
+    assert sc.round_moves(replace(obj, run_max=lim), lp_moves, builds).loc["move|A|F>D"].tolist() == [5, 2, 1, 0]

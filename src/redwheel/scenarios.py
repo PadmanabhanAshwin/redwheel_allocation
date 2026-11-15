@@ -82,7 +82,14 @@ CASE_E2 = Case("E2", "Scenario E2 · RW-4418 dealer demand up 30%", CASE_A.prior
                parent="A",
                changes=(Change("arrival", {"kind": "order", "item": "RW-4418", "channel": "dealer"}, "scale", 1.3,
                                18, 30, "dealer forecast for RW-4418 revised up 30%, weeks of 4 Jan-29 Mar 2027"),))
+CASE_E3 = Case("E3", "Scenario E3 · RW-4418 frames late eight weeks", CASE_A.priors,
+               summary="Scenario A, with no RW-4418 (MTB carbon, size M) built for the eight weeks starting 25 Oct "
+                       "2027: its frames arrive late. The plan knows in advance.",
+               parent="A",
+               changes=(Change("run_max", {"kind": "make", "item": "RW-4418"}, "set", 0, 60, 67,
+                               "frames for RW-4418 late: none for the weeks of 25 Oct to 13 Dec 2027"),))
 EVENTS = {c.key: c for c in (CASE_E1, CASE_E2)}
+# E3 is kept out of EVENTS (which planner2 lists as built-in) until the planner can show a run limit in words.
 
 
 # ---------- pools: which stock faces which demand, read from the routing rule ----------
@@ -122,9 +129,10 @@ def position_levels(X: pd.DataFrame, pos: dict) -> pd.DataFrame:
 # ---------- whole-bike transfers ----------
 
 def round_moves(obj: rtn.RTN, lp_moves: pd.DataFrame, builds: pd.DataFrame) -> pd.DataFrame:
-    """Whole-bike transfers: cumulative LP transfers rounded down, and never more than the origin holds
-    once the whole-bike builds have landed. Week by week, per move task."""
+    """Whole-bike transfers: cumulative LP transfers rounded down, never more than the origin holds once the
+    whole-bike builds have landed, and never more than the task's run limit. Week by week, per move task."""
     out = pd.DataFrame(0, index=lp_moves.index, columns=lp_moves.columns, dtype=int)
+    limit = rtn.run_limits(obj).reindex(index=lp_moves.index, columns=lp_moves.columns)
     a = obj.arrows
     for task in lp_moves.index:
         origin = a[(a["task_id"] == task) & (a["amount"] < 0) & (a["delay"] == 0)]["resource_id"].iloc[0]
@@ -135,6 +143,8 @@ def round_moves(obj: rtn.RTN, lp_moves: pd.DataFrame, builds: pd.DataFrame) -> p
         for t in lp_moves.columns:
             want = int(np.floor(lp_cum[t] + 1e-9)) - done
             q = max(0, min(want, int(np.floor(stock[t] + 1e-9)) - done))
+            if not np.isnan(limit.at[task, t]):
+                q = min(q, int(np.floor(limit.at[task, t] + 1e-9)))
             out.at[task, t] = q
             done += q
     return out
@@ -206,6 +216,11 @@ def run_case(case: Case) -> dict:
     tu = engine.forward_sum(demand, tw)
     keys = list(pos)
     free = list(obj.tasks.loc[obj.tasks["kind"].isin(st["decides"]), "task_id"])
+    limited = rtn.run_limits(obj).notna().any(axis=1)
+    inert = sorted(set(limited[limited].index) - set(free))
+    if inert:                                   # e.g. a limit on transfers in a scenario where the plan decides none
+        raise ValueError(f"scenario {case.key}: a run limit on tasks the plan does not decide would change nothing: "
+                         + ", ".join(inert))
     lp = engine.decide(obj, free, tu.loc[keys], demand.loc[keys, list(range(1, H + 1))].mean(axis=1),
                        pd.Series({k: sku.at[k[0], "line_id"] for k in keys}), positions=pos, w_run=1e-6)
     make_ids = [k for k in free if k.startswith("make|")]
@@ -313,13 +328,21 @@ def checks(R: dict) -> pd.DataFrame:
     rollup = np.abs((pools_net + R["transit"].reindex(pools_net.index).fillna(0) + unpooled).values
                     - total.values).max()
     cap = X[X.index.str.startswith("capacity|")].loc[:, weeks]
-    full_to = (cap < 0.5).cumprod(axis=1).astype(bool)
+    runs, limit = R["runs"], rtn.run_limits(obj).reindex(index=R["runs"].index, columns=weeks)
+    at_limit = (runs[weeks] >= limit - 0.5) & limit.notna()          # a task that ran all its limit allowed
     below = ~R["at_target"]
     unexplained = 0
     for key in below.index:
-        lead = lead_weeks(case, R["pools"][key[1]], R["line"][key])
+        sku, pool = key
+        lead = lead_weeks(case, R["pools"][pool], R["line"][key])
+        # A week u could not have added to this position if the line was full, or if the tasks that feed the
+        # position (its make, and its move when the pool's stock is not at Reno) were at their limits.
+        feed = [k for k in runs.index if k.split("|")[1] == sku
+                and (k.startswith("make|") or ("RENO" not in R["pools"][pool]["stock"] and k.startswith("move|")))]
+        held_back = (cap.loc[f"capacity||RENO/{R['line'][key]}"] < 0.5) | at_limit.loc[feed].any(axis=0)
+        explained_to = held_back.cumprod().astype(bool)                # every week from 1 to u held back
         for t in below.columns[below.loc[key]]:
-            if t - lead >= 1 and not full_to.at[f"capacity||RENO/{R['line'][key]}", t - lead]:
+            if t - lead >= 1 and not explained_to[t - lead]:
                 unexplained += 1
     closure = np.abs(rtn.levels(obj, lp.runs).values - lp.levels.values).max()
     whole = R["runs"]
@@ -329,6 +352,8 @@ def checks(R: dict) -> pd.DataFrame:
         ("Whole bikes, none negative", "", bool((R["runs"].values == np.round(R["runs"].values)).all()
                                                 and R["runs"].values.min() >= 0)),
         ("Capacity never exceeded; no stock level below zero", f"lowest level {X.values.min():.0f}", X.values.min() >= -1e-9),
+        ("No task runs above its run limit", f"most above {rtn.over_limit(obj, R['runs']).values.max():.0f}",
+         rtn.over_limit(obj, R["runs"]).values.max() <= 1e-9),
         ("Whole-bike plan within 1 bike of the LP, cumulative, every task", f"{gap.values.min():.3f} to {gap.values.max():.3f}",
          gap.values.min() > -1 and gap.values.max() < 1),
         ("Rounding to whole bikes adds no missed targets", "", not (below & ~below_lp).values.any()),
@@ -338,7 +363,7 @@ def checks(R: dict) -> pd.DataFrame:
         ("Shipping projection: nothing negative; on hand − open orders = net inventory", "",
          bool(min(f["on_hand"].values.min(), f["open_orders"].values.min(), f["shipped"].values.min()) >= -1e-9
               and np.abs((f["on_hand"] - f["open_orders"] - R["net"]).values).max() < 1e-9)),
-        ("Below target only when the line ran full every week up to the lead time before",
+        ("Below target only when the line ran full (or the SKU was at its run limit) every week up to the lead time before",
          f"{int(below.values.sum())} position-weeks below, {unexplained} unexplained", unexplained == 0),
     ]
     return pd.DataFrame(rows, columns=["check", "value", "pass"])

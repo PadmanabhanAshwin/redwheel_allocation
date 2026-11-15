@@ -84,11 +84,12 @@ def lowest_cover_first(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame
 def round_runs(obj: rtn.RTN, runs: pd.DataFrame) -> pd.DataFrame:
     """Whole-number runs for tasks that draw one unit of a capacity resource per run.
 
-    Per task, cumulative runs are rounded up, so a rounded plan is never behind the LP. Where that
-    would exceed a capacity in some week, the excess is taken back one unit at a time from the
-    tasks rounded up the most. Weeks are processed in order, so cumulative runs stay within one
-    unit of the LP: ahead by less than 1, or (only in a week the capacity is used up) behind by
-    less than 1."""
+    Per task, cumulative runs are rounded up, so a rounded plan is never behind the LP. A task's run
+    limit caps its week (the LP keeps to the limit, so this binds only when rounding up would pass
+    it). Where the rest would exceed a capacity in some week, the excess is taken back one unit at a
+    time from the tasks rounded up the most. Weeks are processed in order, so cumulative runs stay
+    within one unit of the LP: ahead by less than 1, or (only in a week the capacity is used up or
+    the task is at its limit) behind by less than 1."""
     a = obj.arrows[obj.arrows["task_id"].isin(runs.index)]
     cap_arrows = a[a["resource_id"].str.startswith("capacity|")]
     if not (cap_arrows["amount"] == -1).all() or cap_arrows["task_id"].duplicated().any():
@@ -97,6 +98,7 @@ def round_runs(obj: rtn.RTN, runs: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("every task to round must draw on a capacity resource")
 
     lp_cum = runs.cumsum(axis=1)
+    limit = rtn.run_limits(obj).reindex(index=runs.index, columns=runs.columns)
     out = pd.DataFrame(0, index=runs.index, columns=runs.columns, dtype=int)
     for cap_id, tasks in cap_arrows.groupby("resource_id")["task_id"]:
         tasks = list(tasks)
@@ -105,6 +107,8 @@ def round_runs(obj: rtn.RTN, runs: pd.DataFrame) -> pd.DataFrame:
             k = int(round(obj.arrivals.at[cap_id, t]))
             want = np.ceil(lp_cum.loc[tasks, t] - 1e-9).astype(int)    # cumulative, rounded up
             build = (want - done).clip(lower=0)
+            cap_t = np.floor(limit.loc[tasks, t].to_numpy(float) + 1e-9)       # a run limit, where there is one
+            build = pd.Series(np.where(np.isnan(cap_t), build, np.minimum(build, cap_t)).astype(int), index=build.index)
             for _ in range(int(build.sum()) - k):          # take back one unit at a time
                 ahead = (done + build - lp_cum.loc[tasks, t])[build > 0]
                 build[ahead.idxmax()] -= 1
@@ -213,7 +217,13 @@ def decide(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekly_dem
     c[o_worst:] = w_worst
     c[o_run:o_lvl] = w_run
 
-    sol = linprog(c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=(0, None), method="highs")
+    # ---- bounds: every variable >= 0; a run at most its task's limit that week ----
+    upper = np.full(n_var, np.inf)
+    lim = rtn.run_limits(obj).reindex(index=free, columns=list(range(1, H + 1))).to_numpy(float)
+    upper[o_run:o_lvl] = np.where(np.isnan(lim), np.inf, lim).ravel()      # run(i, t) = o_run + i*H + t-1
+    bounds = np.column_stack([np.zeros(n_var), upper])
+
+    sol = linprog(c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs")
     if sol.status != 0:
         raise RuntimeError(f"LP not solved: {sol.message}")
     x = sol.x

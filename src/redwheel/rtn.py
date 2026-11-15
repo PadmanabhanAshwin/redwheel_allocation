@@ -10,9 +10,15 @@ Generic. Nothing here knows about bikes or Redwheel; `aux_fns.build_object` maps
                 + sum over arrows into r:  amount * runs[task, t - delay]
                 + arrival[r, t]
 
+    0 <= runs[task, t] <= run_max[task, t]          (no limit where run_max is blank)
+
 Weeks t = 1..H. t = 0 is the opening level. A level is the quantity at the end of week t.
 Arrivals may be known past the plan, for weeks H+1..T (the outlook). Nothing is decided there; a target that
 looks ahead from late in the plan reads them.
+
+The numbers on the object, six in all: on a resource its opening level, its arrivals and its carry; on an arrow its
+amount and its delay; on a task its run limit, the most it can run in a week (e.g. none of a bike while its parts are
+missing). Carry is fixed by the resource's kind; the others are data.
 """
 from __future__ import annotations
 
@@ -49,6 +55,7 @@ class RTN:
     opening: pd.Series        # resource_id -> level at t = 0
     arrivals: pd.DataFrame    # resource_id x t (1..H): what comes from outside
     outlook: pd.DataFrame | None = None   # resource_id x t (H+1..T): arrivals known after the plan (orders only)
+    run_max: pd.DataFrame | None = None   # task_id x t (1..H): the most a task can run that week; NaN = no limit
 
 
 def resource_id(kind: str, item: str | None, location: str) -> str:
@@ -171,6 +178,12 @@ def validate(obj: RTN) -> None:
         need((out.values >= 0).all(), "negative arrival in the outlook")
         need((out[(res["kind"] != "order").to_numpy()].values == 0).all(),
              "outlook arrivals on a resource that is not an order")
+    if obj.run_max is not None:
+        lim = obj.run_max
+        need(lim.index.equals(pd.Index(tsk["task_id"])), "run limits not indexed by tasks")
+        need(list(lim.columns) == weeks, "run limit columns must be weeks 1..H")
+        v = lim.to_numpy(float)
+        need((np.isnan(v) | (v >= 0)).all(), "negative run limit")
 
 
 # ---------- the equation ----------
@@ -215,6 +228,19 @@ def net_position(obj: RTN, X: pd.DataFrame) -> pd.DataFrame:
     ours = res["location"].map(obj.locations.set_index("location_id")["ours"])
     sign = np.where((res["kind"] == "inventory") & ours, 1.0, np.where(res["kind"] == "order", -1.0, 0.0))
     return X.mul(sign, axis=0).groupby(res["item"]).sum()
+
+
+def run_limits(obj: RTN) -> pd.DataFrame:
+    """The run limit of every task in every week, task_id x t (1..H); NaN where there is none."""
+    if obj.run_max is not None:
+        return obj.run_max
+    return pd.DataFrame(np.nan, index=obj.tasks["task_id"].to_numpy(), columns=list(obj.weeks["t"]))
+
+
+def over_limit(obj: RTN, runs: pd.DataFrame) -> pd.DataFrame:
+    """How far runs go above their limits (0 where within, or where there is no limit). Same shape as runs."""
+    lim = run_limits(obj).reindex(index=runs.index, columns=runs.columns)
+    return (runs - lim).clip(lower=0).fillna(0)
 
 
 def arrivals_all(obj: RTN) -> pd.DataFrame:

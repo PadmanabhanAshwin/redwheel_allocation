@@ -17,6 +17,7 @@ from test_rtn import tiny
 CAP = {"kind": "capacity", "location": "L"}
 ORD = {"kind": "order", "item": "A"}
 STOCK_F = {"kind": "inventory", "location": "F"}
+MAKE = {"kind": "make", "item": "A"}
 
 
 def tiny_outlook() -> rtn.RTN:
@@ -99,6 +100,26 @@ def test_a_change_can_reach_into_the_outlook_and_the_target_moves_with_it():
     assert target(obj) == [0, 0, 2, 3] and target(new) == [0, 0, 4, 6]
 
 
+def test_a_supply_limit_is_a_run_limit_on_the_make_task():
+    """None of A can be built in weeks 2-3 (its parts are late): the make task's limit is 0 there, blank elsewhere.
+    Nothing else on the object moves."""
+    obj = tiny_outlook()
+    new, rep = ch.apply(obj, [Change("run_max", MAKE, "set", 0, 2, 3, "parts late")])
+    lim = rtn.run_limits(new)
+    assert lim.loc["make|A|L", [2, 3]].tolist() == [0, 0] and lim.loc["make|A|L", [1, 4]].isna().all()
+    assert lim.drop(index="make|A|L").isna().all().all()
+    r = rep.iloc[0]
+    assert (r["field"], r["resources"], r["cells"], r["after"]) == ("run_max", 1, 2, 0) and np.isnan(r["before"])
+    assert obj.run_max is None                                                      # the object passed in: untouched
+    assert new.arrivals.equals(obj.arrivals) and new.opening.equals(obj.opening) and new.outlook.equals(obj.outlook)
+    # a later limit replaces an earlier one where they overlap; before is blank where there was no limit
+    new2, rep2 = ch.apply(obj, [Change("run_max", MAKE, "set", 0, 2, 3), Change("run_max", MAKE, "set", 4, 3, 4)])
+    assert rtn.run_limits(new2).loc["make|A|L", [2, 3, 4]].tolist() == [0, 4, 4]
+    assert rep2.iloc[1]["cells"] == 2 and rep2.iloc[1]["after"] == 8 and np.isnan(rep2.iloc[1]["before"])
+    # an object that gets no run limit keeps none at all
+    assert ch.apply(obj, [Change("arrival", CAP, "set", 0, 1, 1)])[0].run_max is None
+
+
 def test_changes_apply_in_order():
     new, rep = ch.apply(tiny_outlook(), [Change("arrival", CAP, "set", 8, 1, 4), Change("arrival", CAP, "scale", 0.5, 1, 2)])
     assert new.arrivals.loc["capacity||L"].tolist() == [4, 4, 8, 8]
@@ -149,12 +170,25 @@ REFUSED = {
     "can change only on order resources": Change("arrival", CAP, "set", 0, 3, 5),
     "would go below zero": Change("arrival", ORD, "add", -1, 1, 2),
     "changes no number": Change("arrival", CAP, "set", 10, 1, 4),
+    "a run limit can only be set": Change("run_max", MAKE, "scale", 0.5, 1, 2),
+    "a run limit needs a first and a last week": Change("run_max", MAKE, "set", 0),
+    "tasks run only in the plan": Change("run_max", MAKE, "set", 0, 3, 5),
+    "run_max is a number on tasks": Change("run_max", CAP, "set", 0, 1, 2),
+    "arrival is a number on resources": Change("arrival", MAKE, "set", 0, 1, 2),
+    "opening is a number on resources": Change("opening", MAKE, "set", 1),
+    "matches no task": Change("run_max", {"kind": "make", "item": "Z"}, "set", 0, 1, 2),
+    "unknown column(s) in the selection: ['location']": Change("run_max", {"kind": "make", "location": "L"}, "set", 0, 1, 2),
+    "a run limit of the same value changes no number": None,      # filled below: needs a limit already there
 }
 
 
 @pytest.mark.parametrize("message", REFUSED)
 def test_refused(message):
     obj = tiny_outlook()
+    if REFUSED[message] is None:                         # the same limit twice: the second changes nothing
+        problems = ch.check(obj, [Change("run_max", MAKE, "set", 3, 1, 2), Change("run_max", MAKE, "set", 3, 1, 2)])
+        assert len(problems) == 1 and problems[0].startswith("change 2") and "changes no number" in problems[0]
+        return
     problems = ch.check(obj, [REFUSED[message]])
     assert len(problems) == 1 and message in problems[0], problems
     with pytest.raises(ValueError, match="change 1"):
@@ -231,6 +265,18 @@ def test_redwheel_selection_by_line_and_channel(obj):
     assert ch.check(obj, [Change("arrival", {"kind": "capacity", "location": "RENO/mtb-carbon"}, "set", 0, 120, 122)])
 
 
+def test_redwheel_tasks_are_selected_on_their_item_description(obj):
+    """A run limit on every bike built on the MTB carbon line: three make tasks, none of the transfers."""
+    ids, errs = ch.selected(obj, {"kind": "make", "line_id": "mtb-carbon"})
+    assert errs == [] and ids == ["make|RW-4418|RENO/mtb-carbon", "make|RW-6416|RENO/mtb-carbon", "make|RW-9304|RENO/mtb-carbon"]
+    assert ch.selected(obj, {"kind": "move", "item": "RW-4418"})[0] == ["move|RW-4418|RENO>CMH"]
+    new, rep = ch.apply(obj, [Change("run_max", {"kind": "make", "line_id": "mtb-carbon"}, "set", 100, 10, 13)])
+    lim = rtn.run_limits(new)
+    assert (lim.loc[ids, 10:13] == 100).all().all() and lim.drop(index=ids).isna().all().all()
+    assert lim.loc[ids].drop(columns=range(10, 14)).isna().all().all()
+    assert (rep.iloc[0]["resources"], rep.iloc[0]["cells"]) == (3, 12)
+
+
 def test_redwheel_changes_keep_whole_numbers_whole(obj):
     new, _ = ch.apply(obj, [Change("arrival", {"kind": "order", "class": "road"}, "scale", 1.07, 1, 156)])
     assert new.arrivals.dtypes.unique().tolist() == obj.arrivals.dtypes.unique().tolist()
@@ -247,7 +293,18 @@ def reference(obj, changes):
     A = rtn.arrivals_all(obj)
     opening = {r: float(v) for r, v in obj.opening.items()}
     arrival = {(r, int(t)): float(A.at[r, t]) for r in A.index for t in A.columns}
+    limit = {(k, t): None for k in obj.tasks["task_id"] for t in range(1, len(obj.weeks) + 1)}
+    tasks = obj.tasks.set_index("task_id")
     for c in changes:
+        if c.field == "run_max":                          # on tasks: a task matches on its own columns and its item's
+            for k in tasks.index:
+                ok = all((k if col == "task_id" else tasks.at[k, col] if col in ("kind", "item")
+                          else items.at[tasks.at[k, "item"], col]) in (v if isinstance(v, list) else [v])
+                         for col, v in c.select.items())
+                if ok:
+                    for t in range(c.from_t, c.to_t + 1):
+                        limit[(k, t)] = float(c.value)
+            continue
         for r in res.index:
             row, match = res.loc[r], True
             for k, v in c.select.items():
@@ -270,7 +327,7 @@ def reference(obj, changes):
                     opening[r] = float(new)
                 else:
                     arrival[(r, t)] = float(new)
-    return opening, arrival
+    return opening, arrival, limit
 
 
 def random_change(rng, obj):
@@ -289,6 +346,11 @@ def random_change(rng, obj):
         select = [{"kind": "inventory", "item": sku["item"], "location": "RENO"}, {"kind": "inventory", "ours": True, "size": sku["size"]},
                   {"kind": "inventory", "location_class": "distribution_center"}][rng.integers(3)]
         last = H
+    if rng.random() < 0.25:                               # a run limit on tasks instead
+        select = [{"kind": "make", "item": sku["item"]}, {"kind": "make", "line_id": sku["line_id"]},
+                  {"kind": "move", "item": sku["item"]}, {"kind": "make", "size": sku["size"]}][rng.integers(4)]
+        first = int(rng.integers(1, H + 1))
+        return Change("run_max", select, "set", float(rng.integers(0, 400)), first, int(rng.integers(first, min(H, first + 20) + 1)))
     op = rng.choice(["set", "add", "scale"])
     value = float(rng.integers(0, 400)) if op == "set" else float(rng.integers(-30, 200)) if op == "add" else \
         float(rng.choice([0, 0.25, 0.5, 0.7, 0.9, 1.1, 1.3, 1.45, 2]))
@@ -300,15 +362,17 @@ def random_change(rng, obj):
 
 def test_random_changes_match_a_second_implementation(obj):
     rng = np.random.default_rng(20261115)
-    applied = 0
+    applied = limited = 0
     for _ in range(120):
         changes = [random_change(rng, obj) for _ in range(int(rng.integers(1, 4)))]
         if ch.check(obj, changes):                       # refused lists are covered by the rule tests above
             continue
         new, rep = ch.apply(obj, changes)
-        opening, arrival = reference(obj, changes)
-        A = rtn.arrivals_all(new)
+        opening, arrival, limit = reference(obj, changes)
+        A, L = rtn.arrivals_all(new), rtn.run_limits(new)
         assert new.opening.astype(float).to_dict() == opening
         assert {(r, int(t)): float(A.at[r, t]) for r in A.index for t in A.columns} == arrival
+        assert {(k, int(t)): (None if np.isnan(L.at[k, t]) else float(L.at[k, t])) for k in L.index for t in L.columns} == limit
         applied += 1
-    assert applied >= 40                                 # enough of the random lists were valid to mean something
+        limited += any(c.field == "run_max" for c in changes)
+    assert applied >= 40 and limited >= 15               # enough valid lists, and enough with run limits, to mean something

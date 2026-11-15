@@ -6,6 +6,7 @@ and nowhere else (every other line's builds identical to A, week by week); and e
 The expected numbers were worked out before the code was written (docs/WORKING_NOTES.md, D15)."""
 from dataclasses import replace
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -113,6 +114,115 @@ def test_a_stock_correction(A):
     all_checks_pass(R)
 
 
+def test_event_3_parts_late_the_plan_builds_ahead(A):
+    """No RW-4418 can be built for the eight weeks from 25 Oct 2027 (plan weeks 60-67): its frames are late. The line
+    has spare capacity before then and the plan knows, so it builds the 1,394 bikes it would have made in those weeks
+    in the five weeks before. Nothing else moves: no other SKU, no date, no total."""
+    R = sc.run_case(sc.CASE_E3)
+    rep = R["change_report"].iloc[0]
+    assert (rep["field"], rep["resources"], rep["cells"], rep["after"]) == ("run_max", 1, 8, 0) and np.isnan(rep["before"])
+    b, b0 = by_sku(R), by_sku(A)
+    d = (b - b0).astype(int)
+    assert d.loc["RW-4418"][d.loc["RW-4418"] != 0].to_dict() == {
+        55: 255, 56: 289, 57: 284, 58: 284, 59: 282, 60: -130, 61: -131, 62: -132, 63: -132, 64: -215, 65: -216,
+        66: -218, 67: -220}
+    assert b.loc["RW-4418", list(range(60, 68))].sum() == 0 and d.loc["RW-4418"].sum() == 0
+    assert (d.drop(index="RW-4418") == 0).all().all()
+    assert sc.scorecard(R) == sc.scorecard(A) and held(R) == held(A)
+    assert R["lp"].objective > A["lp"].objective                   # a limit can only cost: here the stock carried ahead
+    all_checks_pass(R)
+
+
+def test_event_3_solved_a_second_way_gives_the_same_plan():
+    """The run limit, against the same event written without one: a 'frames' capacity that RW-4418 uses one of per bike,
+    with none arriving in weeks 60-67 and plenty otherwise. The two allow exactly the same plans, so the optimum must
+    match: objective, every run, every level."""
+    from redwheel import aux_fns, engine, rtn
+    from redwheel.changes import apply
+    m = aux_fns.build_master()
+    base = aux_fns.build_object(m, sc.CASE_A.build_weeks, sc.CASE_A.transfer_weeks)
+    H, task = len(base.weeks), "make|RW-4418|RENO/mtb-carbon"
+
+    def lp(obj):
+        st = sc.CASE_A.settings
+        pos = sc.positions(obj, sc.pools(st["ship_routes"]))
+        demand = rtn.order_arrivals(obj, pos)
+        it = aux_fns.target_wos(m | {"dim_policy": st["dim_policy"]}, obj.weeks)
+        tw = pd.DataFrame({t: [it.at[k[0], t] for k in pos] for t in it.columns}, index=demand.index)
+        sku = m["dim_sku"].set_index("sku")
+        free = list(obj.tasks.loc[obj.tasks["kind"].isin(st["decides"]), "task_id"])
+        return engine.decide(obj, free, engine.forward_sum(demand, tw), demand.loc[:, list(range(1, H + 1))].mean(axis=1),
+                             pd.Series({k: sku.at[k[0], "line_id"] for k in pos}), positions=pos, w_run=1e-6)
+
+    limited = apply(base, list(sc.CASE_E3.changes))[0]
+    rid, loc = "capacity||SUPPLIER/frames", "SUPPLIER/frames"
+    frames = pd.Series(100_000.0, index=range(1, H + 1))
+    frames.loc[60:67] = 0
+    other = replace(base,
+                    locations=pd.concat([base.locations, pd.DataFrame([{"location_id": loc, "location_class": "production_line",
+                                                                        "parent": None, "ours": False}])], ignore_index=True),
+                    resources=pd.concat([base.resources, pd.DataFrame([{"resource_id": rid, "kind": "capacity", "item": None,
+                                                                        "location": loc, "carry": False}])], ignore_index=True),
+                    arrows=pd.concat([base.arrows, pd.DataFrame([{"task_id": task, "resource_id": rid, "amount": -1,
+                                                                  "delay": 0}])], ignore_index=True),
+                    arrivals=pd.concat([base.arrivals, frames.to_frame().T.set_axis([rid])]),
+                    outlook=pd.concat([base.outlook, pd.DataFrame(0, index=[rid], columns=base.outlook.columns)]),
+                    opening=pd.concat([base.opening, pd.Series([0], index=[rid])]))
+    rtn.validate(other)
+    assert other.run_max is None
+    p1, p2 = lp(limited), lp(other)
+    assert p1.objective == pytest.approx(p2.objective, abs=1e-9)
+    assert np.abs((p1.runs - p2.runs).to_numpy()).max() < 1e-9
+    shared = base.resources["resource_id"]
+    assert np.abs((p1.levels.loc[shared] - p2.levels.loc[shared]).to_numpy()).max() < 1e-9
+
+
+def limited(sku, first, last, value=0, kind="make", base=sc.CASE_A):
+    return replace(base, key="L", changes=(Change("run_max", {"kind": kind, "item": sku}, "set", value, first, last),))
+
+
+def test_below_target_while_the_line_has_room_is_explained_by_the_limit():
+    """No RW-9835 built in weeks 1-4. It starts below target; the road base line has room some of those weeks, yet
+    RW-9835 cannot use it. The check, as it was before run limits, would call 9 of those position-weeks unexplained; it
+    now counts a SKU at its limit as held back, like a full line."""
+    R = sc.run_case(limited("RW-9835", 1, 4))
+    assert by_sku(R).loc["RW-9835", [1, 2, 3, 4]].sum() == 0
+    all_checks_pass(R)
+    c = sc.checks(R).set_index("check")
+    assert c.filter(like="Below target", axis=0)["value"].iloc[0].endswith(", 0 unexplained")
+    # the same plan judged without the limit (as if it held RW-9835 back for no reason) fails the check
+    R_no_reason = {**R, "obj": replace(R["obj"], run_max=None)}
+    c2 = sc.checks(R_no_reason).set_index("check")
+    below = c2.filter(like="Below target", axis=0).iloc[0]
+    assert not below["pass"] and below["value"].endswith(", 9 unexplained")
+
+
+def test_runs_above_a_limit_fail_the_check():
+    R = sc.run_case(sc.CASE_E3)
+    runs = R["runs"].copy()
+    runs.loc["make|RW-4418|RENO/mtb-carbon", 61] += 1                # one bike built while its frames are missing
+    c = sc.checks({**R, "runs": runs}).set_index("check")
+    assert not c.at["No task runs above its run limit", "pass"] and c.at["No task runs above its run limit", "value"] == "most above 1"
+
+
+def test_a_limit_on_runs_the_plan_does_not_decide_is_refused():
+    """In A the plan decides builds only; transfers are never planned, so a transfer limit would change nothing."""
+    with pytest.raises(ValueError, match="would change nothing: move\\|RW-4418\\|RENO>CMH"):
+        sc.run_case(limited("RW-4418", 10, 20, value=5, kind="move"))
+
+
+def test_a_transfer_limit_in_b():
+    """B plans transfers to the PDC; RW-4418 moves up to 59 a week in weeks 10-20. At most 20 a week: kept to in the LP
+    and after rounding, every check passes, and the plan can only get worse."""
+    B = sc.run_case(sc.CASE_B)
+    R = sc.run_case(limited("RW-4418", 10, 20, value=20, kind="move", base=sc.CASE_B))
+    moves = R["moves"].loc["move|RW-4418|RENO>CMH"]
+    assert B["moves"].loc["move|RW-4418|RENO>CMH", 10:20].max() > 20                 # the limit binds
+    assert moves.loc[10:20].max() <= 20 and R["lp"].runs.loc["move|RW-4418|RENO>CMH", 10:20].max() <= 20 + 1e-9
+    assert R["lp"].objective >= B["lp"].objective - 1e-9
+    all_checks_pass(R)
+
+
 def test_a_scenario_with_changes_that_break_a_rule_is_refused():
     bad = replace(sc.CASE_A, key="X", changes=(Change("arrival", {"kind": "capacity"}, "set", 0, 120, 125),))
     with pytest.raises(ValueError, match="can change only on order resources"):
@@ -127,6 +237,14 @@ def test_changes_are_saved_and_loaded_with_the_scenario(tmp_path, A):
     assert back.changes == sc.CASE_E1.changes
     R = sc.run_case(back)
     assert held(R)["mtb-carbon"] == "2027-10-04"
+
+
+def test_a_run_limit_is_saved_and_loaded_with_the_scenario(tmp_path, A):
+    store.save(sc.CASE_E3, tmp_path)
+    back = store.load_all(tmp_path)["E3"]
+    assert back.changes == sc.CASE_E3.changes
+    R = sc.run_case(back)
+    assert by_sku(R).loc["RW-4418", list(range(60, 68))].sum() == 0 and held(R) == held(A)
 
 
 def test_a_file_saved_before_changes_existed_loads_with_none(tmp_path):

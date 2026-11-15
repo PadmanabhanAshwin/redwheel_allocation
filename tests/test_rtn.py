@@ -199,3 +199,26 @@ def test_outlook_is_checked_like_the_rest_of_the_object():
     on_capacity.loc["capacity||L", 5] = 10
     with pytest.raises(ValueError, match="not an order"):
         rtn.validate(replace(obj, outlook=on_capacity))
+
+
+def test_run_limits_are_checked_like_the_rest_of_the_object():
+    """The most a task can run each week: indexed by the tasks, weeks 1..H, never negative; blank = no limit.
+    The equation does not read them (a limit bounds what the plan may decide, it moves no level by itself)."""
+    from dataclasses import replace
+    obj = tiny()
+    tid = obj.tasks["task_id"]
+    assert obj.run_max is None and rtn.run_limits(obj).isna().all().all()
+    assert list(rtn.run_limits(obj).index) == list(tid) and list(rtn.run_limits(obj).columns) == [1, 2, 3, 4]
+    good = pd.DataFrame(np.nan, index=tid, columns=[1, 2, 3, 4])
+    good.loc["make|A|L", 2] = 0
+    limited = replace(obj, run_max=good)
+    rtn.validate(limited)
+    r = runs(obj, {("make|A|L", 1): 6, ("make|A|L", 2): 3})
+    over = rtn.over_limit(limited, r)
+    assert over.loc["make|A|L"].tolist() == [0, 3, 0, 0] and over.drop(index="make|A|L").values.sum() == 0
+    assert rtn.over_limit(obj, r).values.sum() == 0                                  # no limits, nothing over
+    assert rtn.levels(limited, r).equals(rtn.levels(obj, r))
+    for bad, message in ((good.iloc[::-1], "indexed by tasks"), (good.set_axis([2, 3, 4, 5], axis=1), "weeks 1..H"),
+                         (good.fillna(0) - 1, "negative run limit")):
+        with pytest.raises(ValueError, match=message):
+            rtn.validate(replace(obj, run_max=bad))
