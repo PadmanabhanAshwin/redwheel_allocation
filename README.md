@@ -479,7 +479,7 @@ numbers or rows of the settings table. Nothing else is tunable, and nothing is d
 | Transfer limit | data | run limit of move tasks, Reno to the PDC | bikes a week, each SKU | yes | SKUs, from, weeks, at most | all SKUs, 20 a week |
 | Build time | rules | delay on make edges | weeks | no | line, weeks | MTB carbon, 2 |
 | Transfer time | rules | delay on move edges | weeks | no | weeks | 2 |
-| Ship from | rules | which fulfil routes exist | site | no | channel, site | web from the PDC |
+| Ship from | rules | which site's stock is counted against a channel's orders (the pools); the routes themselves are always in the object | site | no | channel, site | web from the PDC |
 | Plan transfers | rules | whether the plan decides moves | yes / no | no | yes or no | yes |
 | Target | rules | a group's weeks-of-supply target, from a date | weeks of supply | yes | group, weeks, from | MTB carbon 18 from 6 Sep 2027 |
 

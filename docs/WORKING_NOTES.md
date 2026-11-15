@@ -53,8 +53,12 @@ Decisions taken and items still open. Updated as we go; newest decisions at the 
 | O19 | ~~Events step 3: scenarios carry changes; events 1 and 2 (and a stock correction) as built-in scenarios~~ | Done (D17). Changes are stored by plan week; the UI will show dates. |
 | O20 | ~~Events step 4: run limits in the object and the solver; event 3~~ | Done (D19). |
 | O21 | ~~Events step 5: UI~~ | Done (D18). Not done: the older UIs (`app/`, `planner/`) do not list events; the Events tab shows a line's totals, not its SKU mix (E1's re-mix and E2's SKU shift are visible only in the SKU detail tab); events are dated by plan week (a date picks its week) and there is no form for a supplier slip yet (step 4, O20). |
-| O22 | Events step 6: LLM proposes changes through the same checked loop | Extend the live test set. |
+| O22 | ~~Events step 6: LLM proposes changes through the same checked loop~~ | Done (D21): `llm.propose_edits` fills any tunable. Not yet called by a UI. |
 | O23 | Later: surprise events (fixed prior on earlier weeks), dated edges, priorities, batch sizes | |
+| O24 | Review 15 Nov: rules that live in the solver, not in the rules table | The fairness rule (minimise the worst shortfall per line and week) and the objective's weights; the shipping assumption; rounding. Probe on A: fairness off gives the same dates and totals but 138 weeks below target instead of 278; the other weights change nothing. Make the fairness rule a visible, tunable rule. (Measured on the solver as committed in 7084777, before the weeks-short change another session has in progress.) |
+| O25 | Review 15 Nov: the plan knows every event from week 1 | Probe (earlier weeks frozen at A's builds, using run limits): E1 is the same known or as a surprise; E3 known is absorbed, as a surprise RW-4418 is below target 11 weeks and all targets are held from 10 Jan 2028, not 6 Sep 2027. A 'freeze the plan before a date' rule needs a run minimum as well (limits are maxima). See O23. (Measured on the solver as committed in 7084777, before the weeks-short change another session has in progress.) |
+| O26 | Review 15 Nov: how general the object is, tested | A toy network with a component and a supplier lead time plans through `rtn` + `engine` with no code change. Whole-unit rounding refuses a task that uses no capacity; `scenarios`, `priors`, `tunables` name Redwheel's sites and channels. 120 of the object's 180 edges (shipping) are never run by the solver (O10). |
+| O27 | Review 15 Nov: two soft spots in the rules table | A target dated after the plan is accepted and does nothing. A mid-week target date starts the next Monday in the table, but the tunables form uses that week's Monday. |
 
 ## Presentation plan (presentation 2026-11-16)
 
