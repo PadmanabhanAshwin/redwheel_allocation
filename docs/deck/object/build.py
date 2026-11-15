@@ -268,7 +268,8 @@ it_ = lambda s: f'<tspan style="{MF}">{s}</tspan>'
 SUMV = lambda sub: f'Σ{v("", sub)} '
 def num(x, y, n): return f'<circle cx="{x+15}" cy="{y-8}" r="15" fill="{AMB}"/>' + txt(x + 15, y - 2, n, 17, "#fff", 700, "middle")
 def head(x, y, n, h, sub=""):
-    return num(x, y, n) + txt(x + 42, y, f'{B_(h)}' + (f'<tspan style="fill:{GREY}"> {sub}</tspan>' if sub else ""), 24)
+    return num(x, y, n) + txt(x + 42, y, f'{B_(h)}' + (f'<tspan style="fill:{GREY}">\u2002{sub}</tspan>' if sub else ""), 24)
+REF = {n: f'<tspan style="fill:{AMB};font-weight:700">{c}</tspan>' for n, c in zip("1234", "❶❷❸❹")}
 
 # --- 1 the network for one week
 def rnode(x, c, kind, name, w=196, h=44):
@@ -277,7 +278,7 @@ def tbox(cx, c, name, w=104, h=36):
     return f'<rect class="task" x="{cx-w/2}" y="{c-h/2}" width="{w}" height="{h}" rx="5"/>' + txt(cx, c + 6, name, 16, "#fff", 700, "middle")
 KC = [474, 588, 702]; KY = [388, 440, 492, 544]
 def one_week():
-    g = head(110, 252, "1", "The network as a matrix", "MTB carbon, week of 7 Sep 2026")
+    g = head(110, 252, "1", "One week is a matrix", "MTB carbon, week of 7 Sep 2026")
     g += txt(110, 286, "row: resource column: task entry: change in the level per run", 18, GREY)
     g += txt(388, 340, "opening + arrival", 15, GREY, 700, "end") + "".join(tbox(c, 334, f"make {n}") for c, n in zip(KC, SH))
     rows = [("capacity", "MTB carbon", "375", ["−1", "−1", "−1"])] + [("inventory", f"RW-{n}, Reno", str(OPEN_STOCK[n]), ["+1" if j == i else "" for j in range(3)]) for i, n in enumerate(SH)]
@@ -289,20 +290,22 @@ def one_week():
     g += meq(KC[1], 590, "A", 24, "middle", AMB)
     return g
 
-# --- 2 what is solved for
-RX = 1090
+# --- 2 what is solved for: the plan grid
+RX = 1090; GC = [1290, 1430, 1570]; GR = [384, 418, 452, 488, 522]
 def solve_for():
-    g = vrule(1040, 232, 580) + head(RX, 252, "2", "Find the build plan")
-    g += txt(RX, 334, f'Runs {v("N", "i,t")}{E_("≥")}0 for each task {it_("i")} the plan decides and each week {it_("t")},', 21) + txt(RX, 366, "such that", 21)
-    g += txt(RX, 420, f'–\u2002every level {v("X", "r,t")}{E_("≥")}0', 21) + txt(RX + 300, 420, "capacity never exceeded, stock never negative", 19, GREY)
-    g += txt(RX, 464, "–\u2002the objective in 4 is as small as it can be", 21)
-    g += txt(RX, 530, "The runs of the make tasks are the build plan: 10 SKUs × 121 weeks in scenario A.", 19, GREY)
+    g = vrule(1040, 232, 580) + head(RX, 252, "2", "The unknown is the build plan")
+    g += txt(RX, 286, f'runs {v("N", "i,t")}: one per column of the matrix, every week {it_("t")}', 18, GREY)
+    g += "".join(tbox(c, 334, f"make {n}", 120) for c, n in zip(GC, SH))
+    for y, w in zip(GR, ["week 1", "week 2", "week 3", "", "week 121"]):
+        g += txt(RX, y + 6, w, 18)
+        g += "".join(txt(c, y + 7, "?" if w else "⋮", 20, AMB if w else GREY, 700, "middle") for c in GC)
+    g += txt(RX, 572, 'such that every level stays ≥ 0, every week, and the objective is smallest', 19)
     return g
 
-# --- 3 the same matrix every week, levels carried
+# --- 3 every week is the matrix, levels carried
 def every_week():
-    g = rule(612) + head(110, 662, "3", "Every week, the same matrix")
-    xs = [110, 300, 490, 760]; labs = ["0", "1", "2", "121"]; cy = 800
+    g = rule(612) + head(110, 656, "3", "Every week repeats the matrix; levels carry over")
+    xs = [110, 300, 490, 760]; labs = ["0", "1", "2", "121"]; cy = 772
     for x, l in zip(xs, labs):
         g += f'<rect class="res" x="{x}" y="{cy-28}" width="96" height="56" rx="12"/>' + meq(x + 48, cy + 9, v("X", l, 17), 26, "middle")
     for (a, b), l in zip(zip(xs, xs[1:]), labs[1:]):
@@ -311,26 +314,33 @@ def every_week():
         else:
             g += f'<path class="wire" style="stroke-width:2" marker-end="url(#a)" d="M{a+96} {cy} L{b-4} {cy}"/>' + meq((a + 96 + b) / 2, cy - 10, "C", 20, "middle", GREY)
     for x, l in zip(xs[1:], labs[1:]):
-        g += f'<path class="wire" style="stroke-width:2;stroke:{AMB}" marker-end="url(#g)" d="M{x+48} {cy-78} L{x+48} {cy-32}"/>'
-        g += meq(x + 48, cy - 88, f'A{v("N", l, 15)}{PL}{v("π", l, 15)}', 20, "middle", AMB)
-    g += meq(110, 900, f'{v("X", "t")}{E_("=")}C{v("X", "t−1")}{PL}A{v("N", "t")}{PL}{v("π", "t")}, {v("X", "t")}{E_("≥")}0, {it_("t")}{E_("=")}1 … 121', 28)
-    g += txt(110, 942, "A: the matrix in 1 C: carry, 1 for stock and orders, 0 for capacity π: arrivals", 17, GREY)
-    g += txt(110, 970, "74 resources × 121 weeks = 8,954 rows; 10 tasks × 121 weeks = 1,210 runs. An edge with delay θ lands θ weeks later.", 17, GREY)
+        g += f'<path class="wire" style="stroke-width:2;stroke:{AMB}" marker-end="url(#g)" d="M{x+48} {cy-72} L{x+48} {cy-32}"/>'
+        g += meq(x + 48, cy - 82, f'A{v("N", l, 15)}{PL}{v("π", l, 15)}', 20, "middle", AMB)
+    g += meq(110, 862, f'{v("X", "t")}{E_("=")}C{v("X", "t−1")}{PL}A{v("N", "t")}{PL}{v("π", "t")}{E_("≥")}0,\u2003{it_("t")}{E_("=")}1 … 121', 28)
+    g += txt(110, 900, f'{it_("X")}: the levels\u2003A: the matrix above\u2003{it_("N")}{v("", "t")}: week {it_("t")} of the plan\u2003C: carry, 1 stock and orders, 0 capacity\u2003π: arrivals', 17, GREY)
+    g += txt(110, 928, "74 resources × 121 weeks = 8,954 rows, each like the four above.", 17, GREY)
     return g
 
-# --- 4 the objective, set by the planner
+# --- 4 the objective picks one plan
 def objective():
-    g = vrule(1040, 640, 980) + head(RX, 662, "4", "Objective", "set by the planner")
-    g += meq(RX, 734, f'min {SUMV("t")}{SUMV("g")}max{v("", "k∈g")} {v("u", "k,t")}{PL}0.1 {SUMV("t")}{SUMV("k")}{v("u", "k,t")}', 28)
-    g += meq(RX, 786, f'{v("u", "k,t")}{E_("=")}max(0, {v("target", "k,t")}{MI}{v("net", "k,t")}){SL}{v("d", "k,t")}', 26)
-    g += lines(RX, 840, [f'{it_("u")}: how far SKU {it_("k")} is below its target in week {it_("t")}, in weeks of demand',
-                         f'net = stock − open orders\u2003target = the next {it_("n")} weeks of forecast\u2003{it_("d")} = target / {it_("n")}',
-                         f'First term: the worst SKU on each line {it_("g")}, every week. Second: all SKUs.',
-                         "Both max terms are written as linear rows, so this is an LP.",
-                         "Tie-breaks: 0.001 × stock above target, 10⁻⁶ × runs."], 17, GREY, 28)
+    g = vrule(1040, 632, 932) + head(RX, 656, "4", "The objective picks one plan", "set by the planner")
+    g += meq(RX, 716, f'min\u2002{SUMV("t")}{SUMV("g")}max{v("", "k∈g")}\u2009{v("u", "k,t")}{PL}0.1 {SUMV("t")}{SUMV("k")}{v("u", "k,t")}', 28)
+    g += txt(RX, 752, f'the worst SKU on each line {it_("g")}, summed over lines and weeks; plus 0.1 × the sum over SKUs', 17)
+    g += meq(RX, 796, f'{v("u", "k,t")}{E_("=")}max(0,\u2002{v("target", "k,t")}{MI}{v("net", "k,t")}){SL}{v("d", "k,t")}', 25) + txt(1530, 796, "weeks of demand below target", 17, GREY)
+    g += lines(RX, 832, [f'{it_("t")}: week 1 … 121\u2003{it_("g")}: production line, 4 in all\u2003{it_("k")} ∈ {it_("g")}: a SKU built on line {it_("g")}',
+                         f'net = stock − open orders, read from the levels {it_("X")}',
+                         f'target = forecast of the next {it_("n")} weeks ({it_("n")} = 15 on MTB carbon)\u2003{it_("d")} = target / {it_("n")}',
+                         "tie-breaks: 0.001 × stock above target, 10⁻⁶ × runs. Each max is a linear row."], 17, GREY, 26)
     return g
 
-p4 = page(4, "Linear program", "", one_week() + solve_for() + every_week() + objective())
+def assemble():
+    y = 1000
+    g = rule(952) + txt(110, y, "The LP", 24, INK, 700)
+    for x, n, words in [(250, "2", "choose the plan"), (500, "4", "to minimise the objective"), (850, "3", "subject to every level ≥ 0, every week")]:
+        g += num(x, y, n) + txt(x + 40, y, words, 22)
+    return g + txt(1810, y, "13,068 variables · HiGHS, under 0.2 s", 17, GREY, 400, "end")
+
+p4 = page(4, "Linear program", "", one_week() + solve_for() + every_week() + objective() + assemble())
 
 # ================================================================ 6 · priority orders
 def stepline(x, y, n, s, col=AMB):
