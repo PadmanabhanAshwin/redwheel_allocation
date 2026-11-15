@@ -104,46 +104,56 @@ def box(x, y, w, h, stroke=INK, dash=False, fill="#fff", sw=2.5):
     return f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="12" fill="{fill}" stroke="{stroke}" stroke-width="{sw}"{" stroke-dasharray=" + chr(34) + "6 5" + chr(34) if dash else ""}/>'
 
 # ================================================================ 1 · system
-def stage(x, w, head, sub, rows, red, top=230, h=486, rtop=560):
-    g = box(x, top, w, h) + txt(x + 22, top + 40, head, 26, INK, 700) + txt(x + 22, top + 66, sub, 17, GREY)
-    g += "".join(meq(x + 22, top + 106 + i * 28, r[1:], 23) if r.startswith("§") else txt(x + 22, top + 106 + i * 28, r, 18) for i, r in enumerate(rows))
-    g += f'<rect x="{x+12}" y="{rtop}" width="{w-24}" height="{top+h-rtop-12}" rx="8" fill="#f3f4f6"/>' + txt(x + 26, rtop + 28, "Redwheel", 15, AMB, 700)
-    return g + lines(x + 26, rtop + 56, red, 17, INK, 25)
-def flow_arrow(x1, x2, y=470): return f'<path class="wire" marker-end="url(#a)" d="M{x1} {y} L{x2-3} {y}"/>'
+TOP1, BOT1, RTOP = 222, 800, 586
+def stage(x, w, head, sub, rows, red, dy=23):
+    g = box(x, TOP1, w, BOT1 - TOP1) + txt(x + 20, TOP1 + 38, head, 26, INK, 700) + txt(x + 20, TOP1 + 64, sub, 17, GREY)
+    y = TOP1 + 104
+    for r in rows:
+        if r.startswith("§"): y += 10; g += meq(x + 20, y, r[1:], 22); y += 10
+        else: g += txt(x + 20 + (18 if r.startswith("\t") else 0), y, r.lstrip("\t"), 17)
+        y += dy
+    g += f'<rect x="{x+10}" y="{RTOP}" width="{w-20}" height="{BOT1-RTOP-10}" rx="8" fill="#f3f4f6"/>' + txt(x + 22, RTOP + 26, "Redwheel", 15, AMB, 700)
+    return g + "".join(txt(x + 22 + (16 if r.startswith("\t") else 0), RTOP + 52 + i * 24, r.lstrip("\t"), 17) for i, r in enumerate(red))
+def flow_arrow(x1, x2, y=(TOP1 + BOT1) / 2): return f'<path class="wire" marker-end="url(#a)" d="M{x1} {y} L{x2-3} {y}"/>'
 SC = json.load(open(next(f for f in (HERE.parent / "deck_numbers.json", HERE / "deck_numbers.json") if f.exists())))   # the solver session's end-to-end run
 A_SC = SC["A"]["scorecard"]; A_HELD = datetime.date.fromisoformat(A_SC["All targets held from"])
 N_SCEN = len([k for k in SC if not k.startswith("_") and "+" not in k])
 s1 = (
-    stage(110, 270, "Data", "inputs",
-          ["Part master", "Locations and routes", "Inventory by location", "Open orders, due dates", "Demand forecast", "Capacity", "Lead times, targets"],
-          ["10 SKUs, 4 lines", "2 sites, 3 channels", "Routes and lead times", "assumed"])
-    + flow_arrow(380, 420)
-    + stage(420, 400, "Object", "resource–task network",
-            [f'{B_("Resource")}: a level per week:', "   inventory, open orders, capacity",
-             f'{B_("Task")}: an operation that changes levels:', "   make, move, fulfil",
-             f'{B_("Edge")}: what one run takes or adds, and when',
-             "§" + f'{v("X", "r,t")} = {v("c", "r")}{v("X", "r,t−1")} + Σ μ {v("N")} + {v("π", "r,t")},   {v("X")} ≥ 0',
-             "Levels change only through task runs", "or arrivals"],
-            [f'{NUM["resources"][0]} resources, {NUM["tasks"][0]} tasks, {NUM["edges"]} edges', f'{NUM["weeks"]} weeks from 7 Sep 2026'])
-    + flow_arrow(820, 860)
-    + stage(860, 330, "Scenario", "the question asked",
-            [f'{B_("Changes")}: edits to the object’s', "numbers", f'{B_("Planning priors")}: routes, lead', "times, targets, decided tasks",
-             f'{B_("Priority order")}: the objective,', "as ordered steps"],
-            [f"{N_SCEN} scenarios: A base, B web", "via Columbus, E1–E5 events,", "P1 priority order"])
-    + flow_arrow(1190, 1230)
-    + stage(1230, 300, "Solver", "linear program",
-            [f'{B_("Variables")}: task runs N ≥ 0', f'{B_("Constraints")}: the balance,', "per resource and week", f'{B_("Objective")}: priority order,', "step by step",
-             "Then: whole units, plan checks"],
-            ["Scenario A: 13,068 variables,", "8,954 balance rows", "HiGHS, under 0.2 s"])
-    + flow_arrow(1530, 1570)
-    + stage(1570, 240, "Plan", "per scenario", ["Builds per item, week", "Stock and backlog", "Date each target held", "Check results"],
-            [f'A: {A_SC["Bikes built"]:,} bikes', "all targets held from", f"{A_HELD.day} {A_HELD:%b %Y}", f'{SC["A"]["checks"]["passed"]} of {SC["A"]["checks"]["of"]} checks'])
-    + box(860, 762, 950, 128, stroke=AMB) + txt(882, 798, "Claude (LLM), at the edges", 21, AMB, 700)
-    + txt(882, 830, f'{B_("In")}: request in words → filled edit forms → checked in code → proposal for the planner', 18)
-    + txt(882, 860, f'{B_("Out")}: answers about a plan from its computed facts.  Never sees orders, stock or forecasts.', 18)
-    + f'<path d="M1025 762 L1025 722" stroke="{AMB}" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#g)"/>'
-    + f'<path d="M1690 720 L1690 760" stroke="{AMB}" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#g)"/>'
-    + txt(110, 960, "Every number in a plan comes from the object and the linear program.", 24, INK, 700)
+    stage(110, 260, "Data", "inputs",
+          ["Part master", "Locations, routes", "Inventory by location", "Open orders, due dates", "Demand forecast", "Capacity", "Lead times, targets"],
+          ["10 SKUs on 4 lines", "2 sites, 3 channels", "Routes and lead times", "assumed"])
+    + flow_arrow(370, 410)
+    + stage(410, 430, "Object  𝒪", "resource–task network",
+            [f'{B_("Resource")} r: a quantity with a level X per period', "\tinventory, open orders, capacity",
+             f'{B_("Task")} i: an operation with N runs per period. A run', "\tconsumes and yields resources at offsets θ: one", "\tresource into another, or the same one released",
+             f'{B_("Edge")} (i, r): amount μ per run (&lt; 0 consumed,', "\t&gt; 0 yielded) at offset θ",
+             "§" + f'{v("X", "r,t")} = {v("c", "r")}{v("X", "r,t−1")} + Σ{v("", "i")}Σ{v("", "θ")} μ {v("N", "i,t−θ")} + {v("π", "r,t")},   {v("X")} ≥ 0',
+             "c: 1 for stock and orders, 0 for capacity · π: arrivals"],
+            [f'{NUM["resources"][0]} resources, {NUM["tasks"][0]} tasks, {NUM["edges"]} edges', f'{NUM["weeks"]} weekly periods from 7 Sep 2026', "Detail on the next slide"])
+    + flow_arrow(840, 880)
+    + stage(880, 330, "Scenario", "settings of one run, stored as data",
+            [f'{B_("Edits to 𝒪")}: opening levels, arrivals,', "\trun limits, delays θ", f'{B_("Rules")}: permitted routes; task kinds', "\tthe solver decides",
+             f'{B_("Objective")}: stock targets; priority', "\torder as ordered steps", "Entered through 14 edit forms"],
+            [f"{N_SCEN} scenarios", "A: base", "B: web orders from Columbus", "E1–E5: events", "P1: priority order"])
+    + flow_arrow(1210, 1250)
+    + stage(1250, 290, "Solver", "method by problem structure",
+            ["LP: continuous quantities", "MIP: lot sizes, minimum runs", "Rule-based heuristic"],
+            ["LP in HiGHS", "Variables: runs N ≥ 0", "Rows: one balance per", "\tresource and period", "Objective: priority order", "A: 13,068 variables, &lt; 0.2 s", "Lots: by rounding the LP"])
+    + flow_arrow(1540, 1580)
+    + stage(1580, 230, "Plan", "per scenario", ["Runs N by task, period", "Levels X: stock, backlog", "Target dates", "Check results"],
+            [f'A: {A_SC["Bikes built"]:,} bikes', "all targets held from", f"{A_HELD.day} {A_HELD:%b %Y}", f'{SC["A"]["checks"]["passed"]} of {SC["A"]["checks"]["of"]} checks pass'])
+    # planning question
+    + box(110, 830, 730, 150) + txt(130, 866, "Planning question", 21, INK, 700)
+    + meq(130, 910, "q = (𝒪, σ, Ω),     answer = Ω(𝒪 | σ)", 30)
+    + txt(130, 942, "𝒪 object · σ scope: resources, tasks, horizon · Ω operator: project, decide, intervene, diagnose, evaluate", 15, GREY)
+    + txt(130, 966, "Redwheel: σ = 74 resources × 121 weeks; Ω = decide, project, intervene, evaluate", 15, INK)
+    # LLM interface
+    + box(880, 830, 930, 150, stroke=AMB) + txt(900, 866, "LLM interface", 21, AMB, 700)
+    + txt(900, 900, '<tspan font-weight="700">Input</tspan>  natural-language request → typed edit forms → validated in code → proposal for approval', 17)
+    + txt(900, 928, '<tspan font-weight="700">Output</tspan>  answers from the computed plan’s facts', 17)
+    + txt(900, 958, "No access to orders, stock or forecasts; no part in the solve.", 16, GREY)
+    + f'<path d="M1045 830 L1045 803" stroke="{AMB}" stroke-width="2.5" stroke-dasharray="5 4" marker-end="url(#g)"/>'
+    + f'<path d="M1695 803 L1695 828" stroke="{AMB}" stroke-width="2.5" stroke-dasharray="5 4" marker-end="url(#g)"/>'
 )
 p1 = page(1, "Planning system", "", s1)
 
