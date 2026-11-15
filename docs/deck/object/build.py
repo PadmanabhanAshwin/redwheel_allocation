@@ -259,62 +259,74 @@ def fulfilment():
 p3 = page(3, "Network structures", "", alone() + rule(520) + kitting() + vrule(980, 560, 930) + fulfilment())
 
 # ================================================================ 5 · linear program
+# Top: the object for one week (MTB carbon, week 1) and the rows it becomes; the LP's week-1 answer from base_mtb.json
+# (builds 269 / 79 / 27; weeks short 36.98 / 36.98 / 36.99). Bottom: the translation, constraints from the object and
+# the objective from the scenario (engine._build, engine.decide_walk; docs/SOLVER.md §1, §2, §2a).
 SH = ["9304", "4418", "6416"]; OPEN_STOCK = {"9304": 10, "4418": 25, "6416": 15}
-def Ns(n): return f'<tspan>N</tspan><tspan dy="6" style="font-size:68%">{n}</tspan><tspan dy="-6"> </tspan>'
-def frag(y0=330):
-    C = [y0, y0 + 90, y0 + 180]; cy = C[1]
-    g = f'<rect class="res" x="110" y="{cy-40}" width="150" height="80" rx="14"/>' + txt(124, cy - 8, "line capacity", 17, INK, 600) + txt(124, cy + 22, "375", 23, INK, 700)
-    for c, n in zip(C, SH):
-        g += f'<path class="wire" style="stroke-width:2" marker-end="url(#a)" d="M260 {cy+(c-cy)/8} C292 {cy+(c-cy)/8} 282 {c} 312 {c}"/>'
-        g += f'<rect class="task" x="316" y="{c-24}" width="140" height="48" rx="6"/>' + txt(386, c + 6, f"make {n}", 17, "#fff", 400, "middle")
-        g += f'<path class="wire" style="stroke-width:2" marker-end="url(#a)" d="M456 {c} L492 {c}"/>'
-        g += f'<rect class="res" x="496" y="{c-24}" width="146" height="48" rx="12" style="stroke-width:2"/>' + txt(508, c + 6, f"stock {n}", 16, INK, 600) + txt(632, c + 7, OPEN_STOCK[n], 19, INK, 700, "end")
-    return g + txt(290, y0 - 12, "−1", 18, AMB, 700, "middle") + txt(474, y0 - 10, "+1", 18, AMB, 700, "middle")
-def edgetable(y0=296):
-    g = "".join(f'<text x="{x}" y="{y0}" class="colh" style="font-size:17px" text-anchor="{a}">{h}</text>' for x, h, a in [(730, "task", "start"), (880, "resource", "start"), (1090, "μ", "end"), (1160, "θ", "end")])
-    y = y0 + 34
-    for n in SH:
-        for rname, amt in [("line capacity", "−1"), (f"stock {n}", "+1")]:
-            g += (f'<text x="730" y="{y}" class="cell" style="font-size:19px">make {n}</text><text x="880" y="{y}" class="cell" style="font-size:19px">{rname}</text>'
-                  f'<text x="1090" y="{y}" class="cell" style="font-size:19px;font-weight:700;fill:{AMB}" text-anchor="end">{amt}</text><text x="1160" y="{y}" class="cell" style="font-size:19px" text-anchor="end">0</text>')
-            y += 38
-    return g
-def grid(x, y):
-    cols = [x + 300, x + 372, x + 444]; x0 = x + 210
-    g = f'<text x="{x0}" y="{y-14}" text-anchor="end" class="colh" style="font-size:16px">start</text><text x="{x+520}" y="{y-14}" class="colh" style="font-size:16px">level</text>'
-    g += "".join(f'<text x="{c}" y="{y-14}" text-anchor="middle" class="colh" style="font-size:18px;fill:{AMB}">{Ns(n)}</text>' for c, n in zip(cols, SH))
-    rows = [("line capacity", "375", ["−1", "−1", "−1"]), ("stock 9304", "10", ["+1", "", ""]), ("stock 4418", "25", ["", "+1", ""]), ("stock 6416", "15", ["", "", "+1"])]
-    g += f'<path d="M{cols[0]-34} {y} h-8 v{46*4} h8 M{cols[2]+34} {y} h8 v{46*4} h-8" fill="none" stroke="{INK}" stroke-width="2"/>'
+E_ = lambda op: f" {op} "; PL = " + "; MI = " − "; SL = " / "
+it = lambda s: f'<tspan style="{MF}">{s}</tspan>'
+SUMV = lambda sub: f'Σ{v("", sub)} '
+def vn(x, c, kind, name, val, w, h=56):
+    return (f'<rect class="res" x="{x}" y="{c-h/2}" width="{w}" height="{h}" rx="12"/>' + txt(x + 13, c - 7, kind, 15, GREY)
+            + txt(x + 13, c + 18, name, 18, INK, 700) + txt(x + w - 14, c + 18, val, 20, INK, 700, "end"))
+G4 = 404; R4 = [G4 - 74, G4, G4 + 74]
+def frag():
+    g = vn(110, G4, "capacity", "MTB carbon", "375", 186)
+    for c, n in zip(R4, SH):
+        g += sar(296, G4 + (c - G4) / 8, 356, c, curve=c != G4) + stk(356, c, f"make {n}", 120, 46, 18)
+        g += sar(476, c, 514, c) + vn(514, c, "inventory", f"RW-{n}, Reno", OPEN_STOCK[n], 212)
+    return g + txt(320, R4[0] - 10, "−1", 19, AMB, 700, "middle") + txt(495, R4[0] - 12, "+1", 19, AMB, 700, "middle")
+MX0 = 850; MCOL = [1206, 1290, 1374]; MK = 1124
+def rows_of():
+    y0 = 304; top = y0 + 12; RH = 44
+    g = txt(MK, y0, "opening + arrival", 16, GREY, 700, "end") + "".join(meq(c, y0, v("N", n, 15), 22, "middle", AMB) for c, n in zip(MCOL, SH))
+    rows = [("MTB carbon", "375", ["−1", "−1", "−1"])] + [(f"RW-{n}, Reno", str(OPEN_STOCK[n]), ["+1" if j == i else "" for j in range(3)]) for i, n in enumerate(SH)]
+    g += f'<path d="M{MCOL[0]-38} {top} h-8 v{RH*4} h8 M{MCOL[2]+38} {top} h8 v{RH*4} h-8" fill="none" stroke="{INK}" stroke-width="2"/>'
     for i, (lab, st, ent) in enumerate(rows):
-        yy = y + 46 * i + 31
-        g += txt(x, yy, lab, 19, INK, 600) + f'<text x="{x0}" y="{yy}" text-anchor="end" class="cell" style="font-size:22px">{st}</text>'
-        g += "".join(f'<text x="{c}" y="{yy}" text-anchor="middle" class="cell" style="font-size:22px;font-weight:700">{e}</text>' for c, e in zip(cols, ent))
-        g += f'<text x="{x+520}" y="{yy}" class="cell" style="font-size:22px">≥ 0</text>'
+        yy = top + RH * i + 30
+        g += txt(MX0, yy, lab, 19, INK, 700) + txt(MK, yy, st, 21, INK, 400, "end")
+        g += "".join(txt(c, yy, e, 21, AMB, 700, "middle") for c, e in zip(MCOL, ent)) + txt(1438, yy, "≥ 0", 21)
+    g += txt(1500, top + 30, "builds ≤ 375", 19, GREY) + vrule(1490, top + RH + 8, top + RH * 4 - 4) + txt(1504, top + RH * 2 + 30, "stock never negative", 19, GREY)
+    yb = top + RH * 4 + 26
+    g += rule(yb, MX0, 1810)
+    for j, (lab, vals, note) in enumerate([("builds", ["269", "79", "27"], "375: the line is full"), ("weeks short of target", ["37.0", "37.0", "37.0"], "equal: the worst is minimised")]):
+        yy = yb + 36 + 34 * j
+        g += txt(MX0, yy, lab, 19) + "".join(txt(c, yy, s, 21, INK, 700, "middle") for c, s in zip(MCOL, vals)) + txt(1500, yy, note, 19, GREY)
     return g
-def head_bar(x, y, w, col, s): return f'<rect x="{x}" y="{y}" width="{w}" height="44" rx="12" fill="{col}"/><rect x="{x}" y="{y+30}" width="{w}" height="14" fill="{col}"/>' + txt(x + 22, y + 30, s, 18, "#fff", 700)
-SHORT = f'({v("target", "k,t")} − {v("net", "k,t")}){PLUS}÷ {v("d", "k,t")}'
-STEP = f'({v("f", "j,k,t")} − {v("net", "k,t")}){PLUS}÷ {v("d", "k,t")}'
-def lp_panel():
-    g = f'<rect x="110" y="640" width="980" height="300" rx="12" fill="#fff" stroke="{INK}" stroke-width="2.5"/>' + head_bar(110, 640, 980, INK, "Constraints: generated from the object")
-    rows = [(738, "Variables", f'{v("N", "k,t")} ≥ 0', "runs of make task k in week t"),
-            (812, "Balance", f'{v("X", "line,t")} = 375 − Σ{v("", "k")} {v("N", "k,t")} ≥ 0', "line capacity"),
-            (872, "", f'{v("X", "k,t")} = {v("X", "k,t−1")} + {v("N", "k,t")} ≥ 0', "stock")]
-    for y, lab, eq, mean in rows:
-        g += txt(132, y, lab, 22, INK, 700) + meq(280, y, eq, 29) + txt(760, y, mean, 20, GREY)
-    g += rule(764, 132, 1068) + txt(132, 918, "One variable per task node; one row per resource node. Coefficients μ from the edge table.", 17, GREY)
-    g += f'<rect x="1120" y="640" width="690" height="300" rx="12" fill="#fff" stroke="{AMB}" stroke-width="2.5"/>' + head_bar(1120, 640, 690, AMB, "Objective: set by the scenario")
-    g += txt(1142, 726, "A · today", 19, INK, 700) + meq(1260, 726, f'min  Σ{v("", "t")} max{v("", "k")} {SHORT}', 25)
-    g += txt(1142, 790, "B · priority order", 19, INK, 700) + txt(1142, 818, "for j = 1 … J:", 17, GREY)
-    g += meq(1290, 818, f'min  Σ{v("", "t")} max{v("", "k∈Sⱼ")} {STEP}', 25)
-    g += txt(1290, 848, "subject to steps 1 … j−1 at their optimum", 17, GREY)
-    g += lines(1142, 890, ["net: stock − open orders · d: weekly demand over the target window", "f: −(orders not yet due), 0 or target · A = B with one step"], 15, GREY, 22)
+
+# bottom: the translation. (from, to-math, note)
+CON = [("task " + it("i"), v("N", "i,t"), "runs in week " + it("t") + ", up to the run limit"),
+       ("resource " + it("r"), f'{v("X", "r,t")}{E_("≥")}0', "level after week " + it("t")),
+       ("edge " + it("μ, θ"), f'{v("μ", "ir")}{v("N", "i,t−θ")}', "a term of " + it("r") + "’s row"),
+       ("opening, arrival, carry", f'{v("X", "r,0")}, {v("π", "r,t")}, {v("c", "r")}', "the row’s constants")]
+BAL = f'{v("X", "r,t")}{E_("=")}{v("c", "r")}{v("X", "r,t−1")}{PL}{SUMV("i")}{v("μ", "ir")}{v("N", "i,t−θ")}{PL}{v("π", "r,t")}'
+OBJ = [("net inventory", f'{v("net", "k,t")}{E_("=")}{v("stock", "k,t")}{MI}{v("open orders", "k,t")}', "from the levels"),
+       ("floor", f'{v("s", "k,t")}{E_("≥")}{v("f", "k,t")}{MI}{v("net", "k,t")}, {v("s", "k,t")}{E_("≥")}0', "f: due, owed (0), target"),
+       ("priority order", f'({v("f", "1")}, {v("S", "1")}), … , ({v("f", "J")}, {v("S", "J")})', "each pair a step")]
+def subS(pre, post): return (f'<tspan dy="7" dx="1" style="{MF};font-size:19px">{pre}S</tspan><tspan dy="4" style="{MF};font-size:13px">j</tspan>'
+                             f'<tspan dy="-4" style="{MF};font-size:19px">{post}</tspan><tspan dy="-7" style="font-size:10px"> </tspan> ')
+STEPQ = f'step {it("j")}: min {SUMV("g,t")}max{subS("k∈", "∩g")}{v("s", "k,t")}{SL}{v("d", "k,t")}{PL}0.1 Σ{subS("k∈", ", t")}{v("s", "k,t")}{SL}{v("d", "k,t")}'
+HOLDQ = f'hold step {it("j")} at its optimum; then step {it("j")}{PL}1'
+PY0, PH = 640, 370
+def panel(x, w, col, head, sub, rows, ax, mx, nx):
+    g = f'<rect x="{x}" y="{PY0}" width="{w}" height="{PH}" rx="12" fill="#fff" stroke="{col}" stroke-width="2.5"/>'
+    g += txt(x + 26, PY0 + 44, f'{B_(head)}<tspan style="fill:{GREY}"> {sub}</tspan>', 24)
+    for i, (a, m, n) in enumerate(rows):
+        y = PY0 + 100 + 44 * i
+        g += txt(x + 26, y, a, 20, INK, 700) + txt(x + ax, y, "→", 20, GREY) + meq(x + mx, y, m, 26) + txt(x + nx, y, n, 18, GREY)
     return g
-p4 = page(4, "Linear program", "MTB carbon line and its three SKUs, week of 7 Sep 2026.",
-          tag(110, 250, "Graph") + frag() + arrow_big(662, 420)
-          + tag(730, 250, "Edge table") + edgetable() + arrow_big(1184, 420)
-          + tag(1250, 250, "Balance rows") + grid(1250, 330)
-          + txt(1250, 556, f'Row 1: 375 − {Ns("9304")}− {Ns("4418")}− {Ns("6416")}≥ 0.', 19, GREY) + txt(1250, 584, "Each ±1 is one row of the edge table.", 19, GREY)
-          + lp_panel())
+def translation():
+    g = panel(110, 820, INK, "Constraints", "from the object", CON, 272, 306, 520)
+    g += meq(136, PY0 + 100 + 44 * 3 + 58, BAL, 27) + txt(136, PY0 + PH - 22, "One row per resource and week: 8,954 in scenario A, none written by hand.", 18, GREY)
+    g += panel(970, 840, AMB, "Objective", "from the scenario", OBJ, 196, 232, 590)
+    ys = PY0 + 100 + 44 * 2 + 62
+    g += meq(996, ys, STEPQ, 26) + meq(996, ys + 44, HOLDQ, 26)
+    g += f'<path class="wire" style="stroke:{AMB};stroke-width:2" marker-end="url(#g)" d="M1458 {ys+36} H1690 V{ys-8} H1640"/>'
+    g += txt(996, PY0 + PH - 22,"Rule A is one step: target, every SKU. d: weekly demand over the target window.", 18, GREY)
+    return g
+p4 = page(4, "Linear program", "",
+          txt(110, 250, "Object: MTB carbon line, week of 7 Sep 2026", 18, GREY, 700) + txt(MX0, 250, "LP: one column per task, one row per resource, one entry per edge", 18, GREY, 700)
+          + frag() + arrow_big(760, G4) + rows_of() + translation())
 
 # ================================================================ 6 · priority orders
 def stepline(x, y, n, s, col=AMB):
