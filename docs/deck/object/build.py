@@ -1,92 +1,94 @@
-"""Object deck. Usage: python3 build.py OUTDIR  -> object.html, p1..p4.html (print object.html to PDF with Chrome)."""
-import sys, pathlib
-out = pathlib.Path(sys.argv[1])
-CSS = '''@page{size:1920px 1080px;margin:0}
-html,body{margin:0;background:#fff}
-svg{display:block;font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;page-break-after:always}
-.h1{font-size:50px;font-weight:700;fill:#111827}
-.tag{font-size:17px;font-weight:700;letter-spacing:2.5px;fill:#6b7280}
-.name{font-size:26px;font-weight:600;fill:#111827}
-.num{font-size:38px;font-weight:700;fill:#111827}
-.dim{fill:#9ca3af;font-weight:400}
-.res{fill:#fff;stroke:#111827;stroke-width:2.5}
-.task{fill:#111827}
-.tname{font-size:24px;fill:#d1d5db}
-.tnum{font-size:34px;font-weight:700;fill:#fff}
-.wire{stroke:#111827;stroke-width:2.5;fill:none}
-.amt{font-size:24px;font-weight:700;fill:#b45309}
-.st{font-size:27px;fill:#111827}
-.b{font-weight:700}
-.note{font-size:23px;fill:#6b7280}
-.mono{font-family:Menlo,Consolas,monospace;font-size:27px;fill:#111827}
-.cell{font-family:Menlo,Consolas,monospace;font-size:28px;fill:#111827}
-.colh{font-family:Menlo,Consolas,monospace;font-size:20px;fill:#6b7280}
-.pg{font-size:18px;fill:#9ca3af}'''
-DEFS = '<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto"><path d="M0 0L10 5L0 10z" fill="#111827"/></marker></defs>'
-def page(n, title, body):
-    return f'<svg width="1920" height="1080" viewBox="0 0 1920 1080">{DEFS}<text x="110" y="112" class="h1">{title}</text>{body}<text x="1810" y="1048" class="pg" text-anchor="end">{n}</text></svg>'
-def rule(y): return f'<line x1="110" y1="{y}" x2="1810" y2="{y}" stroke="#e5e7eb" stroke-width="2"/>'
-def lines(x, y, rows, cls="st", dy=38): return "".join(f'<text x="{x}" y="{y+i*dy}" class="{cls}">{r}</text>' for i, r in enumerate(rows))
+"""The object deck: seven 1920x1080 slides as SVG in one HTML file.
+
+Usage: python3 build.py OUTDIR  ->  OUTDIR/object.html and OUTDIR/p1..p7.html; print object.html to PDF with Chrome.
+Data, read from this folder: base_mtb.json (dump_base.py, scenario A) and slide5_builds.json (the solver session,
+scenarios A and P1). Numbers that are not in those files are in NUM below; refresh them at the final run.
+
+Notation, used on every slide: r resource, i task, k SKU, t week; X level, N runs, mu amount, theta delay,
+pi arrivals, c carry; net = stock - open orders; d = weekly demand over the target window; f floor.
+Wording: titles name the topic; text states facts. No claims the numbers on the slide do not show.
+"""
+import sys, json, pathlib, datetime
+out = pathlib.Path(sys.argv[1]); HERE = pathlib.Path(__file__).parent
+
+# ---------------------------------------------------------------- data
+BD = json.load(open(HERE / "base_mtb.json"))
+SB = json.load(open(HERE / "slide5_builds.json"))
+SKUS = ["RW-9304", "RW-4418", "RW-6416"]                 # rule B's order
+assert all(SB["A"][k][:52] == BD["builds"][k][:52] for k in SKUS), "slide5_builds.json and base_mtb.json disagree on scenario A"
+NUM = {   # from the object, scenario A and the other sessions' notes; refresh from docs/deck/deck_numbers.json at the final run
+    "resources": (74, "40 inventory · 30 order · 4 capacity"), "tasks": (80, "10 make · 10 move · 60 fulfil"), "edges": 180,
+    "weeks": 121, "files": 9, "tunables": 14,
+    "rw4418_open": {"reno": 25, "cmh": 0, "orders": 1310, "dealers": 669, "web": 496, "commercial": 145, "fc": 50},
+    "rw4418_floors": (-1285, -123, 0, 857),               # net, due, owed, target in week 1 (NOTE_TO_DECK_BOT.md §2)
+    "wk3": {"RW-4418": (142, 247, 389), "RW-6416": (89, 128, 217), "RW-9304": (144, 425, 569)},   # runs, Reno before, after
+    "frames_test": "3, 0, 9, 4",
+    "p1_steps": 6,
+}
+RANKED_AT_TARGET = {"RW-9304": "2027-02-22", "RW-4418": "2027-07-26", "RW-6416": "2027-09-06"}   # tests/test_engine.py, scenario P1
+WEEK = {int(k): v for k, v in BD["weeks"].items()}; WK_OF = {v: k for k, v in WEEK.items()}
+def sdate(t): d = datetime.date.fromisoformat(WEEK[t]); return f"{d.day} {d.strftime('%b')}"
+T_CLEAR = WK_OF[list(BD["orders_cleared"].values())[0]]; T_TARGET = BD["on_target_week"]
+TURN_END = {k: WK_OF[RANKED_AT_TARGET[k]] for k in SKUS}
+NEED = {k: (-BD["net"][k][0], BD["target_units"][k][0]) for k in SKUS}     # owed to customers, target stock, at opening
+A_BUILDS = {k: BD["builds"][k][:56] for k in SKUS}; B_BUILDS = {k: SB["P1"][k][:56] for k in SKUS}
+def net_path(builds):
+    return {k: [BD["net_all"][k][0]] + [BD["net_all"][k][0] + sum(builds[k][:t]) - sum(BD["demand_all"][k][:t]) for t in range(1, 57)] for k in SKUS}
+A_NET, B_NET = {k: BD["net_all"][k][:57] for k in SKUS}, net_path(B_BUILDS)
+
+# ---------------------------------------------------------------- style
+INK, GREY, LIGHT, RULE_C = "#111827", "#6b7280", "#9ca3af", "#e5e7eb"
+AMB, RED, GREEN = "#b45309", "#b91c1c", "#15803d"
+COL = {"RW-9304": "#b45309", "RW-4418": "#111827", "RW-6416": "#2563eb"}
+CSS = f'''@page{{size:1920px 1080px;margin:0}}
+html,body{{margin:0;background:#fff}}
+svg{{display:block;font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;page-break-after:always}}
+.h1{{font-size:50px;font-weight:700;fill:{INK}}}
+.sub{{font-size:25px;fill:{GREY}}}
+.tag{{font-size:18px;font-weight:700;fill:{GREY}}}
+.name{{font-size:26px;font-weight:600;fill:{INK}}}
+.num{{font-size:38px;font-weight:700;fill:{INK}}}
+.dim{{fill:{LIGHT};font-weight:400}}
+.res{{fill:#fff;stroke:{INK};stroke-width:2.5}}
+.task{{fill:{INK}}}
+.tname{{font-size:24px;fill:#d1d5db}}
+.tnum{{font-size:34px;font-weight:700;fill:#fff}}
+.wire{{stroke:{INK};stroke-width:2.5;fill:none}}
+.amt{{font-size:24px;font-weight:700;fill:{AMB}}}
+.cell{{font-family:Menlo,Consolas,monospace;font-size:26px;fill:{INK}}}
+.colh{{font-family:Menlo,Consolas,monospace;font-size:18px;fill:{GREY}}}
+.pg{{font-size:18px;fill:{LIGHT}}}'''
+DEFS = (f'<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto"><path d="M0 0L10 5L0 10z" fill="{INK}"/></marker>'
+        f'<marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="{AMB}"/></marker></defs>')
+
+def page(n, title, sub, body):
+    s = f'<text x="110" y="164" class="sub">{sub}</text>' if sub else ""
+    return (f'<svg width="1920" height="1080" viewBox="0 0 1920 1080">{DEFS}<text x="110" y="112" class="h1">{title}</text>'
+            f'{s}{rule(200)}{body}<text x="1810" y="1048" class="pg" text-anchor="end">{n}</text></svg>')
+def rule(y, x1=110, x2=1810): return f'<line x1="{x1}" y1="{y}" x2="{x2}" y2="{y}" stroke="{RULE_C}" stroke-width="2"/>'
+def vrule(x, y1, y2): return f'<line x1="{x}" y1="{y1}" x2="{x}" y2="{y2}" stroke="{RULE_C}" stroke-width="2"/>'
+def tag(x, y, s, anchor="start"): return f'<text x="{x}" y="{y}" class="tag" text-anchor="{anchor}">{s}</text>'
+def txt(x, y, s, size=22, fill=INK, weight=400, anchor="start"):
+    return f'<text x="{x}" y="{y}" text-anchor="{anchor}" style="font-size:{size}px;fill:{fill};font-weight:{weight}">{s}</text>'
+def lines(x, y, rows, size=22, fill=INK, dy=32): return "".join(txt(x, y + i * dy, r, size, fill) for i, r in enumerate(rows))
+def tint(hexcol, a): r, g, b = (int(hexcol[i:i + 2], 16) for i in (1, 3, 5)); return f"rgb({int(255-(255-r)*a)},{int(255-(255-g)*a)},{int(255-(255-b)*a)})"
+B_ = lambda s: f'<tspan font-weight="700">{s}</tspan>'
+
+# maths: italic Times identifiers with subscripts
+MF = "font-family:Times,serif;font-style:italic"
+def v(base, sub="", sz=None):
+    s = sz or 19
+    t = f'<tspan style="{MF}">{base}</tspan>' if base else ""
+    return t + (f'<tspan dy="7" dx="1" style="{MF};font-size:{s}px">{sub}</tspan><tspan dy="-7" style="font-size:10px"> </tspan>' if sub else "")
+PLUS = '<tspan dy="-11" style="font-size:16px">+</tspan><tspan dy="11"> </tspan>'
+def meq(x, y, s, fs=30, anchor="start", fill=INK): return f'<text x="{x}" y="{y}" text-anchor="{anchor}" style="font-size:{fs}px;fill:{fill};font-family:Times,serif">{s}</text>'
+
+# graph pieces
 def res(x, y, w, name, val, h=120): return f'<rect class="res" x="{x}" y="{y}" width="{w}" height="{h}" rx="22"/><text x="{x+26}" y="{y+48}" class="name">{name}</text><text x="{x+26}" y="{y+98}" class="num">{val}</text>'
 def task(x, y, name, w=180): return f'<rect class="task" x="{x}" y="{y}" width="{w}" height="120" rx="8"/><text x="{x+w/2}" y="{y+72}" class="tnum" text-anchor="middle">{name}</text>'
 def edge(x1, y1, x2, y2, lab, lx=None, ly=None, anchor="middle"):
     lx = (x1 + x2) / 2 if lx is None else lx; ly = y1 - 16 if ly is None else ly
     return f'<path class="wire" marker-end="url(#a)" d="M{x1} {y1} L{x2} {y2}"/><text x="{lx}" y="{ly}" class="amt" text-anchor="{anchor}">{lab}</text>'
-
-# ---------- 1: the object
-U, M = 520, 740
-orders = f'''<rect class="res" x="1500" y="{U-60}" width="310" height="{M-U+120}" rx="22"/>
-<text x="1526" y="{U-12}" class="name">Open orders</text><text x="1526" y="{U+40}" class="num">1,310</text>
-<text x="1526" y="{U+98}" class="note">Dealers</text><text x="1784" y="{U+98}" class="note" text-anchor="end">669</text>
-<text x="1526" y="{U+136}" class="note">Web</text><text x="1784" y="{U+136}" class="note" text-anchor="end">496</text>
-<text x="1526" y="{U+174}" class="note">Commercial</text><text x="1784" y="{U+174}" class="note" text-anchor="end">145</text>
-<line x1="1526" y1="{U+196}" x2="1784" y2="{U+196}" stroke="#e5e7eb" stroke-width="2"/>
-<text x="1526" y="{U+234}" class="note">Forecast</text><text x="1784" y="{U+234}" class="note" text-anchor="end">+50 / wk</text>'''
-graph = (res(110, M-60, 290, "MTB carbon line", "375 / wk") + edge(400, M, 446, M, "−1", ly=M-22) + task(450, M-60, "make") + edge(630, M, 676, M, "+1", ly=M-22)
- + res(680, M-60, 290, "Reno", "25 bikes") + edge(970, M, 1246, M, "−1", lx=1010, ly=M-22) + task(1250, M-60, "fulfil") + edge(1430, M, 1496, M, "−1", ly=M-22)
- + edge(790, M-60, 790, U+64, "−1", lx=772, ly=(M+U)/2+10, anchor="end") + task(700, U-60, "move")
- + edge(880, U, 1000, U, "+1, 1 wk", ly=U-22) + res(1004, U-60, 200, "Columbus", "0 bikes") + edge(1204, U, 1246, U, "−1", ly=U-22) + task(1250, U-60, "fulfil") + edge(1430, U, 1496, U, "−1", ly=U-22) + orders)
-legend = ('<rect class="res" x="110" y="893" width="46" height="34" rx="10"/><text x="172" y="919" class="note"><tspan class="b" fill="#111827">Resource node.</tspan> A level per week: inventory, open orders, capacity.</text>'
- '<rect class="task" x="110" y="943" width="46" height="34" rx="5"/><text x="172" y="969" class="note"><tspan class="b" fill="#111827">Task node.</tspan> A number of runs per week. The plan decides make and move; fulfil is assumed: orders ship as stock allows.</text>'
- '<path class="wire" marker-end="url(#a)" d="M110 1010 L154 1010"/><text x="172" y="1018" class="note"><tspan class="b" fill="#111827">Edge.</tspan> Task to resource, with an amount per run and a delay in weeks (0 unless shown).</text>')
-p1 = page(1, "The object: Redwheel as a resource–task network",
- lines(110, 196, ['<tspan class="b">1. It is generated from master data.</tspan>',
-                  "Every SKU × location that holds stock or orders is a resource,",
-                  "plus one capacity resource per line. Every routing row is a",
-                  "make task; every route is a move or a fulfil task.",
-                  '<tspan class="dim" style="fill:#6b7280">→ 74 resources, 80 tasks, 180 edges for 10 SKUs.</tspan>'])
- + lines(990, 196, ['<tspan class="b">2. Every edge is one cause-and-effect link.</tspan>',
-                    "Running a task changes a resource’s level by a signed amount,",
-                    "after a delay. Levels change in only two ways: through an edge,",
-                    "or by an external arrival (forecast orders, weekly capacity).",
-                    '<tspan style="fill:#6b7280">So any effect can be traced back along edges to its cause.</tspan>'])
- + rule(392) + '<text x="110" y="432" class="tag">SUBGRAPH FOR ONE SKU · RW-4418 · OPENING STATE 7 SEP 2026</text>'
- + graph + rule(850) + legend)
-
-# ---------- 2: the balance equation
-def lane(y, sku, runs, a, b):
-    c = y + 48
-    return f'''<rect class="task" x="700" y="{y}" width="320" height="96" rx="8"/><text x="724" y="{y+36}" class="tname" style="font-size:21px">make {sku}</text><text x="724" y="{y+78}" class="tnum">{runs} runs</text>
-<path class="wire" marker-end="url(#a)" d="M1020 {c} L1216 {c}"/><text x="1118" y="{c-14}" class="amt" text-anchor="middle">+1</text>
-<rect class="res" x="1220" y="{y}" width="590" height="96" rx="22"/><text x="1246" y="{c+9}" class="name">{sku} at Reno</text><text x="1784" y="{c+13}" class="num" text-anchor="end">{a} <tspan class="dim">→</tspan> {b}</text>'''
-Y = [404, 524, 644]; C = [y + 48 for y in Y]
-fan = (f'<path class="wire" marker-end="url(#a)" d="M510 {C[1]-28} C600 {C[1]-28} 610 {C[0]} 696 {C[0]}"/><path class="wire" marker-end="url(#a)" d="M510 {C[1]} L696 {C[1]}"/><path class="wire" marker-end="url(#a)" d="M510 {C[1]+28} C600 {C[1]+28} 610 {C[2]} 696 {C[2]}"/>'
- + f'<text x="640" y="{C[0]-18}" class="amt" text-anchor="end">−1</text><text x="640" y="{C[1]-14}" class="amt" text-anchor="end">−1</text><text x="640" y="{C[2]+38}" class="amt" text-anchor="end">−1</text>')
-def trow(y, name, kind, a, b, c, d):
-    return (f'<text x="110" y="{y}" class="st"><tspan class="b">{name}</tspan>  <tspan style="fill:#6b7280;font-size:23px">{kind}</tspan></text>'
-     + "".join(f'<text x="{x}" y="{y}" class="cell" text-anchor="end">{v}</text>' for x, v in zip([980, 1330, 1560, 1790], [a, b, c, d])))
-thead = "".join(f'<text x="{x}" y="800" class="colh" text-anchor="end">{h}</text>' for x, h in zip([980, 1330, 1560, 1790], ["carry · level[t−1]", "Σ amount · runs", "arrival[t]", "= level[t]"]))
-p2 = page(2, "Every level follows one balance equation",
- '<text x="110" y="190" class="mono">level[r, t]  =  carry[r] · level[r, t−1]  +  Σ amount[e] · runs[task(e), t − delay(e)]  +  arrival[r, t]</text>'
- + '<text x="110" y="234" class="note">Sum over the edges e that end at resource r.  carry = 1 for inventory and orders, 0 for capacity.  level ≥ 0, so a line cannot overbuild.</text>'
- + rule(278) + '<text x="110" y="324" class="tag">WORKED: MTB CARBON LINE · WEEK OF 21 SEP 2026 (t = 3) · RUNS FROM THE PLAN · INVENTORY BEFORE ORDERS SHIP</text>'
- + f'<rect class="res" x="110" y="{C[1]-85}" width="400" height="170" rx="22"/><text x="136" y="{C[1]-38}" class="name">MTB carbon line</text><text x="136" y="{C[1]+16}" class="num">375 <tspan class="dim">→</tspan> 0</text><text x="136" y="{C[1]+56}" class="note">arrives → left after runs</text>'
- + fan + lane(Y[0], "RW-4418", 142, 247, 389) + lane(Y[1], "RW-6416", 89, 128, 217) + lane(Y[2], "RW-9304", 144, 425, 569)
- + thead + trow(850, "MTB carbon line", "capacity, carry 0", "0", "−142 −89 −144", "+375", "= 0") + trow(900, "RW-4418 at Reno", "inventory, carry 1", "247", "+142", "0", "= 389")
- + rule(940) + '<text x="110" y="992" class="st">74 resources × 121 weeks = 8,954 of these rows. They are the constraints the solver receives; the runs are its decision variables.</text>')
-
-
-# ---------- 3: why it works
 def rn(x, c, name, val, w=200):
     return f'<rect class="res" x="{x}" y="{c-36}" width="{w}" height="72" rx="16"/><text x="{x+16}" y="{c-6}" class="name" style="font-size:19px">{name}</text><text x="{x+16}" y="{c+24}" class="num" style="font-size:25px">{val}</text>'
 def tk(x, c, name, w=130, h=72, val=None):
@@ -96,368 +98,313 @@ def ar(x1, y1, x2, y2, lab="", curve=False, ly=None):
     d = f"M{x1} {y1} C{x1+45} {y1} {x2-55} {y2} {x2-4} {y2}" if curve else f"M{x1} {y1} L{x2-4} {y2}"
     t = f'<text x="{(x1+x2)/2}" y="{(ly if ly else min(y1,y2)-12)}" class="amt" style="font-size:21px" text-anchor="middle">{lab}</text>' if lab else ""
     return f'<path class="wire" marker-end="url(#a)" d="{d}"/>{t}'
-def panel(px, py, n, pattern, meaning, diagram, text, reading):
-    g = f'<text x="{px}" y="{py}" class="st"><tspan class="b">{n}. {pattern}</tspan>  <tspan style="fill:#b45309;font-weight:700">→ {meaning}</tspan></text>'
-    g += diagram(px, py + 122)
-    g += lines(px, py + 240, text, cls="note", dy=32)
-    return g + f'<text x="{px}" y="{py+240+32*len(text)+4}" class="note" style="fill:#111827">{reading}</text>'
+def arrow_big(x, y, w=34): return f'<path d="M{x} {y} h{w}" stroke="{LIGHT}" stroke-width="4" fill="none"/><path d="M{x+w-4} {y-9} l14 9 l-14 9 z" fill="{LIGHT}"/>'
+def pill(x, y, h, letter, col, w=26): return f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="6" fill="{col}"/><text x="{x+w/2}" y="{y+h/2+6}" text-anchor="middle" style="font-size:16px;font-weight:700;fill:#fff">{letter}</text>'
+def box(x, y, w, h, stroke=INK, dash=False, fill="#fff", sw=2.5):
+    return f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="12" fill="{fill}" stroke="{stroke}" stroke-width="{sw}"{" stroke-dasharray=" + chr(34) + "6 5" + chr(34) if dash else ""}/>'
+
+# ================================================================ 1 · system
+def stage(x, w, head, sub, rows, top=236, h=470):
+    g = box(x, top, w, h) + txt(x + 22, top + 40, head, 26, INK, 700) + txt(x + 22, top + 68, sub, 17, GREY)
+    return g + lines(x + 22, top + 112, rows, 18, INK, 28)
+def subbox(x, y, w, h, head, rows):
+    return box(x, y, w, h, sw=1.5, fill="#f9fafb") + txt(x + 16, y + 30, head, 19, INK, 700) + lines(x + 16, y + 58, rows, 17, INK, 25)
+def flow_arrow(x1, x2, y=486): return f'<path class="wire" marker-end="url(#a)" d="M{x1} {y} L{x2-3} {y}"/>'
+TOP, H = 236, 470
+s1 = (
+    stage(110, 270, "Data", f'{NUM["files"]} CSV files', ["Open orders, 3 channels", "Forecast, 3 channels", "Stock: plant, dealers", "Line capacity, weekly"], TOP, H)
+    + box(126, 448, 238, 242, stroke=LIGHT, dash=True, sw=1.5) + txt(142, 478, "Assumed", 19, GREY, 700)
+    + lines(142, 508, ["Sites: Reno, Columbus", "Reno → Columbus: 1 wk", "Any site ships any", "channel", "1 line slot per bike"], 17, GREY, 25)
+    + flow_arrow(380, 420)
+    + stage(420, 330, "Object", "Resource–task network",
+            [f'{NUM["resources"][0]} resources, {NUM["tasks"][0]} tasks, {NUM["edges"]} edges', "Opening levels", "Arrivals: forecast, capacity", "Order due dates", "Run limits per task"], TOP, H)
+    + meq(442, 646, f'{v("X", "r,t")} = {v("c", "r")}{v("X", "r,t−1")} + Σ μ{v("N")} + {v("π", "r,t")}', 24)
+    + txt(442, 676, "one balance per resource and week", 16, GREY)
+    + flow_arrow(750, 790)
+    + box(790, TOP, 360, H) + txt(812, TOP + 40, "Scenario", 26, INK, 700) + txt(812, TOP + 68, f'Stored as data; {NUM["tunables"]} edit forms', 17, GREY)
+    + subbox(806, 326, 328, 108, "Changes to the object", ["Stock, capacity, demand, orders,", "build and transfer limits"])
+    + subbox(806, 446, 328, 108, "Planning priors", ["Routes, build and transfer times,", "targets, tasks the LP decides"])
+    + subbox(806, 566, 328, 128, "Priority order", ["Ordered steps: floor, SKUs,", "sharing rule", "Default: one step, target"])
+    + flow_arrow(1150, 1190)
+    + stage(1190, 340, "Solver", "Linear program, HiGHS",
+            ["Variables: task runs N ≥ 0", "Constraints: balance rows", "Objective: priority order,", "one step at a time", "Rounding to whole bikes", "Plan checks"], TOP, H)
+    + meq(1212, 600, f'min  objective', 23) + meq(1212, 632, f's.t.  balance rows,  {v("N")} ≥ 0,  {v("X")} ≥ 0', 23)
+    + lines(1212, 664, ["Scenario A: 13,068 variables,", "8,954 balance rows"], 16, GREY, 22)
+    + flow_arrow(1530, 1570)
+    + stage(1570, 240, "Plan", "Per scenario", ["Builds per SKU, week", "Stock and backlog", "Date each target held", "Check results"], TOP, H)
+    + lines(1592, 620, ["Viewed and compared", "in the planner UI"], 17, GREY, 25)
+    + box(790, 756, 1020, 150, stroke=AMB) + txt(812, 792, "Claude, at the edges", 22, AMB, 700)
+    + txt(812, 826, "Request in words → filled forms → checked in code → proposal for the planner", 18)
+    + txt(812, 854, "Sees settings and the catalogue only: no orders, stock or forecasts. Does not run the plan.", 17, GREY)
+    + txt(812, 884, "Answers questions about a computed plan from its facts sheet.", 17, GREY)
+    + f'<path d="M970 756 L970 712" stroke="{AMB}" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#g)"/>'
+    + f'<path d="M1690 710 L1690 754" stroke="{AMB}" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#g)"/>'
+    + txt(110, 970, "Every number in a plan comes from the object and the linear program.", 24, INK, 700)
+)
+p1 = page(1, "Planning system", "", s1)
+
+# ================================================================ 2 · Redwheel as an RTN
+GEN = [("Inventory, order resources", "SKU × location with stock or orders", "SKU master; locations"),
+       ("Capacity resources", "one per production line", "capacity plan"),
+       ("Make tasks", "one per SKU, on its line", "SKU master: class + trim"),
+       ("Move, fulfil tasks", "one per SKU and route", "routes, assumed")]
+def generation():
+    g = txt(110, 244, "Element", 17, GREY, 700) + txt(400, 244, "Rule", 17, GREY, 700) + txt(770, 244, "Source", 17, GREY, 700)
+    for i, (el, rl, src) in enumerate(GEN):
+        y = 284 + i * 32
+        g += txt(110, y, el, 20, INK, 700) + txt(400, y, rl, 20) + txt(770, y, src, 20, GREY)
+    for x, n, lab, br in [(1080, NUM["resources"][0], "resources", NUM["resources"][1]), (1380, NUM["tasks"][0], "tasks", NUM["tasks"][1]), (1640, NUM["edges"], "edges", "")]:
+        g += txt(x, 300, f"{n}", 48, INK, 700) + txt(x + (66 if n < 100 else 92), 300, lab, 22) + txt(x, 336, br, 17, GREY)
+    return g
+U, M = 552, 752
+o = NUM["rw4418_open"]
+s2_graph = (res(110, M-60, 290, "MTB carbon line", "375 / wk") + edge(400, M, 446, M, "−1", ly=M-22) + task(450, M-60, "make") + edge(630, M, 676, M, "+1", ly=M-22)
+    + res(680, M-60, 290, "Reno", f'{o["reno"]} bikes') + edge(970, M, 1246, M, "−1", lx=1010, ly=M-22) + task(1250, M-60, "fulfil") + edge(1430, M, 1496, M, "−1", ly=M-22)
+    + edge(790, M-60, 790, U+64, "−1", lx=772, ly=(M+U)/2+10, anchor="end") + task(700, U-60, "move")
+    + edge(880, U, 1000, U, "+1, 1 wk", ly=U-22) + res(1004, U-60, 200, "Columbus", f'{o["cmh"]} bikes') + edge(1204, U, 1246, U, "−1", ly=U-22) + task(1250, U-60, "fulfil") + edge(1430, U, 1496, U, "−1", ly=U-22)
+    + f'<rect class="res" x="1500" y="{U-60}" width="310" height="{M-U+120}" rx="22"/><text x="1526" y="{U-12}" class="name">Open orders</text><text x="1526" y="{U+40}" class="num">{o["orders"]:,}</text>'
+    + "".join(txt(1526, U + 98 + i * 38, a, 21, GREY) + txt(1784, U + 98 + i * 38, f"{b:,}", 21, GREY, anchor="end") for i, (a, b) in enumerate([("Dealers", o["dealers"]), ("Web", o["web"]), ("Commercial", o["commercial"])]))
+    + rule(U + 196, 1526, 1784) + txt(1526, U + 234, "Forecast", 21, GREY) + txt(1784, U + 234, f'+{o["fc"]} / wk', 21, GREY, anchor="end"))
+p2 = page(2, "Redwheel resource–task network", "Scenario A, opening state on 7 Sep 2026.",
+          generation() + vrule(1040, 226, 370) + rule(400) + tag(110, 452, "RW-4418")
+          + s2_graph + rule(874)
+          + f'<rect class="res" x="110" y="906" width="40" height="26" rx="8"/>' + txt(162, 926, "resource: level", 21, GREY)
+          + f'<rect class="task" x="380" y="906" width="40" height="26" rx="5"/>' + txt(432, 926, "task: runs per week", 21, GREY)
+          + f'<path class="wire" marker-end="url(#a)" d="M680 919 L722 919"/>' + txt(736, 926, "edge: amount per run; delay in weeks, 0 unless shown", 21, GREY)
+          + txt(110, 980, "Decided by the solver: make, and move where the scenario allows. Not decided: fulfil; orders ship as stock allows, oldest first.", 21))
+
+# ================================================================ 3 · material balance
+def balance():
+    E = 46
+    g = meq(110, 288, f'{v("X", "r,t", 21)} =', E) + meq(215, 288, f'{v("c", "r", 21)} {v("X", "r,t−1", 21)}', E) + meq(330, 288, "+", E)
+    g += meq(368, 288, f'Σ{v("", "i", 20)}Σ{v("", "θ", 18)} {v("μ", "i,r,θ", 21)} {v("N", "i,t−θ", 21)}', E) + meq(612, 288, "+", E)
+    g += meq(650, 288, v("π", "r,t", 21) + ",", E) + meq(790, 288, f'{v("X", "r,t", 21)} ≥ 0', E)
+    for x, s_ in [(272, "carry-over"), (490, "task runs"), (676, "arrivals"), (850, "non-negativity")]:
+        g += txt(x, 338, s_, 19, AMB, 700, "middle")
+    g += vrule(1040, 236, 350)
+    g += lines(1080, 262, ["c = 1: inventory, orders", "c = 0: capacity", "π: forecast orders, weekly capacity"], 19, GREY, 30)
+    return g
+def lane(y, k, runs, a, b):
+    c = y + 46
+    return (f'<rect class="task" x="700" y="{y}" width="320" height="92" rx="8"/>' + txt(724, y + 34, f"make {k}", 20, "#d1d5db") + txt(724, y + 74, f"N = {runs}", 32, "#fff", 700)
+            + f'<path class="wire" marker-end="url(#a)" d="M1020 {c} L1216 {c}"/>' + txt(1118, c - 14, "+1", 24, AMB, 700, "middle")
+            + f'<rect class="res" x="1220" y="{y}" width="590" height="92" rx="22"/>' + txt(1246, c + 9, f"{k} at Reno", 26, INK, 600)
+            + f'<text x="1784" y="{c+13}" class="num" text-anchor="end">{a} <tspan class="dim">→</tspan> {b}</text>')
+YL = [436, 544, 652]; CL = [y + 46 for y in YL]
+s3_fan = (f'<path class="wire" marker-end="url(#a)" d="M510 {CL[1]-28} C600 {CL[1]-28} 610 {CL[0]} 696 {CL[0]}"/><path class="wire" marker-end="url(#a)" d="M510 {CL[1]} L696 {CL[1]}"/><path class="wire" marker-end="url(#a)" d="M510 {CL[1]+28} C600 {CL[1]+28} 610 {CL[2]} 696 {CL[2]}"/>'
+          + txt(640, CL[0] - 18, "−1", 24, AMB, 700, "end") + txt(640, CL[1] - 14, "−1", 24, AMB, 700, "end") + txt(640, CL[2] + 38, "−1", 24, AMB, 700, "end")
+          + f'<rect class="res" x="110" y="{CL[1]-80}" width="400" height="160" rx="22"/>' + txt(136, CL[1] - 34, "MTB carbon line", 26, INK, 600)
+          + f'<text x="136" y="{CL[1]+18}" class="num">375 <tspan class="dim">→</tspan> 0</text>' + txt(136, CL[1] + 56, "available → unused", 21, GREY))
+w3 = NUM["wk3"]
+def term_table():
+    xs = [980, 1330, 1560, 1790]
+    g = "".join(meq(x, 800, h, 24, "end", GREY) for x, h in zip(xs, [f'{v("c")}·{v("X", "t−1")}', f'Σ μ·{v("N")}', v("π", "t"), f'= {v("X", "t")}']))
+    runs = " ".join(f"−{w3[k][0]}" for k in ["RW-4418", "RW-6416", "RW-9304"])
+    for y, name, kind, vals in [(846, "MTB carbon line", "capacity, c = 0", ["0", runs, "+375", "= 0"]),
+                                (892, "RW-4418 at Reno", "inventory, c = 1", [f'{w3["RW-4418"][1]}', f'+{w3["RW-4418"][0]}', "0", f'= {w3["RW-4418"][2]}'])]:
+        g += txt(110, y, f'{B_(name)}  <tspan style="fill:{GREY};font-size:20px">{kind}</tspan>', 25)
+        g += "".join(f'<text x="{x}" y="{y}" class="cell" text-anchor="end">{s}</text>' for x, s in zip(xs, vals))
+    return g
+p3 = page(3, "Material balance", "",
+          balance() + rule(370) + tag(110, 412, "MTB carbon line, week of 21 Sep 2026, scenario A; Reno stock before orders ship")
+          + s3_fan + "".join(lane(y, k, w3[k][0], w3[k][1], w3[k][2]) for y, k in zip(YL, ["RW-4418", "RW-6416", "RW-9304"]))
+          + term_table() + rule(926)
+          + txt(110, 978, f'{NUM["resources"][0]} resources × {NUM["weeks"]} weeks = {NUM["resources"][0] * NUM["weeks"]:,} balance equations.', 25))
+
+# ================================================================ 4 · network structures
 dA = lambda x, c: tk(x, c, "make") + ar(x+130, c, x+200, c, "+1") + rn(x+200, c, "Reno stock", "25") + ar(x+400, c, x+470, c, "−1") + tk(x+470, c, "move")
-dB = lambda x, c: (rn(x, c, "MTB carbon line", "375 / wk", w=210) + "".join(ar(x+210, c+dy0, x+330, c+dy, curve=True) for dy0, dy in [(-14, -58), (0, 0), (14, 58)])
-                   + tk(x+330, c-58, "make RW-4418", w=250, h=46, val="142") + tk(x+330, c, "make RW-6416", w=250, h=46, val="89") + tk(x+330, c+58, "make RW-9304", w=250, h=46, val="144")
+dB = lambda x, c: (rn(x, c, "MTB carbon line", "375 / wk", w=210) + "".join(ar(x+210, c+d0, x+330, c+d1, curve=True) for d0, d1 in [(-14, -58), (0, 0), (14, 58)])
+                   + "".join(tk(x+330, c+dy, f"make {k}", w=250, h=46, val=str(w3[k][0])) for dy, k in [(-58, "RW-4418"), (0, "RW-6416"), (58, "RW-9304")])
                    + f'<text x="{x+270}" y="{c-52}" class="amt" style="font-size:21px" text-anchor="middle">−1</text>')
-dC = lambda x, c: (rn(x, c-44, "Line capacity", "has room") + rn(x, c+44, "Frames on hand", "3") + ar(x+200, c-44, x+330, c-12, "−1", ly=c-44) + ar(x+200, c+44, x+330, c+12, "−1", ly=c+62) + tk(x+330, c, "make"))
+dC = lambda x, c: (rn(x, c-44, "Line capacity", "available") + rn(x, c+44, "Frames on hand", "3") + ar(x+200, c-44, x+330, c-12, "−1", ly=c-44) + ar(x+200, c+44, x+330, c+12, "−1", ly=c+62) + tk(x+330, c, "make"))
 dD = lambda x, c: rn(x, c, "Reno, week t", "−1") + ar(x+200, c, x+270, c) + tk(x+270, c, "move") + ar(x+400, c, x+530, c, "+1, 1 wk") + rn(x+530, c, "Columbus, week t+1", "+1", w=260)
-p3 = page(3, "Why nodes and edges are enough",
- '<text x="110" y="168" class="st">Slide 2 gave one equation and one bound: level ≥ 0. Applied to the graph, they produce the four interactions a supply chain is made of.</text>'
- + rule(204)
- + panel(110, 262, 1, "Series", "dependency", dA,
-         ["Reno stock cannot go below zero, so move can send on only", "what is there: 25 bikes on 7 Sep, plus whatever make adds."], "Upstream limits downstream.")
- + panel(1000, 262, 2, "Shared input", "competition", dB,
-         ["Three tasks draw on one resource that cannot go below", "zero: 142 + 89 + 144 = 375. One more of one is one less of another."], "SKUs compete for a line.")
- + rule(608)
- + panel(110, 666, 3, "Joint input", "matching", dC,
-         ["make takes one build and one frame. Frames have a two-week lead", "time, so builds run 3, 0, 9, 4: none in week 2, though the line has room."], "The scarcer input sets the pace. Tested on a small example, not Redwheel’s data.")
- + panel(1000, 666, 4, "Delay", "lag", dD,
-         ["One run of move leaves Reno now and reaches Columbus", "a week later. In between it is counted as in-transit stock."], "Lead time, with nothing lost on the way.")
- + rule(1004) + '<text x="110" y="1046" class="note" style="fill:#111827">None of the four is written as a rule in code. Each is the balance equation and level ≥ 0, read off a different shape of graph.</text>')
-# ---------- 4: solving one interaction (base case)
-import json, datetime
-BD = json.load(open(pathlib.Path(__file__).with_name("base_mtb.json")))
-SKUS = ["RW-9304", "RW-4418", "RW-6416"]; COL = {"RW-9304": "#b45309", "RW-4418": "#111827", "RW-6416": "#2563eb"}
-def dlab(t): d = datetime.date.fromisoformat(BD["weeks"][str(t)]); return f"{d.day} {d.strftime('%b')}"
-# opening state (7 Sep 2026), from the object: stock, open orders, target for week 1 (next 15 weeks of forecast), average weekly forecast
-OPEN = {"RW-9304": (10, 1435, 823, 102.5), "RW-4418": (25, 1310, 857, 135.2), "RW-6416": (15, 767, 515, 81.2)}
-def bars():
-    X = lambda i: 270 + (i - 1) * 116
-    g = '<text x="110" y="254" class="tag">THE PLAN · BUILDS PER WEEK, OF 375</text>'
-    lx = 560
-    for sk in SKUS:
-        g += f'<rect x="{lx}" y="238" width="18" height="18" fill="{COL[sk]}"/><text x="{lx+26}" y="254" style="font-size:19px;font-weight:600;fill:#111827">{sk}</text>'; lx += 124
-    y0, hh = 470, 180
-    for i in range(1, 7):
-        top = y0
-        for sk in SKUS:
-            v = BD["builds"][sk][i - 1]; h = v / 375 * hh; top -= h
-            if v:
-                g += f'<rect x="{X(i)-38}" y="{top}" width="76" height="{h-1.5}" fill="{COL[sk]}"/>'
-                if h >= 22: g += f'<text x="{X(i)}" y="{top+h/2+7}" text-anchor="middle" style="font-size:19px;font-weight:700;fill:#fff">{v}</text>'
-                else: g += f'<text x="{X(i)+46}" y="{top+h/2+6}" style="font-size:17px;font-weight:700;fill:{COL[sk]}">{v}</text>'
-    g += f'<line x1="200" y1="{y0}" x2="920" y2="{y0}" stroke="#111827" stroke-width="2"/>'
-    return g + "".join(f'<text x="{X(i)}" y="{y0+30}" text-anchor="middle" style="font-size:19px;fill:#6b7280">{dlab(i)}</text>' for i in range(1, 7))
-RED = "#b91c1c"
-N = ["9304", "4418", "6416"]
-def xs(n, col=None):
-    f = ' fill="%s"' % col if col else ""
-    return '<tspan%s>x</tspan><tspan dy="6" style="font-size:68%%"%s>%s</tspan><tspan dy="-6"> </tspan>' % (f, f, n)
-def arrow_big(x, y): return f'<path d="M{x} {y} h34" stroke="#9ca3af" stroke-width="4" fill="none"/><path d="M{x+30} {y-9} l14 9 l-14 9 z" fill="#9ca3af"/>'
-def mono(x, y, t, fs=23, **kw): return f'<text x="{x}" y="{y}" class="cell" style="font-size:{fs}px;{kw.get("style","")}">{t}</text>'
+def panel(px, py, shape, effect, diagram, l1, l2):
+    return (txt(px, py, f'{B_(shape)}  <tspan style="fill:{GREY}">·</tspan>  <tspan style="fill:{AMB};font-weight:700">{effect}</tspan>', 28)
+            + diagram(px, py + 118) + txt(px, py + 232, l1, 22) + txt(px, py + 264, l2, 20, GREY))
+ws = " + ".join(str(w3[k][0]) for k in ["RW-4418", "RW-6416", "RW-9304"])
+p4 = page(4, "Network structures", "",
+          panel(110, 262, "Series", "dependency", dA, "Runs of move are bounded by Reno stock.", "Reno stock: 25 at opening, plus runs of make.")
+          + panel(1000, 262, "Shared input", "competition", dB, "Runs of the three make tasks sum to at most 375.", f"Week of 21 Sep 2026: {ws} = 375.")
+          + rule(578)
+          + panel(110, 640, "Joint input", "matching", dC, "Runs of make are bounded by the scarcer input.", f"Test case, frames on a 2-week lead time: builds {NUM['frames_test']}.")
+          + panel(1000, 640, "Delay", "lag", dD, "Output arrives θ weeks after the run.", "Counted as in-transit stock in between.")
+          + rule(960) + txt(110, 1010, "Each structure follows from the balance and X ≥ 0; none is a separate constraint.", 24))
+
+# ================================================================ 5 · linear program
+SH = ["9304", "4418", "6416"]; OPEN_STOCK = {"9304": 10, "4418": 25, "6416": 15}
+def Ns(n): return f'<tspan>N</tspan><tspan dy="6" style="font-size:68%">{n}</tspan><tspan dy="-6"> </tspan>'
 def frag(y0=330):
-    g = ""; C = [y0, y0 + 90, y0 + 180]; cy = C[1]
-    g += f'<rect class="res" x="110" y="{cy-40}" width="150" height="80" rx="14"/><text x="124" y="{cy-8}" class="name" style="font-size:17px">line capacity</text><text x="124" y="{cy+22}" class="num" style="font-size:23px">375</text>'
-    for c, n, sk in zip(C, N, SKUS):
+    C = [y0, y0 + 90, y0 + 180]; cy = C[1]
+    g = f'<rect class="res" x="110" y="{cy-40}" width="150" height="80" rx="14"/>' + txt(124, cy - 8, "line capacity", 17, INK, 600) + txt(124, cy + 22, "375", 23, INK, 700)
+    for c, n in zip(C, SH):
         g += f'<path class="wire" style="stroke-width:2" marker-end="url(#a)" d="M260 {cy+(c-cy)/8} C292 {cy+(c-cy)/8} 282 {c} 312 {c}"/>'
-        g += f'<rect class="task" x="316" y="{c-24}" width="140" height="48" rx="6"/><text x="386" y="{c+6}" class="tname" style="font-size:17px;fill:#fff" text-anchor="middle">make {n}</text>'
+        g += f'<rect class="task" x="316" y="{c-24}" width="140" height="48" rx="6"/>' + txt(386, c + 6, f"make {n}", 17, "#fff", 400, "middle")
         g += f'<path class="wire" style="stroke-width:2" marker-end="url(#a)" d="M456 {c} L492 {c}"/>'
-        g += f'<rect class="res" x="496" y="{c-24}" width="146" height="48" rx="12" style="stroke-width:2"/><text x="508" y="{c+6}" class="name" style="font-size:16px">stock {n}</text><text x="632" y="{c+7}" class="num" style="font-size:19px" text-anchor="end">{OPEN[sk][0]}</text>'
-    return g + f'<text x="290" y="{y0-12}" class="amt" style="font-size:18px" text-anchor="middle">−1</text><text x="474" y="{y0-10}" class="amt" style="font-size:18px" text-anchor="middle">+1</text>'
+        g += f'<rect class="res" x="496" y="{c-24}" width="146" height="48" rx="12" style="stroke-width:2"/>' + txt(508, c + 6, f"stock {n}", 16, INK, 600) + txt(632, c + 7, OPEN_STOCK[n], 19, INK, 700, "end")
+    return g + txt(290, y0 - 12, "−1", 18, AMB, 700, "middle") + txt(474, y0 - 10, "+1", 18, AMB, 700, "middle")
 def edgetable(y0=296):
-    g = "".join(f'<text x="{x}" y="{y0}" class="colh" style="font-size:17px" text-anchor="{a}">{h}</text>' for x, h, a in [(730, "task", "start"), (880, "resource", "start"), (1090, "amount", "end"), (1160, "delay", "end")])
+    g = "".join(f'<text x="{x}" y="{y0}" class="colh" style="font-size:17px" text-anchor="{a}">{h}</text>' for x, h, a in [(730, "task", "start"), (880, "resource", "start"), (1090, "μ", "end"), (1160, "θ", "end")])
     y = y0 + 34
-    for n in N:
+    for n in SH:
         for rname, amt in [("line capacity", "−1"), (f"stock {n}", "+1")]:
-            g += f'<text x="730" y="{y}" class="cell" style="font-size:19px">make {n}</text><text x="880" y="{y}" class="cell" style="font-size:19px">{rname}</text><text x="1090" y="{y}" class="cell" style="font-size:19px;font-weight:700;fill:#b45309" text-anchor="end">{amt}</text><text x="1160" y="{y}" class="cell" style="font-size:19px" text-anchor="end">0</text>'
+            g += (f'<text x="730" y="{y}" class="cell" style="font-size:19px">make {n}</text><text x="880" y="{y}" class="cell" style="font-size:19px">{rname}</text>'
+                  f'<text x="1090" y="{y}" class="cell" style="font-size:19px;font-weight:700;fill:{AMB}" text-anchor="end">{amt}</text><text x="1160" y="{y}" class="cell" style="font-size:19px" text-anchor="end">0</text>')
             y += 38
     return g
 def grid(x, y):
-    cols = [x + 300, x + 372, x + 444]; xs0 = x + 210
-    g = f'<text x="{(cols[0]+cols[2])/2}" y="{y-44}" text-anchor="middle" style="font-size:16px;fill:#b45309;font-weight:700">× runs of each make task (unknown)</text>'
-    g += f'<text x="{xs0}" y="{y-14}" text-anchor="end" class="colh" style="font-size:16px">start</text><text x="{x+520}" y="{y-14}" class="colh" style="font-size:16px">level</text>'
-    g += "".join(f'<text x="{c}" y="{y-14}" text-anchor="middle" class="colh" style="font-size:18px;fill:#b45309">{xs(n)}</text>' for c, n in zip(cols, N))
+    cols = [x + 300, x + 372, x + 444]; x0 = x + 210
+    g = f'<text x="{x0}" y="{y-14}" text-anchor="end" class="colh" style="font-size:16px">start</text><text x="{x+520}" y="{y-14}" class="colh" style="font-size:16px">level</text>'
+    g += "".join(f'<text x="{c}" y="{y-14}" text-anchor="middle" class="colh" style="font-size:18px;fill:{AMB}">{Ns(n)}</text>' for c, n in zip(cols, SH))
     rows = [("line capacity", "375", ["−1", "−1", "−1"]), ("stock 9304", "10", ["+1", "", ""]), ("stock 4418", "25", ["", "+1", ""]), ("stock 6416", "15", ["", "", "+1"])]
-    g += f'<path d="M{cols[0]-34} {y} h-8 v{46*4} h8 M{cols[2]+34} {y} h8 v{46*4} h-8" fill="none" stroke="#111827" stroke-width="2"/>'
+    g += f'<path d="M{cols[0]-34} {y} h-8 v{46*4} h8 M{cols[2]+34} {y} h8 v{46*4} h-8" fill="none" stroke="{INK}" stroke-width="2"/>'
     for i, (lab, st, ent) in enumerate(rows):
         yy = y + 46 * i + 31
-        g += f'<text x="{x}" y="{yy}" style="font-size:19px;font-weight:600;fill:#111827">{lab}</text><text x="{xs0}" y="{yy}" text-anchor="end" class="cell" style="font-size:22px">{st}</text>'
+        g += txt(x, yy, lab, 19, INK, 600) + f'<text x="{x0}" y="{yy}" text-anchor="end" class="cell" style="font-size:22px">{st}</text>'
         g += "".join(f'<text x="{c}" y="{yy}" text-anchor="middle" class="cell" style="font-size:22px;font-weight:700">{e}</text>' for c, e in zip(cols, ent))
         g += f'<text x="{x+520}" y="{yy}" class="cell" style="font-size:22px">≥ 0</text>'
     return g
-MF = "font-family:Times,serif;font-style:italic"
-def v(base, sub=""):
-    """A maths identifier with an optional subscript."""
-    t = f'<tspan style="{MF}">{base}</tspan>'
-    return t + (f'<tspan dy="7" dx="1" style="{MF};font-size:19px">{sub}</tspan><tspan dy="-7" style="font-size:12px"> </tspan>' if sub else "")
-def meq(x, y, t, fs=30): return f'<text x="{x}" y="{y}" style="font-size:{fs}px;fill:#111827;font-family:Times,serif">{t}</text>'
+def head_bar(x, y, w, col, s): return f'<rect x="{x}" y="{y}" width="{w}" height="44" rx="12" fill="{col}"/><rect x="{x}" y="{y+30}" width="{w}" height="14" fill="{col}"/>' + txt(x + 22, y + 30, s, 18, "#fff", 700)
+SHORT = f'({v("target", "k,t")} − {v("net", "k,t")}){PLUS}÷ {v("d", "k,t")}'
+STEP = f'({v("f", "j,k,t")} − {v("net", "k,t")}){PLUS}÷ {v("d", "k,t")}'
 def lp_panel():
-    g = '<text x="110" y="628" class="tag">4 · THE LINEAR PROGRAM</text>'
-    # left: from the RTN
-    g += '<rect x="110" y="650" width="1040" height="292" rx="14" fill="#fff" stroke="#111827" stroke-width="2.5"/>'
-    g += '<rect x="110" y="650" width="1040" height="44" rx="14" fill="#111827"/><rect x="110" y="680" width="1040" height="14" fill="#111827"/><text x="134" y="680" style="font-size:17px;font-weight:700;letter-spacing:2px;fill:#fff">FROM THE RTN · GENERATED FROM NODES AND EDGES</text>'
-    rows = [(748, "Variables", f'{v("x", "k,t")} ≥ 0', "runs of make task k in week t", "one per task node"),
-            (822, "Constraints", f'{v("capacity", "t")} = 375 − Σ{v("", "k")} {v("x", "k,t")} ≥ 0', "the line cannot overbuild", "one per resource node"),
-            (882, "", f'{v("stock", "k,t")} = {v("stock", "k,t−1")} + {v("x", "k,t")} ≥ 0', "what is built is added to stock", "")]
-    for y, lab, eq, mean, src in rows:
-        g += f'<text x="134" y="{y}" style="font-size:22px;font-weight:700;fill:#111827">{lab}</text>' + meq(310, y, eq)
-        g += f'<text x="760" y="{y-10 if src else y}" class="note" style="font-size:20px;fill:#111827">{mean}</text>' + (f'<text x="760" y="{y+16}" class="note" style="font-size:17px">{src}</text>' if src else "")
-    g += '<line x1="134" y1="776" x2="1126" y2="776" stroke="#e5e7eb" stroke-width="2"/>'
-    g += '<text x="134" y="924" class="note" style="font-size:17px">k = SKU, t = week. The 375 and every −1, +1 are read from the object’s tables.</text>'
-    # right: fed in
-    g += '<rect x="1180" y="650" width="630" height="292" rx="14" fill="#fff" stroke="#b45309" stroke-width="2.5"/>'
-    g += '<rect x="1180" y="650" width="630" height="44" rx="14" fill="#b45309"/><rect x="1180" y="680" width="630" height="14" fill="#b45309"/><text x="1204" y="680" style="font-size:17px;font-weight:700;letter-spacing:2px;fill:#fff">FED IN · A PLANNING CHOICE</text>'
-    g += '<text x="1204" y="738" style="font-size:22px;font-weight:700;fill:#111827">Objective</text>'
-    g += lines(1204, 776, ["Keep every SKU as close to its stock target", "as the line allows, worst-off SKU first."], cls="st", dy=32).replace('class="st"', 'class="st" style="font-size:23px"')
-    g += meq(1204, 868, f'minimise   Σ{v("", "t")} max{v("", "k")} {v("gap", "k,t")}')
-    g += '<text x="1204" y="904" class="note" style="font-size:18px">gap = weeks SKU k is below its target in week t.</text>'
-    g += '<text x="1204" y="928" class="note" style="font-size:18px">How the gap is measured is a setting, not part of the graph.</text>'
+    g = f'<rect x="110" y="640" width="980" height="300" rx="12" fill="#fff" stroke="{INK}" stroke-width="2.5"/>' + head_bar(110, 640, 980, INK, "Constraints: generated from the object")
+    rows = [(738, "Variables", f'{v("N", "k,t")} ≥ 0', "runs of make task k in week t"),
+            (812, "Balance", f'{v("X", "line,t")} = 375 − Σ{v("", "k")} {v("N", "k,t")} ≥ 0', "line capacity"),
+            (872, "", f'{v("X", "k,t")} = {v("X", "k,t−1")} + {v("N", "k,t")} ≥ 0', "stock")]
+    for y, lab, eq, mean in rows:
+        g += txt(132, y, lab, 22, INK, 700) + meq(280, y, eq, 29) + txt(760, y, mean, 20, GREY)
+    g += rule(764, 132, 1068) + txt(132, 918, "One variable per task node; one row per resource node. Coefficients μ from the edge table.", 17, GREY)
+    g += f'<rect x="1120" y="640" width="690" height="300" rx="12" fill="#fff" stroke="{AMB}" stroke-width="2.5"/>' + head_bar(1120, 640, 690, AMB, "Objective: set by the scenario")
+    g += txt(1142, 726, "A · today", 19, INK, 700) + meq(1260, 726, f'min  Σ{v("", "t")} max{v("", "k")} {SHORT}', 25)
+    g += txt(1142, 790, "B · priority order", 19, INK, 700) + txt(1142, 818, "for j = 1 … J:", 17, GREY)
+    g += meq(1290, 818, f'min  Σ{v("", "t")} max{v("", "k∈Sⱼ")} {STEP}', 25)
+    g += txt(1290, 848, "subject to steps 1 … j−1 at their optimum", 17, GREY)
+    g += lines(1142, 890, ["net: stock − open orders · d: weekly demand over the target window", "f: −(orders not yet due), 0 or target · A = B with one step"], 15, GREY, 22)
     return g
-p4 = page(4, "From the object to a linear program",
- '<text x="110" y="168" class="st">One line (MTB carbon, 375 builds a week) and the three SKUs built on it: RW-9304, RW-4418, RW-6416. Week of 7 Sep 2026.</text>'
- + rule(204)
- + '<text x="110" y="250" class="tag">1 · THE GRAPH</text>' + frag() + arrow_big(662, 420)
- + '<text x="730" y="250" class="tag">2 · STORED AS A TABLE OF EDGES</text>' + edgetable() + arrow_big(1184, 420)
- + '<text x="1250" y="250" class="tag">3 · ONE EQUATION PER RESOURCE</text>' + grid(1250, 330)
- + f'<text x="1250" y="556" class="note" style="font-size:19px">Top row: 375 − {xs("9304")}− {xs("4418")}− {xs("6416")}≥ 0.</text><text x="1250" y="584" class="note" style="font-size:19px">Each ±1 is one row of the edge table.</text>'
- + lp_panel()
- + rule(968)
- + '<text x="110" y="1018" class="st">The left box is generated for every line by the same code. Changing the objective changes only the right box.</text>')
+p5 = page(5, "Linear program", "MTB carbon line and its three SKUs, week of 7 Sep 2026.",
+          tag(110, 250, "Graph") + frag() + arrow_big(662, 420)
+          + tag(730, 250, "Edge table") + edgetable() + arrow_big(1184, 420)
+          + tag(1250, 250, "Balance rows") + grid(1250, 330)
+          + txt(1250, 556, f'Row 1: 375 − {Ns("9304")}− {Ns("4418")}− {Ns("6416")}≥ 0.', 19, GREY) + txt(1250, 584, "Each ±1 is one row of the edge table.", 19, GREY)
+          + lp_panel())
 
-# ---------- 5: the objective and the check
-RATE1 = {sk: BD["target_units"][sk][0] / BD["target_weeks"][sk] for sk in SKUS}       # bikes per week of target, week 1
-D1 = {sk: BD["net"][sk][0] + BD["builds"][sk][0] - BD["net"][sk][1] for sk in SKUS}  # orders arriving in week 1
-def gap_after(sk, build): return (BD["target_units"][sk][0] - (BD["net"][sk][0] - D1[sk] + build)) / RATE1[sk]
-def position_chart():
-    X = lambda w: 290 + (w + 28) / 44 * 630
-    g = '<text x="110" y="262" class="tag">WHERE EACH SKU STANDS AGAINST ITS TARGET, IN WEEKS OF DEMAND</text>'
-    top, bot = 300, 590
-    g += f'<line x1="{X(0)}" y1="{top}" x2="{X(0)}" y2="{bot}" stroke="#111827" stroke-width="2"/><line x1="{X(15)}" y1="{top}" x2="{X(15)}" y2="{bot}" stroke="#b45309" stroke-width="3"/>'
-    g += f'<text x="{X(0)}" y="{bot+26}" text-anchor="middle" style="font-size:18px;fill:#111827">0</text><text x="{X(15)}" y="{bot+26}" text-anchor="middle" style="font-size:18px;font-weight:700;fill:#b45309">target 15</text>'
-    g += "".join(f'<text x="{X(w)}" y="{bot+26}" text-anchor="middle" style="font-size:18px;fill:#6b7280">{w}</text>' for w in (-20, -10))
-    g += f'<text x="{X(-14)}" y="{bot+54}" text-anchor="middle" style="font-size:18px;fill:#6b7280">← orders we owe, weeks</text><text x="{X(8)}" y="{bot+54}" text-anchor="middle" style="font-size:18px;fill:#6b7280">stock, weeks →</text>'
-    for r, sk in enumerate(SKUS):
-        y = 318 + r * 92
-        open_gap = (BD["target_units"][sk][0] - BD["net"][sk][0]) / RATE1[sk]; after = BD["short_weeks"][sk][0]
-        g += f'<rect x="110" y="{y+3}" width="18" height="18" fill="{COL[sk]}"/><text x="138" y="{y+19}" style="font-size:21px;font-weight:600;fill:#111827">{sk}</text><text x="138" y="{y+54}" style="font-size:17px;fill:#6b7280">after week 1</text>'
-        g += f'<rect x="{X(15-open_gap)}" y="{y}" width="{X(15)-X(15-open_gap)}" height="28" fill="{COL[sk]}" opacity="0.35"/><text x="{X(15-open_gap)+10}" y="{y+21}" style="font-size:18px;font-weight:700;fill:#111827">{open_gap:.1f} weeks short at opening</text>'
-        g += f'<rect x="{X(15-after)}" y="{y+34}" width="{X(15)-X(15-after)}" height="28" fill="{COL[sk]}"/><text x="{X(15-after)+10}" y="{y+55}" style="font-size:18px;font-weight:700;fill:#fff">{after:.1f}</text>'
+# ================================================================ 6 · priority orders
+def stepline(x, y, n, s, col=AMB):
+    return f'<circle cx="{x+12}" cy="{y-6}" r="12" fill="{col}"/>' + txt(x + 12, y - 1, n, 14, "#fff", 700, "middle") + txt(x + 34, y, s, 18)
+def pipeline():
+    top, h = 222, 268
+    g = box(110, top, 450, h, stroke=AMB) + txt(130, top + 34, "1  Priority order", 21, INK, 700) + txt(130, top + 58, "on the scenario, as data", 16, GREY)
+    for n, (fl, who) in enumerate([("due", "all SKUs · even"), ("owed", "all SKUs · even"), ("target", "RW-9304"), ("target", "RW-4418"),
+                                    ("target", "RW-6416"), ("target", "other lines · even")], start=1):
+        g += stepline(130, top + 92 + (n - 1) * 26, str(n), f'{B_(fl)} · {who}')
+    g += txt(130, top + 254, "Rule A: one step, target · all SKUs · even", 16, GREY)
+    g += arrow_big(566, top + h / 2, 28)
+    g += box(608, top, 470, h, stroke=INK) + txt(628, top + 34, "2  Floors", 21, INK, 700) + txt(628, top + 58, "read from the object, per SKU and week", 16, GREY)
+    g += lines(628, top + 96, [f'{B_("due")} = −(open orders not yet due)', f'{B_("owed")} = 0', f'{B_("target")} = forecast, next 15 weeks'], 18, INK, 30)
+    nf = NUM["rw4418_floors"]
+    g += txt(628, top + 214, f'RW-4418, week 1: net {nf[0]:,}', 16, GREY) + txt(628, top + 240, f'floors {nf[1]} · {nf[2]} · {nf[3]}; due dates are on the object', 16, GREY)
+    g += arrow_big(1084, top + h / 2, 28)
+    g += box(1126, top, 684, h, stroke=INK) + txt(1146, top + 34, "3  Linear program, one solve per step", 21, INK, 700)
+    g += txt(1146, top + 58, "same variables and balance rows as for rule A", 16, GREY)
+    g += txt(1146, top + 100, "add", 17, GREY) + meq(1196, top + 100, f'{v("s", "k,t")} ≥ {v("f", "k,t")} − {v("net", "k,t")},   {v("s", "k,t")} ≥ 0', 25)
+    g += txt(1146, top + 142, "solve", 17, GREY) + meq(1206, top + 142, f'min  Σ{v("", "t")} max{v("", "k∈Sⱼ")} {v("s", "k,t")} ÷ {v("d", "k,t")}', 25)
+    g += txt(1146, top + 184, "hold", 17, GREY) + txt(1196, top + 184, "add the row: step objective ≤ its optimum; next step", 18)
+    g += txt(1146, top + 244, f'Rule B: {NUM["p1_steps"]} steps, {NUM["p1_steps"] + 1} solves (the last trims stock above target)', 16, GREY)
     return g
-def check():
-    plan = {sk: BD["builds"][sk][0] for sk in SKUS}
-    opts = [(f"The plan: {plan['RW-9304']} / {plan['RW-4418']} / {plan['RW-6416']}", plan, True), ("All 375 to RW-9304", {"RW-9304": 375}, False), ("Equal thirds: 125 each", {sk: 125 for sk in SKUS}, False)]
-    g = '<text x="110" y="712" class="tag">CHECK · THREE WAYS TO PLACE WEEK 1’S 375 BUILDS</text>'
-    g += '<text x="920" y="744" text-anchor="end" style="font-size:17px;fill:#6b7280">largest gap after, weeks</text>'
-    for i, (name, b, isplan) in enumerate(opts):
-        y = 788 + i * 48; worst = max(gap_after(sk, b.get(sk, 0)) for sk in SKUS)
-        if isplan: g += f'<rect x="100" y="{y-32}" width="842" height="46" rx="8" fill="#f3f4f6"/>'
-        g += f'<text x="118" y="{y}" style="font-size:22px;font-weight:{700 if isplan else 400};fill:#111827">{name}</text><text x="920" y="{y}" text-anchor="end" class="cell" style="font-size:24px;font-weight:700;fill:{"#111827" if isplan else "#9ca3af"}">{worst:.1f}</text>'
-    return g + '<text x="110" y="936" class="note">Moving any build between SKUs lengthens the longest bar.</text>'
-def bars_sol():
-    X = lambda i: 1180 + (i - 1) * 108
-    g = '<text x="1010" y="290" class="tag">THE SOLUTION · RUNS PER WEEK, OF 375</text>'
-    lx = 1010
-    for sk in SKUS:
-        g += f'<rect x="{lx}" y="312" width="16" height="16" fill="{COL[sk]}"/><text x="{lx+22}" y="327" style="font-size:17px;font-weight:600;fill:#111827">{sk}</text>'; lx += 112
-    y0, hh = 640, 270
-    for i in range(1, 7):
-        top = y0
-        for sk in SKUS:
-            v = BD["builds"][sk][i - 1]; h = v / 375 * hh; top -= h
-            if v:
-                g += f'<rect x="{X(i)-38}" y="{top}" width="76" height="{h-1.5}" fill="{COL[sk]}"/>'
-                if h >= 22: g += f'<text x="{X(i)}" y="{top+h/2+7}" text-anchor="middle" style="font-size:19px;font-weight:700;fill:#fff">{v}</text>'
-                else: g += f'<text x="{X(i)+46}" y="{top+h/2+6}" style="font-size:17px;font-weight:700;fill:{COL[sk]}">{v}</text>'
-    g += f'<line x1="1110" y1="{y0}" x2="1810" y2="{y0}" stroke="#111827" stroke-width="2"/>'
-    g += "".join(f'<text x="{X(i)}" y="{y0+30}" text-anchor="middle" style="font-size:19px;fill:#6b7280">{dlab(i)}</text>' for i in range(1, 7))
-    g += '<text x="1010" y="730" class="tag">GAP AFTER EACH WEEK, WEEKS</text>'
-    for r, sk in enumerate(SKUS):
-        y = 772 + r * 44
-        g += f'<rect x="1010" y="{y-16}" width="16" height="16" fill="{COL[sk]}"/><text x="1034" y="{y}" style="font-size:18px;font-weight:600;fill:#111827">{sk[3:]}</text>'
-        g += "".join(f'<text x="{X(i)}" y="{y}" text-anchor="middle" class="cell" style="font-size:21px;">{BD["short_weeks"][sk][i-1]:.1f}</text>' for i in range(1, 7))
-    return g + '<text x="1010" y="930" class="note">Level after one week, then kept level. All three on target 6 Sep 2027.</text>'
-DUE1 = {"RW-9304": -146, "RW-4418": -123, "RW-6416": -56}   # due floor, week 1: object session, NOTE_TO_DECK_BOT.md §2 (not recomputed here)
-NEED = [("#b91c1c", "overdue orders"), ("#f59e0b", "open orders, not yet due"), ("#9ca3af", "short of target stock")]
-def fmt_date(iso): d = datetime.date.fromisoformat(iso[:10]); return f"{d.day} {d.strftime('%b %Y')}"
-def col_floors(x):
-    X = lambda b: x + 40 + (b + 1500) / 2400 * 620
-    g = f'<text x="{x}" y="262" class="tag">1 · STATE · NET INVENTORY (STOCK − OPEN ORDERS), BIKES</text>'
-    lx = x
-    for col, lab in NEED:
-        g += f'<rect x="{lx}" y="286" width="16" height="16" fill="{col}"/><text x="{lx+24}" y="301" style="font-size:17px;fill:#6b7280">{lab}</text>'; lx += 46 + len(lab) * 9.2
-    g += f'<line x1="{X(0)}" y1="330" x2="{X(0)}" y2="700" stroke="#111827" stroke-width="2"/><text x="{X(0)}" y="726" text-anchor="middle" style="font-size:17px;fill:#111827">0 · nobody waiting</text>'
-    for r, sk in enumerate(SKUS):
-        y = 392 + r * 112; start = BD["net"][sk][0]; due = DUE1[sk]; tg = BD["target_units"][sk][0]
-        g += f'<rect x="{x}" y="{y-40}" width="18" height="18" fill="{COL[sk]}"/><text x="{x+28}" y="{y-24}" style="font-size:21px;font-weight:700;fill:#111827">{sk}</text><text x="{x+140}" y="{y-24}" class="note" style="font-size:19px">starts at {start:,.0f}</text>'
-        for (a_, b_), (col, _) in zip([(start, due), (due, 0), (0, tg)], NEED):
-            w = X(b_) - X(a_); n = b_ - a_
-            g += f'<rect x="{X(a_)}" y="{y}" width="{w-2}" height="38" fill="{col}"/>'
-            if w > 70: g += f'<text x="{X(a_)+w/2}" y="{y+26}" text-anchor="middle" style="font-size:19px;font-weight:700;fill:{"#111827" if col != "#b91c1c" else "#fff"}">{n:,.0f}</text>'
-            else: g += f'<text x="{X(b_)-6}" y="{y-8}" text-anchor="end" style="font-size:16px;font-weight:700;fill:#b45309">{n:,.0f}</text>'
-        g += f'<text x="{X(tg)+8}" y="{y+26}" style="font-size:17px;fill:#6b7280">target</text>'
+def context(top):
+    g = tag(110, top, "Opening, 7 Sep 2026")
+    g += f'<rect x="110" y="{top+20}" width="14" height="14" fill="{RED}"/>' + txt(132, top + 33, "owed to customers", 16, GREY)
+    g += f'<rect x="290" y="{top+20}" width="14" height="14" fill="{LIGHT}"/>' + txt(312, top + 33, "target stock", 16, GREY)
+    sc = 380 / 2300; tot = 0
+    for r, k in enumerate(SKUS):
+        y = top + 78 + r * 74; owed, tg = NEED[k]; tot += owed + tg
+        g += f'<rect x="110" y="{y-16}" width="16" height="16" fill="{COL[k]}"/>' + txt(134, y, k, 20, INK, 700) + txt(490, y, f'{owed+tg:,.0f}', 19, INK, 700, "end")
+        g += f'<rect x="110" y="{y+10}" width="{owed*sc}" height="28" fill="{RED}"/><rect x="{110+owed*sc+2}" y="{y+10}" width="{tg*sc}" height="28" fill="{LIGHT}"/>'
+        g += txt(120, y + 30, f"{owed:,.0f}", 15, "#fff", 700) + txt(110 + owed * sc + 10, y + 30, f"{tg:,.0f}", 15, INK, 700)
+    g += txt(110, top + 322, f"{tot:,.0f} bikes required", 24, INK, 700) + txt(110, top + 354, "375 built per week", 24, INK, 700)
     return g
-def col_order(x):
-    g = f'<text x="{x}" y="262" class="tag">2 · PRIORITY ORDER · TODAY</text>'
-    g += f'<rect x="{x}" y="290" width="350" height="150" rx="14" fill="#fff" stroke="#b45309" stroke-width="2.5"/><text x="{x+22}" y="330" style="font-size:16px;font-weight:700;letter-spacing:2px;fill:#b45309">STEP 1 OF 1</text>'
-    g += f'<text x="{x+22}" y="372" style="font-size:28px;font-weight:700;fill:#111827">Target</text><text x="{x+22}" y="412" style="font-size:22px;fill:#111827">all three bikes · shared evenly</text>'
-    g += lines(x, 486, ['<tspan class="b" fill="#111827">Shared evenly:</tspan> every bike on', "the line is the same number of", "weeks short of its target."], cls="note", dy=30)
-    g += lines(x, 600, ['<tspan class="b" fill="#111827">Customers come first anyway:</tspan>', "a bike with orders waiting is", "always further below target", "than one without."], cls="note", dy=30)
-    return g
-def tile(x, w, big, small): return f'<rect x="{x}" y="800" width="{w}" height="120" rx="14" fill="#f3f4f6"/><text x="{x+26}" y="852" style="font-size:36px;font-weight:700;fill:#111827">{big}</text><text x="{x+26}" y="892" class="note" style="font-size:21px;fill:#111827">{small}</text>'
-def col_decision(x):
-    X = lambda i: x + 46 + (i - 1) * 84
-    g = f'<text x="{x}" y="262" class="tag">3 · DECISION · RUNS PER WEEK, OF 375</text>'
-    y0, hh = 700, 390
-    for i in range(1, 7):
-        top = y0
-        for sk in SKUS:
-            val = BD["builds"][sk][i - 1]; h = val / 375 * hh; top -= h
-            g += f'<rect x="{X(i)-34}" y="{top}" width="68" height="{h-1.5}" fill="{COL[sk]}"/>'
-            if h >= 24: g += f'<text x="{X(i)}" y="{top+h/2+7}" text-anchor="middle" style="font-size:19px;font-weight:700;fill:#fff">{val}</text>'
-    g += f'<line x1="{x}" y1="{y0}" x2="{x+510}" y2="{y0}" stroke="#111827" stroke-width="2"/>'
-    return g + "".join(f'<text x="{X(i)}" y="{y0+26}" text-anchor="middle" style="font-size:17px;fill:#6b7280">{dlab(i)}</text>' for i in range(1, 7))
-WK_OF = {v: int(k) for k, v in BD["weeks"].items()}
-def sdate(t): d = datetime.date.fromisoformat(BD["weeks"][str(t)]); return f"{d.day} {d.strftime('%b')}"
-OPEN_UNITS = {sk: BD["target_units"][sk][0] - BD["net"][sk][0] for sk in SKUS}
-T_CLEAR = WK_OF[list(BD["orders_cleared"].values())[0]]; T_TARGET = BD["on_target_week"]
-# Ranked order (customers shared equally, then stock for RW-9304, RW-4418, RW-6416): dates pinned by
-# tests/test_engine.py::test_walk_ranked_on_mtb_carbon. Not run here; refresh at the final run.
-RANKED_AT_TARGET = {"RW-9304": "2027-02-22", "RW-4418": "2027-07-26", "RW-6416": "2027-09-06"}
-RANKED_CLEARED = "2026-12-14"
-WAITC, STOCKC, AMB = "#b91c1c", "#9ca3af", "#b45309"
-GREEN = "#15803d"
-# ---------- 6: how the two rules split the line over the year
-ORDER = ["RW-9304", "RW-4418", "RW-6416"]
-TURN_END = {sk: WK_OF[RANKED_AT_TARGET[sk]] for sk in ORDER}
-SB = json.load(open(pathlib.Path(__file__).with_name("slide5_builds.json")))     # written by the solver session from run_case (scenario P1)
-assert all(SB["A"][sk][:52] == BD["builds"][sk][:52] for sk in SKUS), "the solver's file and the base-plan dump disagree on rule A"
-def sketch_B():
-    """Rule B's weekly builds: the solver's plan for scenario P1, from slide5_builds.json."""
-    return {sk: list(SB["P1"][sk][:56]) for sk in SKUS}
-# ---------- 5: two rules, two build plans
-def context():
-    g = '<text x="110" y="262" class="tag">THE CONTEXT · MTB CARBON LINE, 7 SEP 2026</text>'
-    g += f'<rect x="110" y="288" width="16" height="16" fill="{WAITC}"/><text x="134" y="302" style="font-size:17px;fill:#111827">owed to customers</text><rect x="320" y="288" width="16" height="16" fill="{STOCKC}"/><text x="344" y="302" style="font-size:17px;fill:#111827">target stock</text>'
-    sc = 400 / 2300; tot = 0
-    for r, sk in enumerate(SKUS):
-        y = 356 + r * 108; owed = -BD["net"][sk][0]; tg = BD["target_units"][sk][0]; tot += owed + tg
-        g += f'<rect x="110" y="{y-18}" width="18" height="18" fill="{COL[sk]}"/><text x="138" y="{y}" style="font-size:23px;font-weight:700;fill:#111827">{sk}</text><text x="560" y="{y}" text-anchor="end" style="font-size:21px;fill:#111827">needs <tspan font-weight="700">{owed+tg:,.0f}</tspan></text>'
-        g += f'<rect x="110" y="{y+14}" width="{owed*sc}" height="36" fill="{WAITC}"/><rect x="{110+owed*sc+2}" y="{y+14}" width="{tg*sc}" height="36" fill="{STOCKC}"/>'
-        g += f'<text x="122" y="{y+39}" style="font-size:18px;font-weight:700;fill:#fff">{owed:,.0f}</text><text x="{110+owed*sc+12}" y="{y+39}" style="font-size:18px;font-weight:700;fill:#111827">{tg:,.0f}</text>'
-    g += '<line x1="110" y1="672" x2="560" y2="672" stroke="#e5e7eb" stroke-width="2"/>'
-    g += f'<text x="110" y="716" style="font-size:30px;font-weight:700;fill:#111827">{tot:,.0f} bikes needed</text><text x="110" y="756" style="font-size:30px;font-weight:700;fill:#111827">375 built a week</text>'
-    return g + '<text x="110" y="794" class="note" style="font-size:20px">The line runs full for a year. Someone waits.</text>'
-BX = lambda j: 740 + j * 82                         # 13 four-week blocks
-def blocks(y0, data, hh=150, ref=None):
+BX = lambda j: 680 + j * 87
+def blocks(y0, data, hh, ref=None):
     g = ""
     for j in range(13):
         top = y0
-        for sk in SKUS:
-            val = round(sum(data[sk][j * 4:j * 4 + 4]) / 4); h = val / 375 * hh; top -= h
-            g += f'<rect x="{BX(j)-34}" y="{top}" width="68" height="{h-1.5}" fill="{COL[sk]}"/>'
-            rv = ref and round(sum(ref[sk][j * 4:j * 4 + 4]) / 4)
-            if h >= 20 and rv and abs(val - rv) > 0.15 * rv: g += f'<text x="{BX(j)}" y="{top+h/2+6}" text-anchor="middle" style="font-size:16px;font-weight:700;fill:#fff">{val}</text>'
-    return g + f'<line x1="{BX(0)-40}" y1="{y0}" x2="{BX(12)+40}" y2="{y0}" stroke="#111827" stroke-width="2"/>'
-def rule_head(y, tag, text, result):
-    return (f'<text x="700" y="{y}" class="tag">{tag}</text><text x="700" y="{y+38}" style="font-size:25px;font-weight:700;fill:#111827">{text}</text>'
-            + f'<text x="1806" y="{y}" text-anchor="end" style="font-size:18px;font-weight:700;fill:#111827">{result}</text>')
+        for k in SKUS:
+            val = round(sum(data[k][j * 4:j * 4 + 4]) / 4); h = val / 375 * hh; top -= h
+            g += f'<rect x="{BX(j)-35}" y="{top}" width="70" height="{h-1.5}" fill="{COL[k]}"/>'
+            rv = ref and round(sum(ref[k][j * 4:j * 4 + 4]) / 4)
+            if h >= 19 and rv and abs(val - rv) > 0.15 * rv: g += txt(BX(j), top + h / 2 + 6, val, 15, "#fff", 700, "middle")
+    return g + f'<line x1="{BX(0)-40}" y1="{y0}" x2="{BX(12)+40}" y2="{y0}" stroke="{INK}" stroke-width="2"/>'
 def bracket(j0, j1, y, lab, col):
-    x0, x1 = BX(j0) - 34, BX(j1) + 34
-    return f'<path d="M{x0} {y} v8 h{x1-x0} v-8" fill="none" stroke="{col}" stroke-width="2.5"/><text x="{(x0+x1)/2}" y="{y+32}" text-anchor="middle" style="font-size:18px;font-weight:700;fill:{col}">{lab}</text>'
-def two_plans():
-    A = {sk: BD["builds"][sk][:52] for sk in SKUS}; B = sketch_B()
-    g = rule_head(262, "RULE A · TODAY", "Share the line so every bike is equally far below its target.", f"all three at target {sdate(T_TARGET)} 2027")
-    g += blocks(470, A)
-    avg = [round(sum(A[sk][1:52]) / 51 / 10) * 10 for sk in SKUS]
-    g += f'<text x="{(BX(0)+BX(12))/2}" y="500" text-anchor="middle" style="font-size:18px;fill:#111827">about {avg[0]} / {avg[1]} / {avg[2]} a week, all year</text>'
-    g += rule_head(528, "RULE B · A RANKED PRIORITY ORDER", "Serve waiting customers first, overdue orders ahead. Then rebuild stock one bike at a time.", "numbers where B differs from A")
-    g += blocks(736, B, ref=A)
-    for j in range(13): g += f'<text x="{BX(j)}" y="760" text-anchor="middle" style="font-size:15px;fill:#6b7280">{sdate(j*4+1)}</text>'
-    j9, j4 = (TURN_END["RW-9304"] - 1) // 4, (TURN_END["RW-4418"] - 1) // 4; jc = (T_CLEAR - 1) // 4
-    g += bracket(0, jc - 1, 772, "customers first", "#6b7280") + bracket(jc, j9 - 1, 772, f"RW-9304 · at target {sdate(TURN_END['RW-9304'])}", COL["RW-9304"])
-    g += bracket(j9, j4 - 1, 772, f"RW-4418 · at target {sdate(TURN_END['RW-4418'])}", COL["RW-4418"]) + bracket(j4, 12, 772, f"RW-6416 · {sdate(TURN_END['RW-6416'])}", COL["RW-6416"])
+    x0, x1 = BX(j0) - 35, BX(j1) + 35
+    return f'<path d="M{x0} {y} v7 h{x1-x0} v-7" fill="none" stroke="{col}" stroke-width="2.5"/>' + txt((x0 + x1) / 2, y + 26, lab, 16, col, 700, "middle")
+def plans(top):
+    g = tag(645, top, "Builds per week, four-week average")
+    lx = 1090
+    for k in SKUS:
+        g += f'<rect x="{lx}" y="{top-14}" width="15" height="15" fill="{COL[k]}"/>' + txt(lx + 22, top, k, 16, INK, 600); lx += 120
+    g += txt(1810, top, "labels: B differs from A by > 15%", 15, GREY, 400, "end")
+    hh = 104; ya = top + 22 + hh; yb = ya + 36 + hh
+    g += pill(645 - 44, ya - hh, hh, "A", INK) + blocks(ya, A_BUILDS, hh)
+    avg = [round(sum(A_BUILDS[k][1:52]) / 51 / 10) * 10 for k in SKUS]
+    g += txt((BX(0) + BX(12)) / 2, ya + 24, f"A: about {avg[0]} / {avg[1]} / {avg[2]} per week; all three at target {sdate(T_TARGET)} 2027", 15, GREY, 400, "middle")
+    g += pill(645 - 44, yb - hh, hh, "B", AMB) + blocks(yb, B_BUILDS, hh, ref=A_BUILDS)
+    g += "".join(txt(BX(j), yb + 20, sdate(j * 4 + 1), 14, GREY, 400, "middle") for j in range(13))
+    j9, j4, jc = (TURN_END["RW-9304"] - 1) // 4, (TURN_END["RW-4418"] - 1) // 4, (T_CLEAR - 1) // 4
+    yy = yb + 30
+    g += bracket(0, jc - 1, yy, "steps 1–2", GREY) + bracket(jc, j9 - 1, yy, f"step 3 · RW-9304 at target {sdate(TURN_END['RW-9304'])}", COL["RW-9304"])
+    g += bracket(j9, j4 - 1, yy, f"step 4 · RW-4418 at target {sdate(TURN_END['RW-4418'])}", COL["RW-4418"]) + bracket(j4, 12, yy, f"step 5 · {sdate(TURN_END['RW-6416'])}", COL["RW-6416"])
     return g
-def enc_box(x, w, head, lines_, note):
-    g = f'<rect x="{x}" y="874" width="{w}" height="128" rx="12" fill="#fff" stroke="{"#111827" if head[0] == "A" else AMB}" stroke-width="2.5"/>'
-    g += f'<text x="{x+22}" y="904" style="font-size:21px;font-weight:700;fill:#111827">{head}</text>'
-    for i, (kind, t) in enumerate(lines_):
-        y = 934 + i * 30
-        g += meq(x + 22, y, t, fs=22) if kind == "m" else f'<text x="{x+22}" y="{y}" style="font-size:18px;fill:#111827">{t}</text>'
-    return g
-SUB = lambda t: f'<tspan dy="7" style="font-size:14px">{t}</tspan><tspan dy="-7"> </tspan>'
-NET = f'({v("target", "k,t")} − {v("net", "k,t")})<tspan dy="-9" style="font-size:14px">+</tspan><tspan dy="9"> </tspan>÷ {v("demand", "k,t")}'
-p5 = page(5, "Two rules for a full line, and the build plans they give",
- '<text x="110" y="168" class="st">Slide 4 left the objective to the planner. Here it is filled in two ways. Bars are builds per week, averaged over four weeks.</text>'
- + rule(204) + context() + '<line x1="630" y1="232" x2="630" y2="810" stroke="#e5e7eb" stroke-width="2"/>' + two_plans() + rule(826)
- + '<text x="110" y="856" class="tag">HOW EACH RULE IS ENCODED · SAME VARIABLES, SAME CONSTRAINTS, A DIFFERENT OBJECTIVE</text>'
- + enc_box(110, 780, "A · one solve",
-           [("m", f'{v("gap", "k,t")} = {NET}'),
-            ("m", f'minimise  Σ{v("", "t")} max{v("", "k")} {v("gap", "k,t")}'),
-            ("t", "net = stock − open orders. One floor: the target.")], "")
- + enc_box(920, 890, "B · one solve per step, each held before the next",
-           [("m", f'floors:  {v("due")} = −(orders not yet due)   ·   {v("owed")} = 0   ·   {v("target")}'),
-            ("m", f'step {v("j")}:  minimise  Σ{v("", "t")} max{v("", "k in step")} ({v("floor")} − {v("net")})<tspan dy="-9" style="font-size:14px">+</tspan><tspan dy="9"> </tspan>÷ {v("demand")},  then hold it at its optimum'),
-            ("t", "steps here:  due, all bikes  →  owed, all  →  target: RW-9304  →  RW-4418  →  RW-6416  →  target, other lines")], "")
- + '<text x="110" y="1032" class="note" style="font-size:16px">Both plans are the solver’s: scenario A, and A with this priority order (scenario P1). Same variables and constraints; only the objective differs.</text>')
+p6 = page(6, "Priority orders", "Rule B (scenario P1) against rule A (scenario A), MTB carbon line.",
+          pipeline() + rule(512) + context(548) + vrule(560, 528, 924) + plans(548) + rule(950)
+          + txt(110, 998, f"No customer waiting from {sdate(T_CLEAR)} 2026 under both rules. Total built per week identical.", 23))
 
-def nets_B():
-    """Net inventory under rule B: opening + the solver's builds − the forecast, week by week."""
-    B = sketch_B(); out = {}
-    for sk in SKUS:
-        n = [BD["net_all"][sk][0]]
-        for t in range(1, 57): n.append(n[-1] + B[sk][t - 1] - BD["demand_all"][sk][t - 1])
-        out[sk] = n
-    return out
-GX = lambda j: 560 + j * 170                       # grid columns: opening, then 13 four-week periods
-def tint(hexcol, a): r, g_, b_ = (int(hexcol[i:i + 2], 16) for i in (1, 3, 5)); return f"rgb({int(255-(255-r)*a)},{int(255-(255-g_)*a)},{int(255-(255-b_)*a)})"
-RH = 27
-def pill(x, y, h, letter, col): return f'<rect x="{x}" y="{y}" width="26" height="{h}" rx="6" fill="{col}"/><text x="{x+13}" y="{y+h/2+6}" text-anchor="middle" style="font-size:16px;font-weight:700;fill:#fff">{letter}</text>'
-def grid_block(top, sk, role, A, B, nA, nB):
-    g = f'<rect x="110" y="{top-17}" width="18" height="18" fill="{COL[sk]}"/><text x="138" y="{top}" style="font-size:22px;font-weight:700;fill:#111827">{sk}</text><text x="250" y="{top}" class="note" style="font-size:18px">{role}</text>'
+# ================================================================ 7 · the planner's grid
+GX = lambda j: 560 + j * 170; RH = 27
+def grid_block(top, k, role):
+    g = f'<rect x="110" y="{top-17}" width="18" height="18" fill="{COL[k]}"/>' + txt(138, top, k, 22, INK, 700) + txt(250, top, role, 18, GREY)
     per = lambda arr, j: round(sum(arr[j * 8:j * 8 + 8]))
-    rows = [("Orders in (forecast)", [None] + [per(BD["demand_all"][sk], j) for j in range(7)], "ctx"),
-            ("Target stock", [round(BD["target_all"][sk][0])] + [round(BD["target_all"][sk][j * 8 + 7]) for j in range(7)], "ctx"),
-            ("built", [None] + [per(A[sk], j) for j in range(7)], "built"),
-            ("end of period: backlog (−) or stock", [round(nA[sk][0])] + [round(nA[sk][j * 8 + 8]) for j in range(7)], "net"),
-            ("built", [None] + [per(B[sk], j) for j in range(7)], "builtB"),
-            ("end of period: backlog (−) or stock", [round(nB[sk][0])] + [round(nB[sk][j * 8 + 8]) for j in range(7)], "net")]
-    tgt = rows[1][1]; builtA = rows[2][1]; y1 = top + 30
-    g += pill(110, y1 + 2 * RH - 19, 2 * RH - 4, "A", "#111827") + pill(110, y1 + 4 * RH - 19, 2 * RH - 4, "B", AMB)
+    rows = [("Orders in (forecast)", [None] + [per(BD["demand_all"][k], j) for j in range(7)], "ctx"),
+            ("Target stock", [round(BD["target_all"][k][0])] + [round(BD["target_all"][k][j * 8 + 7]) for j in range(7)], "ctx"),
+            ("built", [None] + [per(A_BUILDS[k], j) for j in range(7)], "built"),
+            ("end: backlog (−) or stock", [round(A_NET[k][0])] + [round(A_NET[k][j * 8 + 8]) for j in range(7)], "net"),
+            ("built", [None] + [per(B_BUILDS[k], j) for j in range(7)], "built"),
+            ("end: backlog (−) or stock", [round(B_NET[k][0])] + [round(B_NET[k][j * 8 + 8]) for j in range(7)], "net")]
+    tgt = rows[1][1]; y1 = top + 30
+    g += pill(110, y1 + 2 * RH - 19, 2 * RH - 4, "A", INK) + pill(110, y1 + 4 * RH - 19, 2 * RH - 4, "B", AMB)
     for r, (lab, vals, kind) in enumerate(rows):
-        y = y1 + r * RH
-        ctx = kind == "ctx"
-        g += f'<text x="{110 if ctx else 148}" y="{y}" style="font-size:17px;font-weight:{700 if kind == "net" else 400};fill:{"#6b7280" if ctx else "#111827"}">{lab}</text>'
+        y = y1 + r * RH; ctx = kind == "ctx"
+        g += txt(110 if ctx else 148, y, lab, 17, GREY if ctx else INK, 700 if kind == "net" else 400)
         for j, val in enumerate(vals):
             if val is None: continue
-            fill, col, w = None, ("#6b7280" if ctx else "#111827"), 400
+            fill, col, w = None, (GREY if ctx else INK), 400
             if kind == "net":
-                if val < 0: fill, col, w = tint(WAITC, 0.14), WAITC, 700
+                if val < 0: fill, col, w = tint(RED, 0.14), RED, 700
                 elif val >= tgt[j] - 1: fill, col, w = tint(GREEN, 0.14), GREEN, 700
                 else: fill = "#eef0f3"
             if fill: g += f'<rect x="{GX(j)-64}" y="{y-19}" width="128" height="{RH-3}" rx="4" fill="{fill}"/>'
             if kind == "net" and val >= tgt[j] - 1: g += f'<rect x="{GX(j)-64}" y="{y-19}" width="128" height="{RH-3}" rx="4" fill="none" stroke="{GREEN}" stroke-width="2"/>'
             g += f'<text x="{GX(j)+56}" y="{y}" text-anchor="end" class="cell" style="font-size:17px;font-weight:{w};fill:{col}">{val:,}</text>'
-    if sk == ORDER[-1]:                                    # rule B's last bike: the run of periods ending with no stock
-        vals = rows[5][1]; zs = [j for j, v in enumerate(vals) if v == 0]; y = y1 + 5 * RH
+    if k == SKUS[-1]:
+        vals = rows[5][1]; zs = [j for j, x in enumerate(vals) if x == 0]; y = y1 + 5 * RH
         if zs: g += f'<rect x="{GX(zs[0])-68}" y="{y-23}" width="{GX(zs[-1])-GX(zs[0])+136}" height="{RH+5}" rx="6" fill="none" stroke="{AMB}" stroke-width="2" stroke-dasharray="5 4"/>'
     return g
 def grid_head(y):
-    g = f'<text x="{GX(0)+56}" y="{y}" text-anchor="end" style="font-size:16px;font-weight:700;fill:#111827">opening</text>'
-    return g + "".join(f'<text x="{GX(j+1)+56}" y="{y}" text-anchor="end" style="font-size:16px;font-weight:700;fill:#111827">{sdate(j*8+1)} – {sdate(j*8+8)}</text>' for j in range(7))
-A_ = {sk: BD["builds"][sk][:56] for sk in SKUS}; B_ = sketch_B(); nA_ = {sk: BD["net_all"][sk] for sk in SKUS}; nB_ = nets_B()
-ROLE = {ORDER[0]: "first in rule B’s order", ORDER[1]: "second", ORDER[2]: "last"}
-p6 = page(6, "The two plans as a planner’s grid",
- '<text x="110" y="168" class="st">Eight-week periods. End of period = previous end + built − orders in. Once at target, every bike stays there.</text>'
- + rule(204)
- + pill(110, 222, 28, "A", "#111827") + '<text x="148" y="242" style="font-size:19px;fill:#111827"><tspan font-weight="700">Rule A · today.</tspan> Every bike equally far below its target.</text>'
- + pill(760, 222, 28, "B", AMB) + '<text x="798" y="242" style="font-size:19px;fill:#111827"><tspan font-weight="700">Rule B · ranked.</tspan> Customers first (overdue orders ahead), then stock for RW-9304, RW-4418, RW-6416 in turn.</text>'
- + grid_head(284)
- + "".join(grid_block(318 + i * 196, sk, ROLE[sk], A_, B_, nA_, nB_) + (rule(318 + i * 196 + 176) if i < 2 else "") for i, sk in enumerate(ORDER))
- + rule(892)
- + f'<rect x="110" y="910" width="40" height="22" rx="4" fill="{tint(WAITC, 0.14)}"/><text x="160" y="927" style="font-size:17px;fill:#111827">backlog</text>'
- + f'<rect x="260" y="910" width="40" height="22" rx="4" fill="#eef0f3"/><text x="310" y="927" style="font-size:17px;fill:#111827">stock, below target</text>'
- + f'<rect x="500" y="910" width="40" height="22" rx="4" fill="{tint(GREEN, 0.14)}" stroke="{GREEN}" stroke-width="2"/><text x="550" y="927" style="font-size:17px;fill:#111827">at target</text>'
- + f''
- + '<text x="110" y="970" class="st"><tspan class="b">A</tspan> lifts all three together. <tspan class="b">B</tspan> fills them in turn: RW-9304 and RW-4418 reach target 28 and 6 weeks sooner.</text>'
- + '<text x="110" y="1008" class="st"><tspan class="b">The price:</tspan> RW-6416 holds no stock until July, so any miss in its forecast reaches its customers.</text>'
- + '<text x="110" y="1044" class="note" style="font-size:17px">Both are the solver’s plans; the end rows follow from built and orders in.</text>')
-pages = [p1, p2, p3, p4, p5, p6]
+    return txt(GX(0) + 56, y, "opening", 16, INK, 700, "end") + "".join(txt(GX(j + 1) + 56, y, f"{sdate(j*8+1)} – {sdate(j*8+8)}", 16, INK, 700, "end") for j in range(7))
+ROLE = {SKUS[0]: "rule B, step 3", SKUS[1]: "rule B, step 4", SKUS[2]: "rule B, step 5"}
+at = {k: datetime.date.fromisoformat(RANKED_AT_TARGET[k]) for k in SKUS}
+p7 = page(7, "Build plans by period", "Eight-week periods. End of period = previous end + built − orders in.",
+          pill(110, 222, 28, "A", INK) + txt(148, 242, f'{B_("Rule A")} · one step: target, all SKUs, even', 19)
+          + pill(760, 222, 28, "B", AMB) + txt(798, 242, f'{B_("Rule B")} · due, owed, then target for RW-9304, RW-4418, RW-6416 in turn', 19)
+          + grid_head(284) + "".join(grid_block(318 + i * 196, k, ROLE[k]) + (rule(318 + i * 196 + 176) if i < 2 else "") for i, k in enumerate(SKUS))
+          + rule(892)
+          + f'<rect x="110" y="910" width="40" height="22" rx="4" fill="{tint(RED, 0.14)}"/>' + txt(160, 927, "backlog", 17)
+          + '<rect x="260" y="910" width="40" height="22" rx="4" fill="#eef0f3"/>' + txt(310, 927, "stock below target", 17)
+          + f'<rect x="490" y="910" width="40" height="22" rx="4" fill="{tint(GREEN, 0.14)}" stroke="{GREEN}" stroke-width="2"/>' + txt(540, 927, "at target", 17)
+          + f'<rect x="680" y="910" width="40" height="22" rx="4" fill="none" stroke="{AMB}" stroke-width="2" stroke-dasharray="5 4"/>' + txt(730, 927, "no stock, no backlog", 17)
+          + txt(110, 976, f'{B_("At target")} · A: all three {sdate(T_TARGET)} 2027 · B: RW-9304 {at["RW-9304"].day} {at["RW-9304"]:%b %Y}, RW-4418 {at["RW-4418"].day} {at["RW-4418"]:%b %Y}, RW-6416 {at["RW-6416"].day} {at["RW-6416"]:%b %Y}', 24)
+          + txt(110, 1012, f'{B_("Rule B")} · RW-6416 holds no stock from December 2026 to July 2027.', 24))
+
+pages = [p1, p2, p3, p4, p5, p6, p7]
 head = f'<!doctype html><html><head><meta charset="utf-8"><style>{CSS}</style></head><body>'
 (out / "object.html").write_text(head + "".join(pages) + "</body></html>")
 for i, p in enumerate(pages, 1): (out / f"p{i}.html").write_text(head + p + "</body></html>")
