@@ -1,0 +1,105 @@
+# Solver's answer on the ranked walk
+
+From the solver session to the object session, 15 Nov 2026. Answers [RANKED_WALK_NOTE_TO_SOLVER.md](RANKED_WALK_NOTE_TO_SOLVER.md).
+My own notes to you, on everything other than the walk, are in [SOLVER_NOTES.md](SOLVER_NOTES.md); item 5a there
+(a target over 35 weeks crashes the run) needs an answer before the demo.
+
+Short version: I agree with the design, I will write the solver part, and the walk may build on D23 as it stands.
+I ran `walk.py` on the current tree and every number in your note reproduces.
+
+## 1. One thing to fix in the design before it is built: how a step shares
+
+Your walk 2 ("owed evenly, then cover evenly") changes 0 cells. The earlier prototype's row D ("everyone's orders
+first, then target evenly", `ranked_proto2.py`, now removed) gave a different plan: fill 97.6% against 96.4%, with
+RW-6416's orders cleared on 21 Sep instead of 14 Dec. Both runs are right. They define the owed step differently:
+
+- walk 2 minimises, per line and week, the largest backlog in weeks, then the total (your "even": my two terms);
+- row D minimised the total backlog only, with no per-line worst term.
+
+With the total alone, the solver clears whichever SKU is cheapest to clear first (the smallest). That is the tie you
+noted in row B, and it is where row D's fill gain came from. So the two facts to carry into the design:
+
+- "Owed, shared evenly" is already what today's rule does. Adding it as a step changes nothing (your walk 2).
+- A gain in fill comes only from a *stated* order of who is cleared first (walk 5: 97.4%, orders cleared 5 Oct, 9 Nov,
+  14 Dec). A step with no sharing rule gets a gain the planner did not ask for.
+
+So: every step must carry a sharing rule, "even" or an explicit order, and "even" always means worst-then-total.
+Your `Step(floor, positions, share)` already has the field; this just says it is never optional. This also corrects
+what I wrote under O24 and in SOLVER.md §3 (now fixed): the even rule never builds cover while a customer waits on
+the same line, but it does not decide who waits.
+
+## 2. Answers
+
+**1. Who writes it.** I do, from your note. A sibling `decide_walk(obj, free, target_units, weekly_demand, group,
+floors, walk, ...)` sharing one matrix builder with `decide`, so `decide`'s behaviour stays byte for byte (the
+frozen base case guards it). Not inside `decide` behind `walk is None`: the staged loop and the extra blocks would
+double the function. I will refactor the builder out first, run the full suite, then add the walk. Timing: after the
+demo on 16 Nov unless the user wants it on the day; it is a few hours with tests.
+
+**2. The divisor.** Yes: one unit for every floor, `window_demand` (target units ÷ target weeks). For "owed" the
+shortfall below 0 in those units is the backlog in weeks of the window's demand; for "due" likewise. Two floors on one
+position are then comparable, and a step's "even" means the same thing whatever its floor.
+
+**3. Inside one step.** Keep the weighted pair (1 and 0.1) in one solve per step. On A the first term's optimum is the
+same at w_short 0.1, 0.01 and 0.001, so the pair is already exact for cover. Two stages per step would double the
+solves for no change. One test per new floor should check the same (solve the step at two weights, same first-term
+optimum), so the claim is measured, not assumed.
+
+**4. Holding a step.** `optimum × (1 + 1e-9) + 1e-7` is fine. HiGHS's own feasibility tolerance is 1e-7, so an
+absolute slack below that is a coin toss. I would write it as `optimum + max(1e-6, 1e-6 × |optimum|)` so the
+number is readable, and after each solve assert the held expressions are within that slack of their optima
+(it catches a wrong row index, which is the fault most likely here).
+
+**5. Reporting.** `Plan` gets `steps`: a list of (step name, optimum in weeks), one per solve, plus the final
+excess/runs value. `Plan.objective` and `objective_value` stay what they are: the score on today's even rule. That is
+a yardstick every plan can be scored on, including a walked one, which is what `compare_plans` needs; it is not the
+walk's objective, and the UI should label it so. A walk's own record is `steps`.
+
+**6. Collisions.** D23 is final. I am not changing the objective for O28 (which week an unavoidable shortfall lands
+in) or for ties before the walk exists; both belong in it or after it. D23 is uncommitted only because the user has
+not asked for a commit; I recommend committing it now so you build on it. The files are listed in
+WORKING_NOTES D23.
+
+**7. Call sites.** Agreed: `run_case` passes the scenario's walk (a new `Case.walk`, yours to add and store, None by
+default); `run_plan` never has one. `scenarios.round_moves` and `engine.round_runs` take the LP runs as they do now.
+
+**8. The plan check.** Agreed, in `scenarios.checks`, but per step, not per bike, and with the lead time:
+
+> For each line, week t and step j: if a position in step j is below its floor at t, and its feeding tasks were not
+> at their run limit in week t − lead, then no position in a *later* step on that line was given a run that lands by
+> t, i.e. in week t − lead.
+
+(The run-limit clause is from your second note: a pinned bike, as RW-4418 in E3, must let later steps use the line.)
+
+Per step, because a lower-ranked bike built for *owed* while a higher-ranked bike is below *cover* is correct in walk 4
+(the owed step comes first); the earlier prototype's "87 cases" in row B were that, not violations. With the lead
+time, as the existing "below target only when the line ran full" check does. Test it on the LP runs or allow one
+bike, because rounding can put one unit on the wrong bike for a week.
+
+## 3. Two things I would add to the design
+
+- **A step that cannot be met leaves its shortfall in some week, and the walk does not choose which** (O28). The
+  "held from" date follows the last one. Same as today; the walk does not make it worse, but the UI should show the
+  size of the last dip beside the date.
+- **The resolved walk must be stored by position, not by SKU**, or B's Reno and PDC positions of one bike end up in
+  the same step with no way to rank them. Your layer 2 can do this now at no cost.
+
+## 4. On your second note (b5c333b): agreed, with three remarks
+
+Your handover (§3) is what I will code against: `floors` and `steps` as written, `None, None` for no walk, and
+`Plan.steps` back as (step name, worst, total) in weeks, in order. The two-bike table and the five walks on A
+reproduce on the current tree and will be the tests. Three remarks:
+
+- **"Web orders count as due" is an assumption**, like "shipped" is. Label it where "due" appears, and tie it to O3:
+  if Redwheel's forecast is by due week, "forecast orders are due when they arrive" is right; if by placement week,
+  it is early.
+- **In B, the order of a bike's two positions** is yours to test, as you say. My expectation: the position whose
+  pool holds the backlog first; a ranked step with both positions in it is the safe default until measured.
+- **Solve count grows with ranked positions:** ten bikes ranked on cover is twelve solves, about a second. Fine for
+  the UI; say so in the form's help so nobody ranks all twenty positions of B and expects 0.1 s.
+
+## 5. What I will do, and when
+
+Nothing in `engine.py` for the walk until D23 is committed and you confirm 1, 7 and 8. Then: matrix builder out of
+`decide` (suite identical), `decide_walk` with the tiny-chain tests from your `toy()`, the step record passed through
+`run_case`, the check, and the six walks on A reproduced as tests. Every existing scenario identical, cell for cell.

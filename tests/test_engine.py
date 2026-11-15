@@ -67,15 +67,56 @@ def test_forward_sum():
     assert engine.forward_sum(demand, n).loc["A"].tolist() == [5, 7, 4]   # 2+3, 3+4, 4
 
 
+def test_forward_sum_reads_part_weeks_as_weeks_of_supply_does():
+    """A target of 1.5 weeks is the next week in full and half of the one after. Then a position holding exactly the
+    target has exactly the target's weeks of supply (before, n was cut to whole weeks: 1.5 read as 1)."""
+    demand = pd.DataFrame([[1, 2, 3, 4, 5]], index=["A"], columns=[1, 2, 3, 4, 5], dtype=float)
+    n = pd.DataFrame([[1.5, 0.5, 2.0]], index=["A"], columns=[1, 2, 3])
+    held = engine.forward_sum(demand, n)
+    assert held.loc["A"].tolist() == [3.5, 1.5, 9.0]                     # 2 + 3/2, 3/2, 4 + 5
+    assert np.allclose(rtn.weeks_of_supply(held, demand).values, n.values)
+
+
+def test_forward_sum_refuses_a_target_past_the_known_demand():
+    """Demand known to week 5. A 2-week target in week 3 reads week 5: fine. In week 4 it reads week 6: refused with the
+    position and week named, not a KeyError. A 1.5-week target in week 4 reads half of week 6: refused too."""
+    demand = pd.DataFrame([[1, 2, 3, 4, 5]], index=["A"], columns=[1, 2, 3, 4, 5], dtype=float)
+    assert engine.forward_sum(demand, pd.DataFrame([[2.0]], index=["A"], columns=[3])).at["A", 3] == 9
+    with pytest.raises(ValueError, match="A in week 4 reads demand to week 6"):
+        engine.forward_sum(demand, pd.DataFrame([[2.0]], index=["A"], columns=[4]))
+    with pytest.raises(ValueError, match="week 6"):
+        engine.forward_sum(demand, pd.DataFrame([[1.5]], index=["A"], columns=[4]))
+    assert engine.forward_sum(demand, pd.DataFrame([[1.0]], index=["A"], columns=[4])).at["A", 4] == 5
+
+
+def test_window_demand_is_target_units_over_target_weeks():
+    """30 units over a 15-week target: 2 a week, so 30 short is 15 weeks short and at target is 0. A window with no
+    demand, or a target of no weeks, is counted at the floor of 1 a week: never a division by zero."""
+    tu = pd.DataFrame([[30.0, 0.0, 0.0]], index=["A"], columns=[1, 2, 3])
+    n = pd.DataFrame([[15.0, 15.0, 0.0]], index=["A"], columns=[1, 2, 3])
+    assert engine.window_demand(tu, n).loc["A"].tolist() == [2.0, 1.0, 1.0]
+
+
+def test_a_series_divisor_is_the_same_number_every_week():
+    obj = tiny()
+    tgt = pd.DataFrame([[20, 20, 20, 20]], index=["A"], columns=[1, 2, 3, 4], dtype=float)
+    a = engine.decide(obj, ["make|A|L"], tgt, pd.Series({"A": 2.0}), pd.Series({"A": "L"}))
+    b = engine.decide(obj, ["make|A|L"], tgt, pd.DataFrame(2.0, index=["A"], columns=[1, 2, 3, 4]), pd.Series({"A": "L"}))
+    assert a.objective == pytest.approx(b.objective) and np.allclose(a.runs.values, b.runs.values)
+    with pytest.raises(ValueError, match="above zero"):
+        engine.decide(obj, ["make|A|L"], tgt, pd.DataFrame(0.0, index=["A"], columns=[1, 2, 3, 4]), pd.Series({"A": "L"}))
+
+
 # ---------------- Redwheel ----------------
 
 @pytest.fixture(scope="module")
 def plan(obj, m):
     demand = aux_fns.forecast_by_item(m)
-    tgt = engine.forward_sum(demand, aux_fns.target_wos(m, obj.weeks))
+    tw = aux_fns.target_wos(m, obj.weeks)
+    tgt = engine.forward_sum(demand, tw)
     free = list(obj.tasks.loc[obj.tasks["kind"] == "make", "task_id"])
     line = m["dim_sku"].set_index("sku")["line_id"]
-    p = engine.decide(obj, free, tgt, demand.loc[:, 1:121].mean(axis=1), line)
+    p = engine.decide(obj, free, tgt, engine.window_demand(tgt, tw), line)
     return p, rtn.levels(obj, p.runs), tgt, line
 
 
@@ -266,3 +307,48 @@ def test_transfer_rounding_keeps_to_a_run_limit_when_catching_up():
     lim = rtn.run_limits(obj).copy()
     lim.loc["move|A|F>D", 2] = 2
     assert sc.round_moves(replace(obj, run_max=lim), lp_moves, builds).loc["move|A|F>D"].tolist() == [5, 2, 1, 0]
+
+
+# ---------------- the divisor: the solver's weeks short is the planner's (D21, docs/SOLVER.md) ----------------
+
+def _shown_short(R, items):
+    """Weeks below target on the measure the planner sees: target weeks - weeks of supply, at least 0."""
+    w = list(range(1, len(R["obj"].weeks) + 1))
+    ix = [k for k in R["net"].index if k[0] in items]
+    return (R["target_wos"].loc[ix, w] - R["wos"].loc[ix, w]).clip(lower=0)
+
+
+def test_skus_on_a_full_line_are_level_on_the_weeks_of_supply_shown():
+    """Scenario A, MTB carbon: while its three SKUs are below target, the LP keeps them within 0.26 weeks of each other
+    on the planner's measure (0.10 on average). With the whole-plan mean as the divisor they were 1.87 weeks apart on
+    average, RW-9304 ahead: the solver levelled one measure and the planner was shown another."""
+    from redwheel import scenarios as sc
+    R = sc.run_case(sc.CASE_A)
+    shown = _shown_short(R, ["RW-4418", "RW-6416", "RW-9304"])
+    behind = (shown > 0).any(axis=0)
+    spread = (shown.max() - shown.min())[behind]
+    assert spread.mean() < 0.15 and spread.max() < 0.3
+    assert np.allclose(R["weekly_demand"].values, (R["target_units"] / R["target_wos"][R["target_units"].columns]).values)
+
+
+def test_a_part_week_target_is_the_one_the_planner_sees():
+    """A target of 15.5 weeks (the form allows half weeks): the plan's 'at target' and weeks of supply >= 15.5 agree in
+    every position-week. Before forward_sum read part weeks, the plan planned to 15 and 207 position-weeks it called at
+    target showed below."""
+    from redwheel import scenarios as sc, tunables as tn
+    R = sc.run_case(tn.apply(sc.CASE_A, [tn.make("target", group="mtb_carbon", weeks=15.5, **{"from": "2026-09-07"})]))
+    w = list(range(1, len(R["obj"].weeks) + 1))
+    wos, tw = R["wos"][w], R["target_wos"][w]
+    assert not (R["at_target"] & (wos < tw - 1e-6)).values.any()
+    assert not (~R["at_target"] & (wos > tw + 1e-6)).values.any()
+
+
+def test_a_window_with_no_demand_still_plans():
+    """RW-9324's orders cut 100% on every channel for 40 weeks: its target window holds no demand, the divisor is the
+    floor (1 a week), and the plan solves and passes every check."""
+    from redwheel import scenarios as sc, tunables as tn
+    R = sc.run_case(tn.apply(sc.CASE_A, [tn.make("demand", skus="RW-9324", channel="all", first="2026-09-07", weeks=40,
+                                                 percent=-100)]))
+    k = [p for p in R["positions"] if p[0] == "RW-9324"][0]
+    assert R["target_units"].at[k, 1] == 0 and R["weekly_demand"].at[k, 1] == 1.0
+    assert sc.checks(R)["pass"].all()

@@ -15,7 +15,7 @@ def r(obj, m):
     tu = engine.forward_sum(demand, tw)
     free = list(obj.tasks.loc[obj.tasks["kind"] == "make", "task_id"])
     line = m["dim_sku"].set_index("sku")["line_id"]
-    p = engine.decide(obj, free, tu, demand.loc[:, 1:121].mean(axis=1), line)
+    p = engine.decide(obj, free, tu, engine.window_demand(tu, tw), line)
     B = engine.round_runs(obj, p.runs)
     X = rtn.levels(obj, B)
     rep = aux_fns.target_report(m, obj, X, rtn.levels(obj), tu, tw, demand)

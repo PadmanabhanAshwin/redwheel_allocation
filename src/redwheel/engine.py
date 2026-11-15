@@ -12,9 +12,13 @@ Generic. The equation rows come from the object's arrows, exactly as in `rtn.lev
                 (level[r,0] is the opening level, moved to the right-hand side)
     target      net[s,t] + short[s,t] >= target_units[s,t]
                 net[s,t] - excess[s,t] <= target_units[s,t]
-    fairness    worst[g,t] >= short[s,t] / weekly_demand[s]   for s in g
+    fairness    worst[g,t] >= short[s,t] / weekly_demand[s,t]   for s in g
 
     minimise    w_worst * sum worst  +  w_short * sum short/weekly_demand  +  w_excess * sum excess/weekly_demand
+
+weekly_demand turns units into weeks. The plans use `window_demand`: target units / target weeks, the average
+demand over the weeks the target covers, so weeks short = target weeks x the share of the target missing.
+See docs/SOLVER.md.
 """
 from __future__ import annotations
 
@@ -36,22 +40,47 @@ class Plan:
     objective: float
 
 
-def objective_value(obj: rtn.RTN, runs: pd.DataFrame, target_units: pd.DataFrame, weekly_demand: pd.Series,
-                    group: pd.Series, w_worst: float = 1.0, w_short: float = 0.1, w_excess: float = 0.001) -> float:
+def window_demand(target_units: pd.DataFrame, target_weeks: pd.DataFrame, floor: float = 1.0) -> pd.DataFrame:
+    """Average weekly demand over each target window: target units / target weeks. position x t (1..H).
+
+    The divisor that turns units short into weeks short: weeks short = target weeks x the share of the target that
+    is missing. It agrees with weeks of supply (rtn.weeks_of_supply) at both ends of the window: a position with
+    nothing is N weeks short, one at target is 0. A window with less than `floor` units a week (e.g. demand cut to
+    zero) is counted at `floor`, so a shortfall there is never divided by zero and weighs at least as much per unit
+    as anywhere else."""
+    n = target_weeks.loc[target_units.index, target_units.columns].astype(float)
+    return (target_units / n.where(n > 0)).fillna(0.0).clip(lower=floor)
+
+
+def _per_week(weekly_demand: pd.Series | pd.DataFrame, index: pd.Index, weeks: list) -> pd.DataFrame:
+    """The divisor as position x week; a Series (one number per position) is the same every week. Must be > 0."""
+    if isinstance(weekly_demand, pd.Series):
+        d = weekly_demand.loc[index].to_numpy(float)
+        out = pd.DataFrame(np.repeat(d[:, None], len(weeks), axis=1), index=index, columns=weeks)
+    else:
+        out = weekly_demand.loc[index, weeks].astype(float)
+    if not (out.to_numpy() > 0).all():
+        raise ValueError("weekly demand must be above zero for every position and week (see window_demand)")
+    return out
+
+
+def objective_value(obj: rtn.RTN, runs: pd.DataFrame, target_units: pd.DataFrame,
+                    weekly_demand: pd.Series | pd.DataFrame, group: pd.Series, w_worst: float = 1.0,
+                    w_short: float = 0.1, w_excess: float = 0.001) -> float:
     """Score any plan on the LP's own objective: run it through the object, then
     w_worst * sum over groups and weeks of the largest shortfall (in weeks) in the group
     + w_short * total shortfall in weeks + w_excess * total stock above target in weeks."""
     items = list(target_units.index)
     net = rtn.net_position(obj, rtn.levels(obj, runs)).loc[items, target_units.columns]
-    d = weekly_demand[items]
-    short = (target_units - net).clip(lower=0).div(d, axis=0)
-    excess = (net - target_units).clip(lower=0).div(d, axis=0)
+    d = _per_week(weekly_demand, target_units.index, list(target_units.columns))
+    short = (target_units - net).clip(lower=0) / d
+    excess = (net - target_units).clip(lower=0) / d
     worst = short.groupby(group[items]).max()
     return float(w_worst * worst.values.sum() + w_short * short.values.sum() + w_excess * excess.values.sum())
 
 
 def lowest_cover_first(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame,
-                       weekly_demand: pd.Series) -> pd.DataFrame:
+                       weekly_demand: pd.Series | pd.DataFrame) -> pd.DataFrame:
     """The planner's rule (run-out-time priority), for comparison with the LP.
 
     Week by week, with no look-ahead: on each line, rank its SKUs by cover against target after this week's
@@ -67,11 +96,12 @@ def lowest_cover_first(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame
     demand = obj.arrivals.loc[orders].groupby(res.loc[orders, "item"]).sum()       # item x t
     net = rtn.net_position(obj, rtn.levels(obj))[0].astype(float).copy()          # opening net position
     runs = pd.DataFrame(0, index=free, columns=target_units.columns, dtype=int)
+    d = _per_week(weekly_demand, target_units.index, list(target_units.columns))
     for t in target_units.columns:
         net = net - demand[t]                                                      # this week's demand first
         for cap_id, tasks in cap_of.groupby(cap_of).groups.items():
             left = int(round(obj.arrivals.at[cap_id, t]))
-            cover = {k: (net[item_of[k]] - target_units.at[item_of[k], t]) / weekly_demand[item_of[k]] for k in tasks}
+            cover = {k: (net[item_of[k]] - target_units.at[item_of[k], t]) / d.at[item_of[k], t] for k in tasks}
             for k in sorted(tasks, key=lambda k: cover[k]):
                 need = int(np.ceil(max(0.0, target_units.at[item_of[k], t] - net[item_of[k]]) - 1e-9))
                 b = min(need, left)
@@ -118,20 +148,31 @@ def round_runs(obj: rtn.RTN, runs: pd.DataFrame) -> pd.DataFrame:
 
 
 def forward_sum(demand: pd.DataFrame, n: pd.DataFrame) -> pd.DataFrame:
-    """Units of demand in weeks t+1 .. t+n[s,t]. demand: item x t (1..T); n: item x t (1..H), whole weeks."""
+    """Units of demand in the n[s,t] weeks after week t: weeks t+1 .. t+k in full, k = floor(n), then the fraction
+    n - k of week t+k+1. demand: item x t (1..T); n: item x t (1..H), weeks >= 0, need not be whole.
+    The same reading as rtn.weeks_of_supply, so weeks of supply >= n exactly when net >= forward_sum."""
+    T = int(max(demand.columns))
     cum = demand.cumsum(axis=1)
     cum.insert(0, 0, 0.0)
     out = pd.DataFrame(index=n.index, columns=n.columns, dtype=float)
     for s in n.index:
         for t in n.columns:
-            out.at[s, t] = cum.at[s, t + int(n.at[s, t])] - cum.at[s, t]
+            v = float(n.at[s, t])
+            k = int(np.floor(v + 1e-9))
+            frac = v - k
+            if t + k + (frac > 1e-9) > T:
+                raise ValueError(f"target of {v:g} weeks for {s} in week {t} reads demand to week {t + k + (frac > 1e-9)}, "
+                                 f"but demand is known only to week {T}")
+            out.at[s, t] = cum.at[s, t + k] - cum.at[s, t] + (frac * demand.at[s, t + k + 1] if frac > 1e-9 else 0.0)
     return out
 
 
-def decide(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekly_demand: pd.Series,
+def decide(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekly_demand: pd.Series | pd.DataFrame,
            group: pd.Series, w_worst: float = 1.0, w_short: float = 0.1, w_excess: float = 0.001,
            positions: dict | None = None, w_run: float = 0.0) -> Plan:
     """free: task ids the LP may run. target_units: position x t (1..H). group: position -> fairness group.
+    weekly_demand: position x t (1..H), the units a week that turn units short into weeks short (`window_demand`);
+    a Series is one number per position, the same every week.
 
     A position is what a target is set on. By default there is one per item: all our inventory of the item
     minus all its orders. `positions` replaces that with {key: {resource_id: sign}}, e.g. one per (item, pool);
@@ -142,6 +183,7 @@ def decide(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekly_dem
     H = len(obj.weeks)
     res = obj.resources.reset_index(drop=True)
     items = list(target_units.index)
+    dv = _per_week(weekly_demand, target_units.index, list(range(1, H + 1))).to_numpy()    # dv[s, t-1]
     groups = sorted(group[items].unique())
     nF, nR, nI, nG = len(free), len(res), len(items), len(groups)
 
@@ -190,7 +232,6 @@ def decide(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekly_dem
     rows, cols, vals, b_ub = [], [], [], []
     k = 0
     for si, s in enumerate(items):
-        d = float(weekly_demand[s])
         g = groups.index(group[s])
         for t in range(1, H + 1):
             tgt = float(target_units.at[s, t])
@@ -203,17 +244,16 @@ def decide(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekly_dem
                 rows.append(k); cols.append(lvl(r, t)); vals.append(sg)
             rows.append(k); cols.append(exc(si, t)); vals.append(-1.0); b_ub.append(tgt); k += 1
             # short/d - worst <= 0
-            rows.append(k); cols.append(shrt(si, t)); vals.append(1.0 / d)
+            rows.append(k); cols.append(shrt(si, t)); vals.append(1.0 / dv[si, t - 1])
             rows.append(k); cols.append(wst(g, t)); vals.append(-1.0); b_ub.append(0.0); k += 1
     A_ub = sparse.csr_matrix((vals, (rows, cols)), shape=(k, n_var))
 
     # ---- objective ----
     c = np.zeros(n_var)
-    for si, s in enumerate(items):
-        d = float(weekly_demand[s])
+    for si in range(nI):
         for t in range(1, H + 1):
-            c[shrt(si, t)] = w_short / d
-            c[exc(si, t)] = w_excess / d
+            c[shrt(si, t)] = w_short / dv[si, t - 1]
+            c[exc(si, t)] = w_excess / dv[si, t - 1]
     c[o_worst:] = w_worst
     c[o_run:o_lvl] = w_run
 

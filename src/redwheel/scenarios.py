@@ -214,6 +214,7 @@ def run_case(case: Case) -> dict:
     item_target = aux_fns.target_wos(m | {"dim_policy": st["dim_policy"]}, obj.weeks)
     tw = pd.DataFrame({t: [item_target.at[k[0], t] for k in pos] for t in item_target.columns}, index=demand.index)
     tu = engine.forward_sum(demand, tw)
+    wd = engine.window_demand(tu, tw)               # units short -> weeks short, over the target's own window
     keys = list(pos)
     free = list(obj.tasks.loc[obj.tasks["kind"].isin(st["decides"]), "task_id"])
     limited = rtn.run_limits(obj).notna().any(axis=1)
@@ -221,12 +222,13 @@ def run_case(case: Case) -> dict:
     if inert:                                   # e.g. a limit on transfers in a scenario where the plan decides none
         raise ValueError(f"scenario {case.key}: a run limit on tasks the plan does not decide would change nothing: "
                          + ", ".join(inert))
-    lp = engine.decide(obj, free, tu.loc[keys], demand.loc[keys, list(range(1, H + 1))].mean(axis=1),
+    lp = engine.decide(obj, free, tu.loc[keys], wd.loc[keys],
                        pd.Series({k: sku.at[k[0], "line_id"] for k in keys}), positions=pos, w_run=1e-6)
     make_ids = [k for k in free if k.startswith("make|")]
     builds = engine.round_runs(obj, lp.runs.loc[make_ids])
     moves = round_moves(obj, lp.runs.loc[[k for k in free if k.startswith("move|")]], builds)
     R = _finish(case, m, obj, pool_def, pos, pd.concat([builds, moves]).astype(float), lp, demand, tw, tu)
+    R["weekly_demand"] = wd                         # the divisor the plan used: weeks short = units short / this
     R["change_report"] = change_report
     return R
 

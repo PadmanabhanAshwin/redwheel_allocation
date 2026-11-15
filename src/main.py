@@ -145,7 +145,7 @@ base                                                   # negative = weeks of bac
 target_units = engine.forward_sum(demand, target)
 free = list(tasks.loc[tasks.kind == "make", "task_id"])                 # ships and moves stay 0
 plan = engine.decide(obj, free, target_units,
-                     weekly_demand=demand.loc[:, 1:121].mean(axis=1),
+                     weekly_demand=engine.window_demand(target_units, target),   # weeks short = N x share missing
                      group=dim_sku.set_index("sku").line_id)            # fairness within a line
 
 X_plan = rtn.levels(obj, plan.runs)

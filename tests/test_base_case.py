@@ -2,7 +2,9 @@
 this fails. New behaviour must be opt-in; the base case stays the default run.
 
 Base case = builds decided on net inventory pooled across sites, no lead times in play,
-shipping and transfers not decided. Values recorded 2026-11-11.
+shipping and transfers not decided. Values recorded 2026-11-11. TIMING re-pinned 2026-11-15 for D21 (weeks short
+counted over the target window, docs/SOLVER.md): bikes move between weeks on a line, never between SKUs, so BUILT,
+the 278 weeks below target and every date are unchanged.
 """
 import numpy as np
 import pytest
@@ -12,8 +14,8 @@ from redwheel import aux_fns
 BUILT = {"RW-1378": 5586, "RW-2984": 9427, "RW-3980": 7163, "RW-4418": 21585, "RW-6416": 12934,
          "RW-7298": 3870, "RW-9304": 16267, "RW-9324": 631, "RW-9835": 6544, "RW-9901": 10422}
 # sum over weeks of (week number x units built): changes if any build moves to a different week
-TIMING = {"RW-1378": 320420, "RW-2984": 533185, "RW-3980": 354511, "RW-4418": 1450186, "RW-6416": 870204,
-          "RW-7298": 196828, "RW-9304": 989807, "RW-9324": 66033, "RW-9835": 327354, "RW-9901": 574465}
+TIMING = {"RW-1378": 320324, "RW-2984": 532983, "RW-3980": 354809, "RW-4418": 1447057, "RW-6416": 868307,
+          "RW-7298": 196824, "RW-9304": 994833, "RW-9324": 66033, "RW-9835": 327358, "RW-9901": 574465}
 
 
 @pytest.fixture(scope="module")

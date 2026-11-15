@@ -75,17 +75,19 @@ def test_event_1_remixes_the_skus_around_the_stoppage_but_not_the_line_total(A):
     """The line's total builds differ from A's only in weeks 26-28 and 53-57 (the stoppage and the catch-up). The mix of
     its three SKUs shifts around the stoppage: bikes move between SKUs, none are added. The other lines are identical,
     SKU by SKU. (The README says exactly this; an earlier note said every other week was built as in A, which holds for
-    the line's total, not for each SKU.)"""
+    the line's total, not for each SKU.) Re-pinned for D21 (weeks short over the target window): the re-mix is smaller
+    in weeks 25 and 29 and spread as swaps of at most 2 bikes over weeks 30-51 (31 bikes in all)."""
     R = sc.run_case(sc.CASE_E1)
     d = (by_sku(R) - by_sku(A)).astype(int)
     mtb = ["RW-4418", "RW-6416", "RW-9304"]
     assert (d.drop(index=mtb) == 0).all().all()
     total = d.loc[mtb].sum()
     assert list(total[total != 0].index) == [26, 27, 28, 53, 54, 55, 56, 57]
-    assert d.loc[mtb, 25].to_dict() == {"RW-4418": -9, "RW-6416": -6, "RW-9304": 15}            # the re-mix before the stoppage
-    assert d.loc[mtb, 29].to_dict() == {"RW-4418": -4, "RW-6416": -2, "RW-9304": 6}
+    assert d.loc[mtb, 25].to_dict() == {"RW-4418": -2, "RW-6416": -1, "RW-9304": 3}              # the re-mix before the stoppage
+    assert d.loc[mtb, 29].to_dict() == {"RW-4418": -1, "RW-6416": -1, "RW-9304": 2}
     quiet = [t for t in d.columns if t not in (25, 26, 27, 28, 29, *range(53, 58))]
-    assert d.loc[mtb, quiet].abs().max().max() <= 1                                              # elsewhere: one-bike swaps
+    assert d.loc[mtb, quiet].abs().max().max() <= 2                                              # elsewhere: small swaps
+    assert (d.loc[mtb, quiet].sum() == 0).all()                                                  # between SKUs, none added
 
 
 def test_event_2_demand_up(A):
@@ -133,6 +135,24 @@ def test_event_3_parts_late_the_plan_builds_ahead(A):
     all_checks_pass(R)
 
 
+def test_event_3_is_not_absorbed_under_bs_rules():
+    """The same event on scenario B (a week to build, web orders from the PDC, transfers planned): less room before the
+    gap, so 142 bikes cannot be made up and one position is short for one week inside the gap. Since D21 that is
+    RW-4418 at Reno in week 68 (20 Dec 2027), so all targets are held from 27 Dec 2027, not 27 Sep. (Before D21 the
+    same 142 bikes fell on RW-6416 and RW-9304 in week 60, giving 1 Nov: the objective does not prefer a week for an
+    unavoidable shortfall, and "held from" dates the last one; see docs/SOLVER.md.)"""
+    B = sc.run_case(sc.CASE_B)
+    R = sc.run_case(replace(sc.CASE_B, key="X", changes=sc.CASE_E3.changes))
+    assert str(sc.scorecard(B)["All targets held from"].date()) == "2027-09-27"
+    assert str(sc.scorecard(R)["All targets held from"].date()) == "2027-12-27"
+    H = len(R["obj"].weeks)
+    late = (R["target_units"] - R["net"][list(range(1, H + 1))]).clip(lower=0).loc[:, 56:].stack()
+    assert late[late > 1e-6].round(6).to_dict() == {("RW-4418", "RENO", 68): 142.0}      # the only shortfall after week 55
+    assert by_sku(R).loc["RW-4418", list(range(60, 68))].sum() == 0
+    assert int(R["builds"].values.sum()) == int(B["builds"].values.sum())            # the same bikes, at other times
+    all_checks_pass(R)
+
+
 def test_event_3_solved_a_second_way_gives_the_same_plan():
     """The run limit, against the same event written without one: a 'frames' capacity that RW-4418 uses one of per bike,
     with none arriving in weeks 60-67 and plenty otherwise. The two allow exactly the same plans, so the optimum must
@@ -151,7 +171,8 @@ def test_event_3_solved_a_second_way_gives_the_same_plan():
         tw = pd.DataFrame({t: [it.at[k[0], t] for k in pos] for t in it.columns}, index=demand.index)
         sku = m["dim_sku"].set_index("sku")
         free = list(obj.tasks.loc[obj.tasks["kind"].isin(st["decides"]), "task_id"])
-        return engine.decide(obj, free, engine.forward_sum(demand, tw), demand.loc[:, list(range(1, H + 1))].mean(axis=1),
+        tu = engine.forward_sum(demand, tw)
+        return engine.decide(obj, free, tu, engine.window_demand(tu, tw),
                              pd.Series({k: sku.at[k[0], "line_id"] for k in pos}), positions=pos, w_run=1e-6)
 
     limited = apply(base, list(sc.CASE_E3.changes))[0]

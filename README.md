@@ -16,7 +16,7 @@ pip install -e .
 ```bash
 python src/main.py             # run the pipeline (or cell by cell in VS Code)
 pytest                         # everything offline; live LLM tests: RUN_LLM_TESTS=1 pytest tests/test_llm_live.py
-streamlit run planner3/app.py --theme.primaryColor=#1F2933 --client.toolbarMode=viewer   # the compact planner (deck's look), being built
+streamlit run planner3/app.py --theme.primaryColor=#1F2933 --client.toolbarMode=viewer   # the compact planner (deck's look): Plan view
 streamlit run planner2/app.py  # the planner (scenario-first UI) — start here
 streamlit run app/app.py       # first UI: report pages per scenario
 streamlit run planner/app.py   # second UI: scenario workbench (kept for reference)
@@ -34,7 +34,7 @@ without them.
 | `src/main.py` | The pipeline as `# %%` cells, calling the modules below |
 | `src/redwheel/` | `config` · `utils` (helpers) · `read` (one reader per file) · `aux_fns` (Redwheel logic) · `rtn` (the generic object) · `changes` (edits to the object's numbers, generic) · `engine` (the LP) · `scenarios` · `priors` (the settings table and its validator) · `tunables` (every tunable, in one list, with its form) · `llm` (requests → checked edits; grounded answers) · `store` (saved scenarios) |
 | `tests/` | One file per layer: the generic object by hand, master data, Redwheel as the object, the solver, scenarios and settings, the LLM loop, the UIs |
-| `planner3/` | The compact planner, three views with one question each: Plan (built) · What-if · Model (next). `reading` (what the Plan view says, no Streamlit, tested against the engine) · `charts` · `theme` (the deck's palette and type) · `ask` (one Ask box). Same engine, scenarios and saved files as `planner2/` |
+| `planner3/` | The compact planner (the deck's look). Plan view: the date every target is held and what sets it, headline numbers, a planning grid (line capacity used, SKU weeks of supply, month by month), Build Plans, Summarized Plan, Plan by SKU. `reading` (what the view says; no Streamlit; tested against the engine) · `charts` (the grid) · `theme`. Same engine, scenarios and saved files as `planner2/` |
 | `planner2/` | The planner: `home` · `scenario` · `whatif` · `compare` pages; `components` (settings in plain words, the settings editor), `charts`, `facts` (what the LLM may answer from), `state` (scenarios, drafts, cached runs) |
 | `app/` | First UI: `app.py` (navigation) · `ui.py` (shared data and styling, also used by `planner2`) · `views/` (one file per page; four are reused as `planner2` reference pages) |
 | `planner/` | Second UI (scenario workbench), kept unchanged |
@@ -279,7 +279,7 @@ less stock in transit: stock counts in a position once it has arrived.
 
 | Form | On a level or a position | On a run | Status |
 |---|---|---|---|
-| **target** | weeks of supply: the position should cover the next N weeks of arrivals onto its order resources | – | built |
+| **target** | weeks of supply: the position should cover the next N weeks of arrivals onto its order resources (a part week counts that share of the week after) | – | built |
 | **cost** | orders left waiting; stock above target | a small cost per run | built, with fixed weights |
 | **max** | storage limit | route not used (max 0); a build limit over a date range | routing and "what the plan decides" built; dated limits **planned** |
 | **min** | safety stock | minimum build | not built |
@@ -333,7 +333,10 @@ Redwheel's priors:
 | stock above target | cost, weight 0.001 | assumption |
 | a bike built or moved | cost, weight 0.000001 | assumption: nothing is built or moved without need |
 
-Shortfall and stock above target are counted in weeks of the position's average demand.
+Shortfall and stock above target are counted in weeks of the position's demand over its target window
+(target units ÷ target weeks), so a week short on the plan is a week short on the weeks of supply the
+planner sees: exactly with nothing on hand and at target, closely in between. How the solver uses the
+object, what it minimises and what it does not decide: [docs/SOLVER.md](docs/SOLVER.md).
 
 ## Changes
 
@@ -448,12 +451,16 @@ In E1 nothing can be built ahead: in A the MTB carbon line already runs full eve
 7 Sep 2026 to 30 Aug 2027. So the plan makes up the 1,125 bikes lost in March exactly, in the five
 weeks from 6 Sep 2027, out of capacity that A leaves spare. The other three lines are built exactly
 as in A. On MTB carbon the line's total is the same as A's in every week except those eight, but the
-mix of its three SKUs shifts around the stoppage (week 25: RW-9304 +15, RW-4418 -9, RW-6416 -6; week
-29 smaller; one-bike swaps between SKUs in weeks 33–52, a tie the solver breaks differently). The line
+mix of its three SKUs shifts around the stoppage (week 25: RW-9304 +3, RW-4418 -2, RW-6416 -1; week
+29 smaller; swaps of at most 2 bikes between SKUs in weeks 30–51, 31 bikes in all). The line
 holds its targets from 4 Oct 2027, the week the catch-up ends.
 
-E3 is absorbed: the plan knows the frames are late, and the line has spare capacity in the weeks
-before, so it builds ahead and every target is held as in A. Shorter slips, and slips while the
+E3 is absorbed under A's rules: the plan knows the frames are late, and the line has spare
+capacity in the weeks before, so it builds ahead and every target is held as in A. The same event
+under B's rules (a week to build, web orders from the PDC) is not: the line has room two weeks
+later there, 142 bikes cannot be made up, and RW-4418 at Reno is that much short in the gap's last
+week, so all targets are held from 27 Dec 2027 instead of 27 Sep (tested). The effect of an event
+depends on the rules it meets. Shorter slips, and slips while the
 line is full, are absorbed too, by building the line's other bikes in the gap: in Redwheel the
 line's total capacity is the limit, not any one bike. The cost shows only in the objective (stock
 carried above target before the gap). E3 gives exactly the same optimum (objective, every run,

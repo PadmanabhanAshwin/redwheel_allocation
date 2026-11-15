@@ -433,15 +433,16 @@ def run_plan() -> dict:
     demand = forecast_by_item(m)
     tw = target_wos(m, obj.weeks)
     tu = engine.forward_sum(demand, tw)
+    wd = engine.window_demand(tu, tw)                                      # units short -> weeks short
     line = m["dim_sku"].set_index("sku")["line_id"]
     free = list(obj.tasks.loc[obj.tasks["kind"] == "make", "task_id"])     # ships, moves stay 0
-    lp = engine.decide(obj, free, tu, demand.loc[:, 1:H].mean(axis=1), line)
+    lp = engine.decide(obj, free, tu, wd, line)
     builds = engine.round_runs(obj, lp.runs)
     X, X_base = rtn.levels(obj, builds), rtn.levels(obj)
     net, net_base = rtn.net_position(obj, X), rtn.net_position(obj, X_base)
     wos = rtn.weeks_of_supply(net, demand).loc[tu.index]
     return {
-        "m": m, "obj": obj, "demand": demand, "target_wos": tw, "target_units": tu, "line": line,
+        "m": m, "obj": obj, "demand": demand, "target_wos": tw, "target_units": tu, "weekly_demand": wd, "line": line,
         "lp": lp, "builds": builds, "X": X, "X_base": X_base, "net": net, "net_base": net_base,
         "wos": wos, "wos_base": rtn.weeks_of_supply(net_base, demand).loc[tu.index],
         "report": target_report(m, obj, X, X_base, tu, tw, demand),
@@ -519,7 +520,7 @@ def compare_plans(r: dict) -> dict:
     obj, tu = r["obj"], r["target_units"]
     weeks = list(tu.columns)
     H = len(weeks)
-    wd = r["demand"].loc[:, 1:H].mean(axis=1)
+    wd = r["weekly_demand"]                     # the plan's own divisor, so all three are scored as the LP is
     free = list(obj.tasks.loc[obj.tasks["kind"] == "make", "task_id"])
     plans = {"LP plan": r["builds"],
              "Lowest-cover-first rule": engine.lowest_cover_first(obj, free, tu, wd),
@@ -539,7 +540,7 @@ def compare_plans(r: dict) -> dict:
             "Bikes built": int(runs.values.sum()),
             "Capacity respected": bool(X.values.min() >= -1e-9),
             "SKU-weeks below target": int((~ok).values.sum()),
-            "Shortfall (weeks of demand, summed)": float((tu - net).clip(lower=0).div(wd, axis=0).values.sum()),
+            "Shortfall (weeks of demand, summed)": float(((tu - net).clip(lower=0) / wd).values.sum()),
             "All targets held from": date[int(held.max())] if held.notna().all() else None,
             "On-time fill rate": float(on_time.values.sum() / flows["demand"].values.sum()),
             "LP objective (lower is better)": engine.objective_value(obj, runs, tu, wd, line),
