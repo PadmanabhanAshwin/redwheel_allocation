@@ -419,48 +419,47 @@ def scenarios_page():
     S = {k: DN[k]["scorecard"] for k in ("A", "R", "R+")}
     assert not DN["R"]["against_A"]["sku_totals_diff"] and not DN["R+"]["against_A"]["sku_totals_diff"]
     assert all(DN["R+"]["held_by_line"][ln] == DN["R"]["held_by_line"][ln] for ln in ("mtb-base", "road-base"))
-    assert all(DN["R+"]["held_by_line"][ln] > DN["R"]["held_by_line"][ln] for ln in ("mtb-carbon", "road-carbon"))
-    g = callouts([("94,429", "bikes built in A, R and R+, the same total per bike"),
-                  ("+2 weeks", "each step, until every order is cleared: 14 Dec → 28 Dec → 11 Jan"),
-                  ("Carbon lines only", "move from R to R+; the base lines keep R’s dates")])
+    g = callouts([("94,429", "bikes in each scenario; identical totals per bike"),
+                  ("+2 weeks", "per scenario on every date: orders cleared 14 Dec, 28 Dec, 11 Jan"),
+                  ("Carbon lines only", "shift from R to R+; base lines unchanged")])
     g += text_col(110, 400, [
-        ("Scenario context", ["The same network, solver and objective, run three times; each adds one fact about how bikes are made.",
-                              f'{B_("A")}: a bike ships in the week it is built.',
-                              f'{B_("R")}: one week to build, every line.',
+        ("Scenario context", ["One network, one solver, one objective; three settings of build time.",
+                              f'{B_("A")}: none. A bike ships in the week it is built.',
+                              f'{B_("R")}: one week, every line.',
                               f'{B_("R+")}: two weeks on carbon lines, one on base lines.']),
-        ("Assumptions", ["Build times are set by us: the data has none.",
-                         "Stock at Reno and the PDC is pooled against every order.",
-                         "The forecast is taken as exact."]),
-        ("Result notes", ["A build time moves when bikes arrive, not how many are built.",
-                          "R+ holds every target from 4 Oct 2027, four weeks after A."])])
+        ("Assumptions", ["Build times are assumed; the data holds none.",
+                         "Stock at Reno and the PDC serves every order.",
+                         "Forecast demand is taken as exact."]),
+        ("Result notes", ["Build time delays delivery; it does not change the quantity built.",
+                          "R+ is the plan: every target held from 4 Oct 2027."])])
     g += vrule(680, 376, 990)
-    # target held, by line: a bar from the plan's start to the week the line holds its target
-    x0, x1, w0, w1 = 900, 1700, 1, 60
-    X = lambda w: x0 + (w - w0) * (x1 - x0) / (w1 - w0)
-    g += txt(730, 400, B_("Target held, by line") + f'<tspan style="fill:{GREY}"> bar: 7 Sep 2026 to the week the line holds its target</tspan>', 19)
-    g += "".join(f'<rect x="{1440 + 100 * i}" y="{422}" width="16" height="16" fill="{SC_C[k]}"/>' + txt(1462 + 100 * i, 436, k, 16, INK, 700) for i, k in enumerate(("A", "R", "R+")))
-    yy = 470
-    g += "".join(f'<line x1="{X(w)}" y1="462" x2="{X(w)}" y2="{470 + 4 * 96 - 20}" stroke="{RULE_C}" stroke-width="1"/>' for w in (18, 35, 53))
-    for ln in LORDER:
-        g += txt(730, yy + 34, LNAME[ln], 18, INK, 700)
-        for i, k in enumerate(("A", "R", "R+")):
-            wk = WK_OF_DN(DN[k]["held_by_line"][ln]); y = yy + i * 24
-            g += f'<rect x="{x0}" y="{y}" width="{X(wk) - x0}" height="20" rx="3" fill="{SC_C[k]}"/>'
-            g += txt(X(wk) + 8, y + 15, fd(DW[wk]), 14, INK, 700 if k == "R+" else 400)
-        yy += 96
-    g += f'<line x1="{x0}" y1="462" x2="{x0}" y2="{yy - 20}" stroke="{LIGHT}" stroke-width="1.5"/>'
-    g += "".join(txt(X(w), yy - 2, lab, 14, GREY, 400, "middle") for w, lab in [(18, "Jan 2027"), (35, "May 2027"), (53, "Sep 2027")])
-    # compact table
+    # weeks of supply, MTB carbon, A / R / R+ against the 15-week target
+    sku = "RW-4418"; x0, x1, y0, y1 = 800, 1700, 450, 740; W1 = 60
+    X = lambda w: x0 + (w - 1) * (x1 - x0) / (W1 - 1); Y = lambda v: y1 - (v + 25) * (y1 - y0) / 42
+    g += txt(730, 400, B_("Weeks of supply, MTB carbon") + f'<tspan style="fill:{GREY}"> {sku}; below 0, customers waiting</tspan>', 19)
+    g += "".join(f'<line x1="{x0}" y1="{Y(v)}" x2="{x1}" y2="{Y(v)}" stroke="{RULE_C}" stroke-width="1"/>' + txt(x0 - 10, Y(v) + 5, f"{v}", 14, GREY, 400, "end") for v in (-20, -10, 0, 10))
+    g += f'<line x1="{x0}" y1="{Y(15)}" x2="{x1}" y2="{Y(15)}" stroke="{INK}" stroke-width="1.5" stroke-dasharray="6 5"/>' + txt(x0 - 10, Y(15) + 5, "target 15", 14, INK, 700, "end")
+    g += f'<line x1="{x0}" y1="{Y(0)}" x2="{x1}" y2="{Y(0)}" stroke="{LIGHT}" stroke-width="1.5"/>'
+    for k in ("A", "R", "R+"):
+        w = DN[k]["weeks_of_supply_mtb"][sku][:W1]
+        g += poly([(X(t), Y(v)) for t, v in zip(range(1, W1 + 1), w)], SC_C[k], 3 if k == "R+" else 2.5)
+        wt = WK_OF_DN(DN[k]["held_by_line"]["mtb-carbon"])
+        g += f'<circle cx="{X(wt)}" cy="{Y(15)}" r="6" fill="{SC_C[k]}" stroke="#fff" stroke-width="1.5"/>'
+    g += "".join(txt(X(t), y1 + 24, lab, 14, GREY, 400, "middle") for t, lab in [(1, "Sep 2026"), (18, "Jan 2027"), (35, "May 2027"), (53, "Sep 2027")])
+    g += "".join(f'<rect x="{1560 + 80 * i}" y="380" width="16" height="16" fill="{SC_C[k]}"/>' + txt(1582 + 80 * i, 394, k, 16, INK, 700) for i, k in enumerate(("A", "R", "R+")))
+    g += txt(x1, Y(15) - 10, "dot: the week the line holds its target", 13, GREY, 400, "end")
+    # table: every date, by line
     sc_ = ["A", "R", "R+"]
     rows = [("Every order cleared", [fd(D_(S[k]["Open orders cleared from"])) for k in sc_]),
             ("All targets held from", [fd(D_(S[k]["All targets held from"])) for k in sc_]),
-            ("On-time fill", [f'{100*S[k]["On-time fill rate"]:.1f}%' for k in sc_])]
-    xs = [1380, 1580, 1790]; ty = 880
-    g += rule(866, 730, 1810) + f'<rect x="1610" y="{ty - 2}" width="196" height="{28 * len(rows) + 40}" rx="8" fill="{tint(SC_C["R+"], .10)}"/>'
-    g += "".join(txt(x, ty + 20, h, 15, GREY, 700, "end") for x, h in zip(xs, ["A", "R", "R+"]))
+            ("On-time fill", [f'{100*S[k]["On-time fill rate"]:.1f}%' for k in sc_])] + \
+           [(f"Target held, {LNAME[ln]}", [fd(D_(DN[k]["held_by_line"][ln])) for k in sc_]) for ln in LORDER]
+    xs = [1380, 1580, 1790]; ty = 790
+    g += rule(780, 730, 1810) + f'<rect x="1610" y="{ty}" width="196" height="{24 * len(rows) + 40}" rx="8" fill="{tint(SC_C["R+"], .10)}"/>'
+    g += "".join(txt(x, ty + 20, h, 14, GREY, 700, "end") for x, h in zip(xs, sc_))
     for i, (lab, vals) in enumerate(rows):
-        y = ty + 50 + 28 * i
-        g += txt(730, y, lab, 17, INK, 700) + "".join(txt(x, y, v_, 17, INK, 700 if j == 2 else 400, "end") for j, (x, v_) in enumerate(zip(xs, vals)))
+        y = ty + 46 + 24 * i
+        g += txt(730, y, lab, 15, INK, 700 if i < 3 else 400) + "".join(txt(x, y, v_, 15, INK, 700 if j == 2 else 400, "end") for j, (x, v_) in enumerate(zip(xs, vals)))
     return g
 p5 = page(5, "Scenarios A, R and R+", "", scenarios_page())
 
