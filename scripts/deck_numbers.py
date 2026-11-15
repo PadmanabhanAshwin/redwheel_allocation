@@ -18,7 +18,7 @@ CASES = [sc.CASE_A, sc.CASE_B, sc.CASE_E1, sc.CASE_E2, sc.CASE_E3, sc.CASE_E4, s
          *sc.R_CASES.values()]
 PROVED = ["A", *sc.R_CASES]          # scenarios whose deliveries are checked against the most possible, every week
 LINES = ["road-base", "road-carbon", "mtb-base", "mtb-carbon"]
-STORY = {"motivates": "R", "hero": "R+", "live": ["R+E1", "R+E4", "R+C27", "R+C26"], "deck_only": ["B", "P1", "E5"],
+STORY = {"motivates": "R", "hero": "R+", "live": ["R+LD", "R+E4", "R+C27", "R+C26"], "deck_only": ["B", "P1", "E5"],
          "cut": ["E2"], "kept_for_reference": ["E1", "E3", "E4", "B+E3"],
          "why": "R is A with a week to build: a plant cannot ship a bike the week it is built. R+ gives the carbon "
                 "lines two weeks and the base lines one; it is the build plan. Neither build time is in the data."}
@@ -174,13 +174,17 @@ def r_rules(doc):
          and cleared("A") < cleared("R") < cleared(rp)),
         ("R+ takes two weeks from the line to stock on the carbon lines and one on the base lines",
          doc[rp]["build_weeks"] == {ln: (2 if "carbon" in ln else 1) for ln in LINES}),
-        ("R+E1 takes 3 weeks of 375 off MTB carbon and makes all 1,125 back; other lines identical; MTB carbon moves "
-         "as many weeks as E1 on A (4); orders cleared and fill as R+",
-         doc["R+E1"]["against_parent"]["bikes_built_diff"] == 0
-         and all(doc["R+E1"]["against_parent"]["mtb_carbon_line_weekly_diff"].get(t) == -375 for t in (26, 27, 28))
-         and sum(v for t, v in doc["R+E1"]["against_parent"]["mtb_carbon_line_weekly_diff"].items() if t > 28) == 1125
-         and doc["R+E1"]["against_parent"]["other_lines_identical"] and shift("R+E1", rp) == shift("E1", "A") == 4
-         and cleared("R+E1") == cleared(rp) and sc_("R+E1", "On-time fill rate") == sc_(rp, "On-time fill rate")),
+        ("R+LD takes 3 weeks of 375 off MTB carbon (2-16 Nov 2026) and makes all 1,125 back; other lines identical; "
+         "every lost bike is a late order, MTB carbon only, from 16 Nov 2026 (when the first would have landed) to "
+         "22 Feb 2027; orders cleared 1 Mar 2027",
+         doc["R+LD"]["against_parent"]["bikes_built_diff"] == 0
+         and all(doc["R+LD"]["against_parent"]["mtb_carbon_line_weekly_diff"].get(t) == -375 for t in (9, 10, 11))
+         and sum(v for t, v in doc["R+LD"]["against_parent"]["mtb_carbon_line_weekly_diff"].items() if t > 11) == 1125
+         and doc["R+LD"]["against_parent"]["other_lines_identical"]
+         and all(owed("R+LD", ln) == owed(rp, ln) for ln in LINES if ln != "mtb-carbon")
+         and [t for t, (a, b) in enumerate(zip(owed("R+LD", "mtb-carbon"), owed(rp, "mtb-carbon")), 1) if a != b] == list(range(11, 26))
+         and max(a - b for a, b in zip(owed("R+LD", "mtb-carbon"), owed(rp, "mtb-carbon"))) == 1125
+         and sc_("R+LD", "Open orders cleared from") == "2027-03-01"),
         ("R+E4 builds exactly the 300 it adds, all RW-4418; other lines identical; MTB carbon (1 week) and orders "
          "cleared (2 weeks) move as far as E4 on A",
          doc["R+E4"]["against_parent"]["sku_totals_diff"] == {"RW-4418": 300}
@@ -204,7 +208,7 @@ def r_rules(doc):
          and max(map(abs, late26[:17])) == 0 and min(late26[17:22]) > 0 and max(map(abs, late26[22:])) == 0
          and sc_(c26, "Open orders cleared from") == "2027-02-08"),
         ("a change never brings a line's date earlier than its parent's, on R+ too",
-         all(held(k)[ln] >= held(rp)[ln] for k in ("R+E1", "R+E4", c27, c26) for ln in LINES)),
+         all(held(k)[ln] >= held(rp)[ln] for k in ("R+LD", "R+E4", c27, c26) for ln in LINES)),
         ("A and every R scenario deliver the most any plan could by every week, on every line (gap 0, every solve certified)",
          all(doc[k]["deliveries"]["largest_gap_bikes"] <= 1e-6 and max(doc[k]["deliveries"]["certificate_worst"].values()) <= 1e-7
              and doc[k]["deliveries"]["weeks_checked"] == 121 and doc[k]["deliveries"]["lines_checked"] == 4 for k in PROVED)),

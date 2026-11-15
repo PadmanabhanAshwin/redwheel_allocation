@@ -125,13 +125,15 @@ what-if, not the plan.
 | A | nothing (ships the week it is built) | 94,429 | 6 Sep 2027 | 14 Dec 2026 | 96.4% |
 | **R** | a week to build, every line | 94,429 | 20 Sep 2027 | 28 Dec 2026 | 95.5% |
 | **R+** (the plan) | carbon lines 2 weeks, base lines 1 | 94,429 | 4 Oct 2027 | 11 Jan 2027 | 94.8% |
-| R+E1 | MTB carbon line down 3 weeks (1–15 Mar 2027) | 94,429 | 1 Nov 2027 (+4 weeks, as on A) | 11 Jan 2027 | 94.8% |
+| R+LD | MTB carbon line down 3 weeks (2–16 Nov 2026) | 94,429 | 1 Nov 2027 (+4 weeks) | 1 Mar 2027 (+7 weeks) | 93.3% |
 | R+E4 | a fleet order: 300 RW-4418, week of 9 Nov 2026 | 94,729 | 11 Oct 2027 (+1, as on A) | 25 Jan 2027 (+2, as on A) | 94.0% |
 | R+C27 | closed for Christmas: 20 + 27 Dec 2027 | 94,429 | 4 Oct 2027 | 11 Jan 2027 | 94.8% |
 | R+C26 | closed for Christmas: 21 + 28 Dec 2026 | 94,429 | 25 Oct 2027 | 8 Feb 2027 | 93.8% |
 
-**The live set, on R+:** line down, fleet order, then Christmas 2027 and Christmas 2026. Deck only: B, P1, E5 (lots of 50).
-Cut: E2. E1, E3 and E4 on A stay in the file for reference: R+E1 and R+E4 move exactly as far as E1 and E4 move A.
+**The live set, on R+:** line down (R+LD), fleet order (R+E4), then Christmas 2027 and Christmas 2026. Deck only: B, P1, E5 (lots of 50).
+Cut: E2. E1, E3 and E4 on A stay in the file for reference; R+E4 moves exactly as far as E4 moves A.
+
+**The line down, while customers wait (R+LD, moved from March to November at the user's call: more dynamic).** The line is full clearing the opening backlog, so every one of the 1,125 lost bikes becomes a late order, MTB carbon only, from 16 Nov 2026 (two weeks to build: the first missing bike would have landed then) to 22 Feb 2027, 11,750 bike-weeks. The line makes them back in winter, when demand is below its 375 a week. Every order cleared 1 Mar 2027, not 11 Jan. Chart `owed_by_line_by_week["mtb-carbon"]`, R+ against R+LD. (In March, the same stop only ate safety stock, down to 0.6 weeks of cover: no order late.)
 
 **Christmas, the pair that makes the point (one change each: every line's capacity 0 for two weeks):**
 - *2027, absorbed.* The lines have room in the autumn. Each line builds ahead as late as it can: the carbon lines run

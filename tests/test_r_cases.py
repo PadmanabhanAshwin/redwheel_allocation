@@ -59,15 +59,26 @@ def test_r_and_r_plus_pinned(runs):
     assert all(n == (2 if "carbon" in ln else 1) for ln, n in runs["R+"]["case"].build_weeks.items())
 
 
+def test_a_line_down_while_customers_wait_makes_them_wait_longer(runs):
+    R, base = runs["R+LD"], runs["R+"]
+    lb, lb0 = line_builds(R), line_builds(base)
+    assert lines_that_moved(R, base) == ["mtb-carbon"]
+    assert (lb.loc["mtb-carbon", 9:11] == 0).all() and (lb0.loc["mtb-carbon", 9:11] == 375).all()
+    assert lb.sum(axis=1).equals(lb0.sum(axis=1))                            # all 1,125 made back
+    d = owed(R) - owed(base)
+    assert np.abs(d.drop("mtb-carbon").values).max() == 0
+    late = d.loc["mtb-carbon"]
+    assert late[:10].abs().max() == 0 and (late[11:25] > 0).all() and late[26:].abs().max() == 0
+    assert int(late.max()) == 1125 and int(late.sum()) == 11750               # every lost bike is a late order
+    s = sc.scorecard(R)
+    assert day(s["Open orders cleared from"]) == "2027-03-01"
+    assert s["On-time fill rate"] == pytest.approx(0.93250, abs=1e-4)
+    assert held(R)["mtb-carbon"] == "2027-11-01"
+
+
 def test_events_on_r_plus_leave_the_footprint_they_leave_on_a(runs):
     base, s0 = runs["R+"], sc.scorecard(runs["R+"])
-    e1, e4 = sc.scorecard(runs["R+E1"]), sc.scorecard(runs["R+E4"])
-    # line down three weeks: MTB carbon four weeks later (A: 6 Sep -> 4 Oct 2027), orders and fill unchanged
-    assert lines_that_moved(runs["R+E1"], base) == ["mtb-carbon"]
-    assert e1["Bikes built"] == s0["Bikes built"]
-    assert day(e1["All targets held from"]) == "2027-11-01"
-    assert e1["Open orders cleared from"] == s0["Open orders cleared from"]
-    assert e1["On-time fill rate"] == pytest.approx(s0["On-time fill rate"], abs=1e-9)
+    e4 = sc.scorecard(runs["R+E4"])
     # a fleet order: exactly the 300 bikes more, MTB carbon a week later, orders two weeks later (as on A)
     assert lines_that_moved(runs["R+E4"], base) == ["mtb-carbon"]
     assert e4["Bikes built"] == s0["Bikes built"] + 300

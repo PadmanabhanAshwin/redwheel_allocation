@@ -195,7 +195,7 @@ divisor the plan used). `net`, `target_units`, `demand` and the shape of `builds
   (`engine.certificate`: primal violation, dual violation, duality gap), and the same objective from interior point.
 - `tests/test_engine.py` (ties): the tie-break on a case with real ties; no ties in A, E1, E4, P1, R+, R+C27
   (no run moves by more than the runs the hold tolerance buys at the run cost, + 0.5 bike: 1.88 on A, 2.35 on R+).
-- `tests/test_r_cases.py`: R and R+ pinned; R+E1 and R+E4 keep E1's and E4's footprints; the Christmas closure
+- `tests/test_r_cases.py`: R and R+ pinned; R+LD (line down 2–16 Nov 2026: every lost bike a late order, 16 Nov–22 Feb) and R+E4 (E4's footprint); the Christmas closure
   absorbed in 2027 (owed identical every week, 1,928 bikes built ahead) and not in 2026 (only MTB carbon, only
   4 Jan–1 Feb 2027); the most delivered by every week on R+, R+C26, R+C27; a plan built later shows a gap of 100.
 - `tests/test_base_case.py`: the frozen base plan (TIMING re-pinned for D23; BUILT, 278 and the dates unchanged).

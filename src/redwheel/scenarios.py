@@ -139,9 +139,11 @@ def _on_rp(key: str, name: str, summary: str, changes: tuple) -> Case:
 
 
 CLOSED = "the plant closed for Christmas"
-CASE_RP_E1 = _on_rp("R+E1", "Scenario R+ · MTB carbon line down three weeks",
-                    "Scenario R+, with the MTB carbon line down for the three weeks starting 1, 8 and 15 Mar 2027.",
-                    CASE_E1.changes)
+CASE_RP_LD = _on_rp("R+LD", "Scenario R+ · MTB carbon line down three weeks",
+                    "Scenario R+, with the MTB carbon line down for the three weeks starting 2, 9 and 16 Nov 2026, "
+                    "while its customers are still waiting for the opening backlog.",
+                    (Change("arrival", {"kind": "capacity", "location": "RENO/mtb-carbon"}, "set", 0, 9, 11,
+                            "MTB carbon line down, weeks of 2-16 Nov 2026"),))
 CASE_RP_E4 = _on_rp("R+E4", "Scenario R+ · a fleet order lands",
                     "Scenario R+, with a commercial order for 300 RW-4418 (MTB carbon, size M) on top of the forecast "
                     "in the week of 9 Nov 2026.", CASE_E4.changes)
@@ -155,7 +157,7 @@ CASE_RP_C26 = _on_rp("R+C26", "Scenario R+ · closed for Christmas 2026",
                      "lines are still clearing the open orders.",
                      (Change("arrival", {"kind": "capacity"}, "set", 0, 16, 17,
                              f"{CLOSED}, weeks of 21 and 28 Dec 2026"),))
-R_CASES = {c.key: c for c in (CASE_R, CASE_RP, CASE_RP_E1, CASE_RP_E4, CASE_RP_C27, CASE_RP_C26)}
+R_CASES = {c.key: c for c in (CASE_R, CASE_RP, CASE_RP_LD, CASE_RP_E4, CASE_RP_C27, CASE_RP_C26)}
 
 
 # ---------- pools: which stock faces which demand, read from the routing rule ----------
