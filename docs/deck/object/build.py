@@ -194,9 +194,9 @@ def nd(x, y, w, kind, name, task_=False, h=80):
 U2, M2 = 714, 880          # centre lines: upper (Columbus) and lower (Reno) rows
 s2_graph = (
     nd(110, M2 - 40, 230, "capacity", "MTB carbon line") + edge(340, M2, 386, M2, "−1", ly=M2 - 14) + nd(390, M2 - 40, 130, "", "make", True) + edge(520, M2, 566, M2, "+1", ly=M2 - 14)
-    + nd(570, M2 - 40, 230, "inventory", "RW-4418, Reno") + edge(800, M2, 1206, M2, "−1", lx=840, ly=M2 - 14) + nd(1210, M2 - 40, 170, "", "fulfil ×3", True) + edge(1380, M2, 1496, M2, "−1", ly=M2 - 14)
+    + nd(570, M2 - 40, 230, "inventory", "RW-4418, Reno") + edge(800, M2, 1206, M2, "−1", lx=840, ly=M2 - 14) + nd(1210, M2 - 40, 170, "", "fulfil ×3", True) + edge(1500, M2, 1384, M2, "−1", ly=M2 - 14)
     + edge(685, M2 - 40, 685, U2 + 44, "−1", lx=668, ly=(M2 + U2) / 2 + 8, anchor="end") + nd(620, U2 - 40, 130, "", "move", True)
-    + edge(750, U2, 896, U2, "+1, 1 wk", ly=U2 - 14) + nd(900, U2 - 40, 240, "inventory", "RW-4418, Columbus") + edge(1140, U2, 1206, U2, "−1", ly=U2 - 14) + nd(1210, U2 - 40, 170, "", "fulfil ×3", True) + edge(1380, U2, 1496, U2, "−1", ly=U2 - 14)
+    + edge(750, U2, 896, U2, "+1, 1 wk", ly=U2 - 14) + nd(900, U2 - 40, 240, "inventory", "RW-4418, Columbus") + edge(1140, U2, 1206, U2, "−1", ly=U2 - 14) + nd(1210, U2 - 40, 170, "", "fulfil ×3", True) + edge(1500, U2, 1384, U2, "−1", ly=U2 - 14)
     + f'<rect class="res" x="1500" y="{U2-40}" width="310" height="{M2-U2+80}" rx="16"/>' + txt(1520, U2 - 8, "order ×3", 15, GREY) + txt(1520, U2 + 22, "RW-4418", 21, INK, 700)
     + lines(1520, U2 + 62, ["web", "dealer", "commercial"], 19, INK, 28))
 p2 = page(2, "Redwheel resource–task network", "",
@@ -204,7 +204,6 @@ p2 = page(2, "Redwheel resource–task network", "",
           + s2_graph + txt(110, 974, "Edge label: amount per run; delay 0 unless shown. Each fulfil box stands for three tasks, one per channel.", 18, GREY))
 
 # ================================================================ 3 · network structures
-w3 = NUM["wk3"]
 def sres(x, c, kind, name, w, h=60):
     return f'<rect class="res" x="{x}" y="{c-h/2}" width="{w}" height="{h}" rx="12"/>' + txt(x + 13, c - 7, kind, 15, GREY) + txt(x + 13, c + 19, name, 19, INK, 700)
 def stk(x, c, name, w, h=54, fs=20):
@@ -213,44 +212,51 @@ def sar(x1, y1, x2, y2, lab="", lx=None, ly=None, anchor="middle", curve=False):
     d = f"M{x1} {y1} C{x1+30} {y1} {x2-36} {y2} {x2-4} {y2}" if curve else f"M{x1} {y1} L{x2-4} {y2}"
     lx = (x1 + x2) / 2 if lx is None else lx; ly = min(y1, y2) - 10 if ly is None else ly
     return f'<path class="wire" style="stroke-width:2" marker-end="url(#a)" d="{d}"/>' + (txt(lx, ly, lab, 19, AMB, 700, anchor) if lab else "")
-O = lambda op: f" {op} "; P_ = " + "; M_ = " − "; SUM_LE = lambda sub: f'Σ{v("", sub)}'
-tagA = lambda x, y, s, anchor="middle": txt(x, y, s, 18, AMB, 700, anchor)
+def sal(x1, y, x2, lab):   # right to left, arrowhead at x2
+    return f'<path class="wire" style="stroke-width:2" marker-end="url(#a)" d="M{x1} {y} L{x2+4} {y}"/>' + txt((x1 + x2) / 2, y - 10, lab, 19, AMB, 700, "middle")
+tagA = lambda x, y, s: txt(x, y, s, 18, AMB, 700, "middle")
 
-# the four structures, each alone
-CY = 382
-def dA(x, c): return stk(x, c, "make", 80) + sar(x+80, c, x+130, c, "+1") + sres(x+130, c, "inventory", "Reno, 25", 140) + sar(x+270, c, x+320, c, "−1") + stk(x+320, c, "move", 80)
-def dB(x, c): return (sres(x, c, "capacity", "MTB carbon", 150) + "".join(sar(x+150, c+d0, x+230, c+d1, curve=True) for d0, d1 in [(-12, -56), (0, 0), (12, 56)])
-                      + txt(x+172, c-40, "−1", 19, AMB, 700, "middle") + "".join(stk(x+230, c+dy, f"make {k}", 150, 44, 18) for dy, k in [(-56, "9304"), (0, "4418"), (56, "6416")]))
+# the four structures, each alone; every drawing is (width, f(left edge, centre line))
+CY, CW = 390, 425
+def dA(x, c): return stk(x, c, "make", 74) + sar(x+74, c, x+120, c, "+1") + sres(x+120, c, "inventory", "Reno, 25", 120) + sar(x+240, c, x+286, c, "−1") + stk(x+286, c, "move", 74)
+def dB(x, c): return (sres(x, c, "capacity", "MTB carbon", 145) + "".join(sar(x+145, c+d0, x+215, c+d1, curve=True) for d0, d1 in [(-12, -56), (0, 0), (12, 56)])
+                      + txt(x+166, c-40, "−1", 19, AMB, 700, "middle") + "".join(stk(x+215, c+dy, f"make {k}", 140, 44, 18) for dy, k in [(-56, "9304"), (0, "4418"), (56, "6416")]))
 def dC(x, c): return (sres(x, c-34, "capacity", "line", 130, 54) + sres(x, c+34, "inventory", "frames", 130, 54) + sar(x+130, c-34, x+230, c-9, "−1", ly=c-42, curve=True)
                       + sar(x+130, c+34, x+230, c+9, "−1", ly=c+58, curve=True) + stk(x+230, c, "make", 90))
-def dD(x, c): return stk(x, c, "move", 80) + sar(x+80, c, x+210, c, "+1, 1 wk") + sres(x+210, c, "inventory", "Columbus", 150)
-ALONE = [("Series", "dependency", dA, f'{SUM_LE("τ≤t")} {v("N", "move,τ")}{O("≤")}{v("X", "Reno,0")}{P_}{SUM_LE("τ≤t")} {v("N", "make,τ")}'),
-         ("Shared input", "competition", dB, f'{v("N", "9304,t")}{P_}{v("N", "4418,t")}{P_}{v("N", "6416,t")}{O("≤")}375'),
-         ("Joint input", "matching", dC, f'{v("N", "make,t")}{O("≤")}min( {v("line", "t")}, {v("frames", "t")} )'),
-         ("Delay", "lag", dD, f'{v("X", "transit,t")}{O("=")}{v("N", "move,t")}')]
+def dD(x, c): return stk(x, c, "move", 74) + sar(x+74, c, x+204, c, "+1, 1 wk") + sres(x+204, c, "inventory", "Columbus", 150)
+ALONE = [("Series", "dependency", dA, 360), ("Shared input", "competition", dB, 355), ("Joint input", "matching", dC, 320), ("Delay", "lag", dD, 354)]
 def alone():
     g = ""
-    for i, (h, eff, dg, rel) in enumerate(ALONE):
-        x = 110 + i * 435
-        g += txt(x, 262, f'{B_(h)} <tspan style="fill:{GREY}">·</tspan> <tspan style="fill:{AMB};font-weight:700">{eff}</tspan>', 26) + dg(x, CY) + meq(x, 492, rel, 26)
+    for i, (h, eff, dg, w) in enumerate(ALONE):
+        cx = 110 + i * CW + CW / 2
+        g += txt(cx, 270, f'{B_(h)} <tspan style="fill:{GREY}">·</tspan> <tspan style="fill:{AMB};font-weight:700">{eff}</tspan>', 26, INK, 400, "middle") + dg(cx - w / 2, CY)
+        g += vrule(110 + i * CW, 232, 490) if i else ""
     return g
 
-# combined: a bill of materials. bike = 1 frame + 2 wheels; frames bought on a 2-week lead time
-CA, CB = 690, 850
-def bom():
-    return (stk(110, CA, "buy", 80) + sar(190, CA, 320, CA, "+1, 2 wk") + tagA(255, CA + 38, "delay")
+# derived: kitting and component allocation (bike = 1 frame + 2 wheels; frames bought on a 2-week lead time)
+CA, CB = 700, 860
+def kitting():
+    return (txt(110, 592, "Kitting and component allocation", 24, INK, 700)
+            + stk(110, CA, "buy", 80) + sar(190, CA, 320, CA, "+1, 2 wk") + tagA(255, CA + 38, "delay")
             + sres(320, CA, "inventory", "frames", 150) + tagA(395, CA - 44, "series")
             + sres(320, CB, "inventory", "wheels", 150) + tagA(395, CB + 58, "shared input")
             + sar(470, CA - 4, 630, CA - 12) + sar(470, CA + 14, 630, CB - 14) + sar(470, CB - 14, 630, CA + 14) + sar(470, CB + 4, 630, CB + 12)
             + "".join(txt(x, y, l, 19, AMB, 700, "middle") for x, y, l in [(584, CA - 22, "−1"), (622, CA + 52, "−2"), (624, CB - 38, "−1"), (604, CB + 44, "−2")])
             + stk(630, CA, "make A", 120) + tagA(690, CA - 44, "joint input") + stk(630, CB, "make B", 120)
             + sar(750, CA, 820, CA, "+1") + sres(820, CA, "inventory", "bike A", 130) + sar(750, CB, 820, CB, "+1") + sres(820, CB, "inventory", "bike B", 130))
-ROWS = [f'{v("X", "frames,t")}{O("=")}{v("X", "frames,t−1")}{P_}{v("N", "buy,t−2")}{M_}{v("N", "A,t")}{M_}{v("N", "B,t")}{O("≥")}0',
-        f'{v("X", "wheels,t")}{O("=")}{v("X", "wheels,t−1")}{P_}{v("π", "wheels,t")}{M_}2{v("N", "A,t")}{M_}2{v("N", "B,t")}{O("≥")}0']
-p3 = page(3, "Network structures", "",
-          alone() + rule(560) + txt(110, 606, "Combined: bill of materials", 18, GREY, 700)
-          + bom() + meq(1090, 742, ROWS[0], 27) + meq(1090, 820, ROWS[1], 27)
-          + rule(958) + txt(110, 1006, "The balances share runs and weeks; the LP solves them together.", 23))
+
+# derived: order fulfilment, on the object (RW-4418 at Reno; each fulfil takes one bike and one open order)
+CM = (CA + CB) / 2; FR = [CM - 90, CM, CM + 90]
+def fulfilment():
+    g = (txt(1010, 592, "Order fulfilment", 24, INK, 700)
+         + stk(1010, CM, "make", 80) + sar(1090, CM, 1140, CM, "+1") + sres(1140, CM, "inventory", "RW-4418, Reno", 170)
+         + tagA(1225, CM - 44, "series") + tagA(1225, CM + 58, "shared input") + tagA(1475, FR[0] - 41, "joint input"))
+    for (y, d0, ly, ch) in zip(FR, (-12, 0, 12), (FR[0] - 16, CM - 10, FR[2] + 30), ("web", "dealer", "commercial")):
+        g += (sar(1310, CM + d0, 1420, y, curve=y != CM) + txt(1392, ly, "−1", 19, AMB, 700, "middle")
+              + stk(1420, y, "fulfil", 110, 50, 19) + sal(1610, y, 1530, "−1") + sres(1610, y, "order", ch, 160, 56))
+    return g
+
+p3 = page(3, "Network structures", "", alone() + rule(520) + kitting() + vrule(980, 560, 930) + fulfilment())
 
 # ================================================================ 5 · linear program
 SH = ["9304", "4418", "6416"]; OPEN_STOCK = {"9304": 10, "4418": 25, "6416": 15}
