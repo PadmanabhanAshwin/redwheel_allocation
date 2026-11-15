@@ -1,6 +1,6 @@
-"""The object deck: seven 1920x1080 slides as SVG in one HTML file.
+"""The object deck: six 1920x1080 slides as SVG in one HTML file.
 
-Usage: python3 build.py OUTDIR  ->  OUTDIR/object.html and OUTDIR/p1..p7.html; print object.html to PDF with Chrome.
+Usage: python3 build.py OUTDIR  ->  OUTDIR/object.html and OUTDIR/p1..p6.html; print object.html to PDF with Chrome.
 Data, read from this folder: base_mtb.json (dump_base.py, scenario A) and slide5_builds.json (the solver session,
 scenarios A and P1). Numbers that are not in those files are in NUM below; refresh them at the final run.
 
@@ -162,104 +162,77 @@ s1 = (
 p1 = page(1, "Planning system", "", s1)
 
 # ================================================================ 2 · Redwheel as an RTN
-COUNTS = [(NUM["resources"][0], "resources", ["40 inventory = 10 SKUs × {Reno, Columbus, in transit, dealers}", "30 order = 10 SKUs × {web, dealer, commercial}", "4 capacity = 4 lines"]),
-          (NUM["tasks"][0], "tasks", ["10 make = 10 SKUs, each on its line", "10 move = 10 SKUs × Reno → Columbus", "60 fulfil = 10 SKUs × 2 sites × 3 channels"]),
-          (NUM["edges"], "edges", ["make 2 × 10  +  move 4 × 10  +  fulfil 2 × 60"])]
-NODES = [("resource", "Inventory", "stock of a SKU at a location", "stock files"),
-         ("resource", "Order", "open orders of a SKU in a channel", "order files, forecast"),
-         ("resource", "Capacity", "builds available per week on a line", "capacity plan"),
-         ("task", "Make", "builds a SKU on its line", "part master"),
-         ("task", "Move", "Reno → Columbus, 1 week in transit", "assumed"),
-         ("task", "Fulfil", "ships a SKU from a site to a channel", "assumed")]
+BREAK = [(NUM["resources"][0], "resources", [("40", "inventory", "10 SKUs × {Reno, Columbus, in transit, dealers}"), ("30", "order", "10 SKUs × {web, dealer, commercial}"), ("4", "capacity", "one per line")]),
+         (NUM["tasks"][0], "tasks", [("10", "make", "one per SKU, on its line"), ("10", "move", "10 SKUs × Reno → Columbus"), ("60", "fulfil", "10 SKUs × 2 sites × 3 channels")]),
+         (NUM["edges"], "edges", [("20", "make", "2 per task"), ("40", "move", "4 per task"), ("120", "fulfil", "2 per task")])]
 def counts():
-    g = ""; y = 252
-    for n, lab, rows in COUNTS:
-        g += txt(110, y + 10, f"{n}", 40, INK, 700) + txt(110 + (50 if n < 100 else 74), y + 10, lab, 20)
-        g += lines(330, y - 4, rows, 17, GREY, 24)
-        y += 24 * len(rows) + 30
+    g = ""; y = 248
+    for n, lab, rows in BREAK:
+        g += txt(110, y, f"{n}", 34, INK, 700) + txt(110 + (46 if n < 100 else 66), y, lab, 22, INK, 600)
+        for i, (k, name, how) in enumerate(rows):
+            yy = y + 33 + i * 26
+            g += txt(196, yy, k, 19, INK, 700, "end") + txt(212, yy, name, 19) + txt(330, yy, how, 19, GREY)
+        y += 33 + 26 * (len(rows) - 1) + 46
     return g
+NODES = [("Inventory", "stock of a SKU at a location", "stock files"), ("Order", "open orders of a SKU in a channel", "order files, forecast"),
+         ("Capacity", "builds available per week on a line", "capacity plan")]
+TASKS = [("Make", "builds a SKU on its line", "part master"), ("Move", "Reno → Columbus; 1 week in transit", "assumed route"),
+         ("Fulfil", "ships a SKU from a site to a channel", "assumed routes")]
 def node_defs():
-    g = txt(960, 240, "Node", 16, GREY, 700) + txt(1100, 240, "Definition", 16, GREY, 700) + txt(1810, 240, "Source", 16, GREY, 700, "end")
-    for i, (kind, name, d, src) in enumerate(NODES):
-        y = 276 + i * 32
-        glyph = (f'<rect class="res" x="960" y="{y-16}" width="26" height="18" rx="6" style="stroke-width:2"/>' if kind == "resource"
-                 else f'<rect class="task" x="960" y="{y-16}" width="26" height="18" rx="3"/>')
-        g += glyph + txt(996, y, name, 18, INK, 700) + txt(1100, y, d, 18) + txt(1810, y, src, 17, GREY, anchor="end")
+    g = txt(1580, 250, "source", 16, GREY, 700)
+    for (head, rows, kind, y0) in [("Resource nodes", NODES, "res", 250), ("Task nodes", TASKS, "task", 420)]:
+        g += txt(960, y0, head, 18, INK, 700)
+        for i, (name, d, src) in enumerate(rows):
+            y = y0 + 40 + i * 34
+            g += (f'<rect class="res" x="960" y="{y-17}" width="28" height="20" rx="6" style="stroke-width:2"/>' if kind == "res"
+                  else f'<rect class="task" x="960" y="{y-17}" width="28" height="20" rx="3"/>')
+            g += txt(1004, y, name, 19, INK, 700) + txt(1120, y, d, 19) + txt(1580, y, src, 18, GREY)
     return g
 def nd(x, y, w, kind, name, task_=False, h=80):
     if task_: return f'<rect class="task" x="{x}" y="{y}" width="{w}" height="{h}" rx="8"/>' + txt(x + w / 2, y + h / 2 + 9, name, 24, "#fff", 700, "middle")
     return f'<rect class="res" x="{x}" y="{y}" width="{w}" height="{h}" rx="16"/>' + txt(x + 18, y + 30, kind, 15, GREY) + txt(x + 18, y + 60, name, 21, INK, 700)
-U2, M2 = 650, 830          # centre lines: upper (Columbus) and lower (Reno) rows
+U2, M2 = 714, 880          # centre lines: upper (Columbus) and lower (Reno) rows
 s2_graph = (
     nd(110, M2 - 40, 230, "capacity", "MTB carbon line") + edge(340, M2, 386, M2, "−1", ly=M2 - 14) + nd(390, M2 - 40, 130, "", "make", True) + edge(520, M2, 566, M2, "+1", ly=M2 - 14)
     + nd(570, M2 - 40, 230, "inventory", "RW-4418, Reno") + edge(800, M2, 1206, M2, "−1", lx=840, ly=M2 - 14) + nd(1210, M2 - 40, 170, "", "fulfil ×3", True) + edge(1380, M2, 1496, M2, "−1", ly=M2 - 14)
     + edge(685, M2 - 40, 685, U2 + 44, "−1", lx=668, ly=(M2 + U2) / 2 + 8, anchor="end") + nd(620, U2 - 40, 130, "", "move", True)
     + edge(750, U2, 896, U2, "+1, 1 wk", ly=U2 - 14) + nd(900, U2 - 40, 240, "inventory", "RW-4418, Columbus") + edge(1140, U2, 1206, U2, "−1", ly=U2 - 14) + nd(1210, U2 - 40, 170, "", "fulfil ×3", True) + edge(1380, U2, 1496, U2, "−1", ly=U2 - 14)
     + f'<rect class="res" x="1500" y="{U2-40}" width="310" height="{M2-U2+80}" rx="16"/>' + txt(1520, U2 - 8, "order ×3", 15, GREY) + txt(1520, U2 + 22, "RW-4418", 21, INK, 700)
-    + lines(1520, U2 + 64, ["web", "dealer", "commercial"], 19, INK, 30))
+    + lines(1520, U2 + 62, ["web", "dealer", "commercial"], 19, INK, 28))
 p2 = page(2, "Redwheel resource–task network", "",
-          counts() + vrule(920, 224, 470) + node_defs() + rule(500) + txt(110, 548, "Subgraph of one SKU, RW-4418", 18, GREY, 700)
-          + s2_graph + txt(110, 950, "Edge label: amount per run; delay 0 unless shown. Each fulfil box stands for three tasks, one per channel.", 18, GREY))
+          counts() + vrule(920, 224, 600) + node_defs() + rule(624) + txt(110, 664, "Subgraph of one SKU, RW-4418", 18, GREY, 700)
+          + s2_graph + txt(110, 974, "Edge label: amount per run; delay 0 unless shown. Each fulfil box stands for three tasks, one per channel.", 18, GREY))
 
-# ================================================================ 3 · the network over time
+# ================================================================ 3 · network structures
 w3 = NUM["wk3"]
-FLOW = {"make": [79, 143, 142], "other": [296, 232, 233], "ship": [104, 143, 142], "fc": [50, 50, 50],
-        "stock": [25, 0, 0, 0], "orders": [1310, 1256, 1163, 1071], "cap": 375}     # RW-4418, scenario A, weeks 0-3 (run_case: builds, flows)
-CARRY, RUN, ARR = GREY, AMB, "#2563eb"
-def tsp(s, c, w=400): return f'<tspan fill="{c}" font-weight="{w}">{s}</tspan>'
-XC = [470, 840, 1210, 1580]; YR = {"cap": 346, "stock": 572, "orders": 798}; CW, CH = 270, 90
-def cell(cx, cy, level, eq=None):
-    g = f'<rect class="res" x="{cx-CW/2}" y="{cy-CH/2}" width="{CW}" height="{CH}" rx="16"/>' + txt(cx, cy + (2 if eq else 13), f"{level:,}", 34, INK, 700, "middle")
-    return g + (txt(cx, cy + 34, eq, 17, INK, 400, "middle") if eq else "")
-def run_box(cx, cy, name, n): return f'<rect class="task" x="{cx-82}" y="{cy-25}" width="164" height="50" rx="8"/>' + txt(cx, cy + 8, f'{name}  <tspan font-weight="700" fill="#fff">{n}</tspan>', 20, "#d1d5db", 400, "middle")
-def vline(x, y1, y2, lab, up=False):
-    d = f"M{x} {y2} L{x} {y1+4}" if up else f"M{x} {y1} L{x} {y2-4}"
-    return f'<path class="wire" marker-end="url(#a)" d="{d}"/>' + txt(x + 12, (y1 + y2) / 2 + 7, lab, 18, AMB, 700)
-def s3():
-    g = ""
-    for row, (name, kind) in {"cap": ("MTB carbon line", "capacity · c = 0"), "stock": ("RW-4418 stock", "inventory · c = 1"), "orders": ("RW-4418 open orders", "order · c = 1")}.items():
-        g += txt(110, YR[row] - 4, name, 21, INK, 700) + txt(110, YR[row] + 22, kind, 17, GREY)
-    g += txt(XC[0], 236, "opening", 18, GREY, 700, "middle") + "".join(txt(XC[i], 236, f"week {i} · {sdate(i)}", 18, INK, 700, "middle") for i in (1, 2, 3))
-    g += cell(XC[0], YR["stock"], FLOW["stock"][0]) + cell(XC[0], YR["orders"], FLOW["orders"][0])
-    for i in (1, 2, 3):
-        cx = XC[i]; mk, ot, sh, fc = FLOW["make"][i-1], FLOW["other"][i-1], FLOW["ship"][i-1], FLOW["fc"][i-1]
-        st0, st1, od0, od1 = FLOW["stock"][i-1], FLOW["stock"][i], FLOW["orders"][i-1], FLOW["orders"][i]
-        g += cell(cx, YR["cap"], 0, f'{tsp(FLOW["cap"], ARR)} − {tsp(mk, RUN, 700)} − {tsp(ot, RUN)} = 0')
-        g += cell(cx, YR["stock"], st1, f'{tsp(st0, CARRY)} + {tsp(mk, RUN, 700)} − {tsp(sh, RUN, 700)} = {st1}')
-        g += cell(cx, YR["orders"], od1, f'{tsp(f"{od0:,}", CARRY)} + {tsp(fc, ARR)} − {tsp(sh, RUN, 700)} = {od1:,}')
-        g += f'<path d="M{cx} {YR["cap"]-CH/2-36} L{cx} {YR["cap"]-CH/2-4}" stroke="{ARR}" stroke-width="2.5" fill="none" marker-end="url(#a)"/>' + txt(cx + 10, YR["cap"] - CH / 2 - 14, "+375", 17, ARR, 700)
-        g += f'<path d="M{cx} {YR["orders"]+CH/2+34} L{cx} {YR["orders"]+CH/2+4}" stroke="{ARR}" stroke-width="2.5" fill="none" marker-end="url(#a)"/>' + txt(cx + 10, YR["orders"] + CH / 2 + 26, f"+{fc} forecast", 17, ARR, 700)
-        ym, yf = (YR["cap"] + YR["stock"]) / 2, (YR["stock"] + YR["orders"]) / 2
-        g += vline(cx, YR["cap"] + CH / 2, ym - 25, "−1") + run_box(cx, ym, "make", mk) + vline(cx, ym + 25, YR["stock"] - CH / 2, "+1")
-        g += vline(cx, YR["stock"] + CH / 2, yf - 25, "−1") + run_box(cx, yf, "fulfil", sh) + vline(cx, yf + 25, YR["orders"] - CH / 2, "−1", up=True)
-        for row in ("stock", "orders"):
-            g += f'<path d="M{XC[i-1]+CW/2} {YR[row]} L{cx-CW/2-4} {YR[row]}" stroke="{CARRY}" stroke-width="2.5" fill="none" marker-end="url(#a)"/>'
-    return g
-p3 = page(3, "The network over time", "",
-          s3() + rule(904)
-          + meq(110, 958, f'{v("X", "r,t")} = {tsp(v("c", "r") + v("X", "r,t−1"), CARRY)} + {tsp("Σ μ " + v("N"), RUN)} + {tsp(v("π", "r,t"), ARR)},   {v("X", "r,t")} ≥ 0', 32)
-          + txt(720, 950, f'{tsp("carried", CARRY, 700)} · {tsp("task runs", RUN, 700)} · {tsp("arrivals", ARR, 700)}', 19, INK)
-          + txt(720, 980, "One node per resource and week; every node balances. Scenario A: 74 × 121 = 8,954 nodes.", 18, GREY)
-          + txt(110, 1010, "Make runs: the solver. Fulfil runs: the shipping projection, oldest orders first. Other SKUs on the line: 296, 232, 233.", 16, GREY))
-
-# ================================================================ 4 · network structures
 dA = lambda x, c: tk(x, c, "make") + ar(x+130, c, x+200, c, "+1") + rn(x+200, c, "Reno stock", "25") + ar(x+400, c, x+470, c, "−1") + tk(x+470, c, "move")
 dB = lambda x, c: (rn(x, c, "MTB carbon line", "375 / wk", w=210) + "".join(ar(x+210, c+d0, x+330, c+d1, curve=True) for d0, d1 in [(-14, -58), (0, 0), (14, 58)])
-                   + "".join(tk(x+330, c+dy, f"make {k}", w=250, h=46, val=str(w3[k][0])) for dy, k in [(-58, "RW-4418"), (0, "RW-6416"), (58, "RW-9304")])
+                   + "".join(tk(x+330, c+dy, f"make {k}", w=250, h=46, val=str(w3[k][0])) for dy, k in [(-58, "RW-9304"), (0, "RW-4418"), (58, "RW-6416")])
                    + f'<text x="{x+270}" y="{c-52}" class="amt" style="font-size:21px" text-anchor="middle">−1</text>')
-dC = lambda x, c: (rn(x, c-44, "Line capacity", "available") + rn(x, c+44, "Frames on hand", "3") + ar(x+200, c-44, x+330, c-12, "−1", ly=c-44) + ar(x+200, c+44, x+330, c+12, "−1", ly=c+62) + tk(x+330, c, "make"))
-dD = lambda x, c: rn(x, c, "Reno, week t", "−1") + ar(x+200, c, x+270, c) + tk(x+270, c, "move") + ar(x+400, c, x+530, c, "+1, 1 wk") + rn(x+530, c, "Columbus, week t+1", "+1", w=260)
-def panel(px, py, shape, effect, diagram, l1, l2):
+dC = lambda x, c: (rn(x, c-44, "Line capacity", "10 / wk") + rn(x, c+44, "Frames on hand", "3") + ar(x+200, c-44, x+330, c-12, "−1", ly=c-44) + ar(x+200, c+44, x+330, c+12, "−1", ly=c+62) + tk(x+330, c, "make"))
+dD = lambda x, c: rn(x, c, "Reno stock", "week t") + ar(x+200, c, x+270, c, "−1") + tk(x+270, c, "move") + ar(x+400, c, x+530, c, "+1, 1 wk") + rn(x+530, c, "Columbus stock", "week t+1", w=230)
+def panel(px, py, shape, effect, term, diagram, ineq, note, evidence):
     return (txt(px, py, f'{B_(shape)}  <tspan style="fill:{GREY}">·</tspan>  <tspan style="fill:{AMB};font-weight:700">{effect}</tspan>', 28)
-            + diagram(px, py + 118) + txt(px, py + 232, l1, 22) + txt(px, py + 264, l2, 20, GREY))
-ws = " + ".join(str(w3[k][0]) for k in ["RW-4418", "RW-6416", "RW-9304"])
-p4 = page(4, "Network structures", "",
-          panel(110, 262, "Series", "dependency", dA, "Runs of move are bounded by Reno stock.", "Reno stock: 25 at opening, plus runs of make.")
-          + panel(1000, 262, "Shared input", "competition", dB, "Runs of the three make tasks sum to at most 375.", f"Week of 21 Sep 2026: {ws} = 375.")
-          + rule(578)
-          + panel(110, 640, "Joint input", "matching", dC, "Runs of make are bounded by the scarcer input.", f"Test case, frames on a 2-week lead time: builds {NUM['frames_test']}.")
-          + panel(1000, 640, "Delay", "lag", dD, "Output arrives θ weeks after the run.", "Counted as in-transit stock in between.")
-          + rule(960) + txt(110, 1010, "Each structure follows from the balance and X ≥ 0; none is a separate constraint.", 24))
+            + txt(px + 810, py, term, 18, GREY, 400, "end")
+            + diagram(px, py + 118) + meq(px, py + 232, ineq, 27) + txt(px, py + 262, note, 17, GREY) + txt(px, py + 292, evidence, 19))
+SUM_LE = lambda sub: f'Σ{v("", sub)}'
+O = lambda op: f" {op} "; P_ = " + "
+p3 = page(3, "Network structures", "",
+          panel(110, 262, "Series", "dependency", "material availability", dA,
+                f'{SUM_LE("τ≤t")} {v("N", "move,τ")}{O("≤")}{v("X", "Reno,0")}{P_}{SUM_LE("τ≤t")} {v("N", "make,τ")}',
+                "from X(Reno, t) ≥ 0: make adds +1, move takes −1, both at θ = 0", "RW-4418: opening stock 25 at Reno; every further move needs a make first")
+          + panel(1000, 262, "Shared input", "competition", "capacity allocation", dB,
+                  f'{v("N", "9304,t")}{P_}{v("N", "4418,t")}{P_}{v("N", "6416,t")}{O("≤")}375',
+                  "from X(line, t) = 375 − Σ N ≥ 0: c = 0, so unused capacity does not carry over", f'Scenario A, week of 21 Sep 2026: {w3["RW-9304"][0]} + {w3["RW-4418"][0]} + {w3["RW-6416"][0]} = 375')
+          + rule(588)
+          + panel(110, 646, "Joint input", "matching", "assembly, bill of materials", dC,
+                  f'{v("N", "make,t")}{O("≤")}min( line capacity, frames on hand )',
+                  "one edge per input, μ = −1 on each; the scarcer input sets the runs",
+                  f"Small example, 3 frames on hand, frames on a 2-week lead time: builds {NUM['frames_test']}")
+          + panel(1000, 646, "Delay", "lag", "lead time, pipeline stock", dD,
+                  f'{v("X", "transit,t")}{O("=")}{v("N", "move,t")}',
+                  "θ = 1 on two edges, transit −1 and Columbus +1: a run in week t reaches Columbus in t+1", f'Scenario B: {SC["B"]["scorecard"]["Bikes transferred to the PDC"]:,} bikes moved; {SC["B"]["scorecard"]["Average bikes in transit"]:.0f} in transit on average')
+          + rule(970) + txt(110, 1014, "Each relation follows from the balance and X ≥ 0; none is coded as a separate constraint.", 23))
 
 # ================================================================ 5 · linear program
 SH = ["9304", "4418", "6416"]; OPEN_STOCK = {"9304": 10, "4418": 25, "6416": 15}
@@ -312,7 +285,7 @@ def lp_panel():
     g += txt(1290, 848, "subject to steps 1 … j−1 at their optimum", 17, GREY)
     g += lines(1142, 890, ["net: stock − open orders · d: weekly demand over the target window", "f: −(orders not yet due), 0 or target · A = B with one step"], 15, GREY, 22)
     return g
-p5 = page(5, "Linear program", "MTB carbon line and its three SKUs, week of 7 Sep 2026.",
+p4 = page(4, "Linear program", "MTB carbon line and its three SKUs, week of 7 Sep 2026.",
           tag(110, 250, "Graph") + frag() + arrow_big(662, 420)
           + tag(730, 250, "Edge table") + edgetable() + arrow_big(1184, 420)
           + tag(1250, 250, "Balance rows") + grid(1250, 330)
@@ -385,7 +358,7 @@ def plans(top):
     g += bracket(0, jc - 1, yy, "steps 1–2", GREY) + bracket(jc, j9 - 1, yy, f"step 3 · RW-9304 at target {sdate(TURN_END['RW-9304'])}", COL["RW-9304"])
     g += bracket(j9, j4 - 1, yy, f"step 4 · RW-4418 at target {sdate(TURN_END['RW-4418'])}", COL["RW-4418"]) + bracket(j4, 12, yy, f"step 5 · {sdate(TURN_END['RW-6416'])}", COL["RW-6416"])
     return g
-p6 = page(6, "Priority orders", "Rule B (scenario P1) against rule A (scenario A), MTB carbon line.",
+p5 = page(5, "Priority orders", "Rule B (scenario P1) against rule A (scenario A), MTB carbon line.",
           pipeline() + rule(512) + context(548) + vrule(560, 528, 924) + plans(548) + rule(950)
           + txt(110, 998, f"No customer waiting from {sdate(T_CLEAR)} 2026 under both rules. Total built per week identical.", 23))
 
@@ -423,7 +396,7 @@ def grid_head(y):
     return txt(GX(0) + 56, y, "opening", 16, INK, 700, "end") + "".join(txt(GX(j + 1) + 56, y, f"{sdate(j*8+1)} – {sdate(j*8+8)}", 16, INK, 700, "end") for j in range(7))
 ROLE = {SKUS[0]: "rule B, step 3", SKUS[1]: "rule B, step 4", SKUS[2]: "rule B, step 5"}
 at = {k: datetime.date.fromisoformat(RANKED_AT_TARGET[k]) for k in SKUS}
-p7 = page(7, "Build plans by period", "Eight-week periods. End of period = previous end + built − orders in.",
+p6 = page(6, "Build plans by period", "Eight-week periods. End of period = previous end + built − orders in.",
           pill(110, 222, 28, "A", INK) + txt(148, 242, f'{B_("Rule A")} · one step: target, all SKUs, even', 19)
           + pill(760, 222, 28, "B", AMB) + txt(798, 242, f'{B_("Rule B")} · due, owed, then target for RW-9304, RW-4418, RW-6416 in turn', 19)
           + grid_head(284) + "".join(grid_block(318 + i * 196, k, ROLE[k]) + (rule(318 + i * 196 + 176) if i < 2 else "") for i, k in enumerate(SKUS))
@@ -435,7 +408,7 @@ p7 = page(7, "Build plans by period", "Eight-week periods. End of period = previ
           + txt(110, 976, f'{B_("At target")} · A: all three {sdate(T_TARGET)} 2027 · B: RW-9304 {at["RW-9304"].day} {at["RW-9304"]:%b %Y}, RW-4418 {at["RW-4418"].day} {at["RW-4418"]:%b %Y}, RW-6416 {at["RW-6416"].day} {at["RW-6416"]:%b %Y}', 24)
           + txt(110, 1012, f'{B_("Rule B")} · RW-6416 holds no stock from December 2026 to July 2027.', 24))
 
-pages = [p1, p2, p3, p4, p5, p6, p7]
+pages = [p1, p2, p3, p4, p5, p6]
 head = f'<!doctype html><html><head><meta charset="utf-8"><style>{CSS}</style></head><body>'
 (out / "object.html").write_text(head + "".join(pages) + "</body></html>")
 for i, p in enumerate(pages, 1): (out / f"p{i}.html").write_text(head + p + "</body></html>")
