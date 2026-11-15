@@ -1,4 +1,4 @@
-"""Per-bike weekly detail for the scenario slides (A, R, R+): builds, forecast and open orders, with each bike's line
+"""Per-bike weekly detail for the scenario slides (A, R, R+ and the four scenarios on R+): builds, forecast and open orders, with each bike's line
 and size. Every series is checked against docs/deck/deck_numbers.json (line totals, open orders by line, the scorecard
 dates); the script stops if any differs, so the charts can only show the file's plan.
 Usage: PYTHONPATH=src python dump_scenarios.py OUT.json"""
@@ -7,7 +7,7 @@ import pandas as pd
 from redwheel import scenarios as sc
 
 DN = json.load(open(pathlib.Path(__file__).parent.parent / "deck_numbers.json"))
-CASES = {"A": sc.CASE_A, "R": sc.CASE_R, "R+": sc.CASE_RP}
+CASES = {"A": sc.CASE_A, "R": sc.CASE_R, "R+": sc.CASE_RP, "R+C26": sc.CASE_RP_C26, "R+E4": sc.CASE_RP_E4, "R+E5": sc.CASE_RP_E5, "R+P1": sc.CASE_RP_P1}
 out = {"weeks": DN["_meta"]["weeks"]}
 for key, case in CASES.items():
     R = sc.run_case(case)
