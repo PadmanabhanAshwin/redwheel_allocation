@@ -1,8 +1,10 @@
-"""Scenarios: a case is a name plus a planning-priors table; the same network and solver run each one.
+"""Scenarios: a case is a name, a planning-priors table and a list of changes; the same object and solver run each.
 
-`run_case` reads only the table: lead times go into the network's delays, the routing rule defines which stock
-faces which demand (pools), targets set what the plan aims for, and the LP decides what the table says it decides.
-Scenario A, the base case, runs the same way and reproduces the frozen base plan exactly (tests/test_base_case.py).
+`run_case` builds the base object, applies the case's changes to it (a line down, a forecast revised: see
+`redwheel.changes`), and from then on reads only that object and the table: lead times go into the network's
+delays, the routing rule defines which stock faces which demand (pools), targets are read from the object's order
+arrivals, and the LP decides what the table says it decides. Scenario A, the base case, has no changes, runs the
+same way and reproduces the frozen base plan exactly (tests/test_base_case.py).
 """
 from __future__ import annotations
 
@@ -13,6 +15,8 @@ import numpy as np
 import pandas as pd
 
 from redwheel import aux_fns, engine, priors, rtn
+from redwheel import changes as ch
+from redwheel.changes import Change
 from redwheel.config import LINES
 
 SITES = ("RENO", "CMH")
@@ -27,6 +31,7 @@ class Case:
     priors: pd.DataFrame             # every setting the run uses (see redwheel.priors)
     summary: str = ""                # the scenario in one or two sentences
     parent: str = ""                 # the scenario this one was copied from
+    changes: tuple = ()              # changes to the object's numbers, applied in order (see redwheel.changes)
 
     @property
     def is_base(self) -> bool:
@@ -64,6 +69,21 @@ CASE_B = Case("B", "Scenario B · web via PDC, others direct",
                       "direct from Reno. A bike takes a week to build. The plan decides builds and transfers.")
 CASES = {c.key: c for c in (CASE_A, CASE_B)}
 
+# Events: scenario A's settings, with the world changed. Weeks are plan weeks (week 1 starts 7 Sep 2026).
+# Built in to the planner (planner2) beside A and B. Not in CASES, so the older UIs do not list them.
+CASE_E1 = Case("E1", "Scenario E1 · MTB carbon line down three weeks", CASE_A.priors,
+               summary="Scenario A, with the MTB carbon line down for the three weeks starting 1, 8 and 15 Mar 2027.",
+               parent="A",
+               changes=(Change("arrival", {"kind": "capacity", "location": "RENO/mtb-carbon"}, "set", 0, 26, 28,
+                               "MTB carbon line down for maintenance, weeks of 1-15 Mar 2027"),))
+CASE_E2 = Case("E2", "Scenario E2 · RW-4418 dealer demand up 30%", CASE_A.priors,
+               summary="Scenario A, with the dealer forecast for RW-4418 (MTB carbon, size M) up 30% for the weeks "
+                       "of 4 Jan to 29 Mar 2027.",
+               parent="A",
+               changes=(Change("arrival", {"kind": "order", "item": "RW-4418", "channel": "dealer"}, "scale", 1.3,
+                               18, 30, "dealer forecast for RW-4418 revised up 30%, weeks of 4 Jan-29 Mar 2027"),))
+EVENTS = {c.key: c for c in (CASE_E1, CASE_E2)}
+
 
 # ---------- pools: which stock faces which demand, read from the routing rule ----------
 
@@ -96,19 +116,6 @@ def position_levels(X: pd.DataFrame, pos: dict) -> pd.DataFrame:
     rows = {k: sum(sign * X.loc[rid] for rid, sign in signs.items()) for k, signs in pos.items()}
     out = pd.DataFrame(rows).T
     out.index = pd.MultiIndex.from_tuples(out.index, names=["item", "pool"])
-    return out
-
-
-def position_demand(m: dict, pool_def: dict) -> pd.DataFrame:
-    """Forecast per (item, pool) x week index (all forecast weeks): the channels the pool serves."""
-    cust = m["dim_location"].dropna(subset=["channel"]).set_index("channel")["location_id"]
-    t = m["dim_week"].set_index("week_start")["week_idx"]
-    f = m["fact_forecast"].assign(t=m["fact_forecast"]["week_start"].map(t),
-                                  customer=m["fact_forecast"]["channel"].map(cust))
-    pool_of = {c: name for name, p in pool_def.items() for c in p["customers"]}
-    f = f.assign(pool=f["customer"].map(pool_of))
-    out = f.pivot_table(index=["sku", "pool"], columns="t", values="forecast_units", aggfunc="sum")
-    out.index.names = ["item", "pool"]
     return out
 
 
@@ -185,6 +192,7 @@ def run_case(case: Case) -> dict:
     m = aux_fns.build_master()
     st = case.settings
     obj = aux_fns.build_object(m, st["build_weeks"], st["transfer_weeks"])
+    obj, change_report = ch.apply(obj, list(case.changes))      # the scenario's object; nothing below reads the base
     errs = priors.validate(case.priors, obj)
     if errs:
         raise ValueError(f"scenario {case.key}: " + "; ".join(errs))
@@ -192,7 +200,7 @@ def run_case(case: Case) -> dict:
     pool_def = pools(st["ship_routes"])
     sku = m["dim_sku"].set_index("sku")
     pos = positions(obj, pool_def)
-    demand = position_demand(m, pool_def)
+    demand = rtn.order_arrivals(obj, pos).rename_axis(["item", "pool"])      # read from the object, outlook included
     item_target = aux_fns.target_wos(m | {"dim_policy": st["dim_policy"]}, obj.weeks)
     tw = pd.DataFrame({t: [item_target.at[k[0], t] for k in pos] for t in item_target.columns}, index=demand.index)
     tu = engine.forward_sum(demand, tw)
@@ -203,7 +211,9 @@ def run_case(case: Case) -> dict:
     make_ids = [k for k in free if k.startswith("make|")]
     builds = engine.round_runs(obj, lp.runs.loc[make_ids])
     moves = round_moves(obj, lp.runs.loc[[k for k in free if k.startswith("move|")]], builds)
-    return _finish(case, m, obj, pool_def, pos, pd.concat([builds, moves]).astype(float), lp, demand, tw, tu)
+    R = _finish(case, m, obj, pool_def, pos, pd.concat([builds, moves]).astype(float), lp, demand, tw, tu)
+    R["change_report"] = change_report
+    return R
 
 
 # ---------- describing and scoring a case ----------

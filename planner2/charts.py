@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from redwheel import aux_fns
-from ui import (BAD_BG, CAP, CAPACITY, FORECAST, FQ_END, FQ_ORDER, GOOD_BG, H, HIGHLIGHT_BG, INK, LINES, LINE_NAME,
+from ui import (BAD_BG, CAPACITY, FORECAST, FQ_END, FQ_ORDER, GOOD_BG, H, HIGHLIGHT_BG, INK, LINES, LINE_NAME,
                 MUTED, ORDER, SIZE_COLOR, SIZE_RANK, SKU, SKUS_BY_LINE, WEEKS, cell, fmt_date, line_grid, m, obj,
                 pool_label, status_table, style)
 
@@ -19,6 +19,11 @@ MONTHS = MONTH.unique()
 X = [p.to_timestamp() for p in MONTHS]
 MONTH_END = [int(MONTH.index[MONTH == p].max()) for p in MONTHS]
 FY = WEEKS.dt.year - (WEEKS.dt.month < 9)
+
+
+def capacity(V, ln):
+    """A line's weekly capacity in this scenario: from the scenario's object, which a change may have edited."""
+    return V["R"]["obj"].arrivals.loc[f"capacity||RENO/{ln}", 1:H].to_numpy()
 
 
 def by_month(weekly):
@@ -90,7 +95,7 @@ def build_chart(V, key):
                         hovertemplate=f"{s} built: %{{y:,.0f}}<extra></extra>", **cell(i))
             total = total + y
             shown.add(size)
-        cap = by_month(CAP[ln])
+        cap = by_month(capacity(V, ln))
         fc = by_month(V["demand"].loc[sk].sum().to_numpy())
         fig.add_scatter(x=X, y=cap, name="capacity", mode="markers", legendgroup="c", legendrank=5, showlegend=first,
                         marker=dict(symbol="line-ew", size=16, line=dict(color=CAPACITY, width=2)),
@@ -270,11 +275,13 @@ def plan_reading(V) -> dict:
     for ln in LINES:
         full = (X.loc[f"capacity||RENO/{ln}", 1:H] < 0.5).astype(int)
         streak = int(full.cumprod().sum())
+        cap = capacity(V, ln)
+        none = int((cap[:streak] == 0).sum())                  # weeks in that run with no capacity at all
         rows = R["at_target"][R["line"].reindex(R["at_target"].index).values == ln]
         held = held_week(rows)
         lines[ln] = {"full_from_start_to": WEEKS[streak] if streak else None, "weeks_full": int(full.sum()),
-                     "held_from": WEEKS[held] if held else None,
-                     "used": float(V["built"].loc[SKUS_BY_LINE[ln]].values.sum() / CAP[ln].sum()),
+                     "no_capacity_weeks": none, "held_from": WEEKS[held] if held else None,
+                     "used": float(V["built"].loc[SKUS_BY_LINE[ln]].values.sum() / cap.sum()),
                      "below": int((~rows).values.sum())}
     dated = {ln: d["held_from"] for ln, d in lines.items() if d["held_from"] is not None}
     limit = max(dated, key=dated.get) if len(dated) == len(LINES) else None
@@ -294,7 +301,8 @@ def reading_text(V) -> list:
         out.append(f"The {r['backlog0']:,.0f} bikes on open orders at the snapshot are all shipped by "
                    f"**{fmt_date(r['cleared'])}**.")
     for ln, d in r["lines"].items():
-        run = (f"runs at full capacity from the start to w/c {fmt_date(d['full_from_start_to'])}"
+        run = (f"uses all its capacity from the start to w/c {fmt_date(d['full_from_start_to'])}"
+               + (f" (it has none in {d['no_capacity_weeks']} of those weeks)" if d["no_capacity_weeks"] else "")
                if d["full_from_start_to"] is not None else "has spare capacity from the first week")
         held = f"its SKUs hold target from {fmt_date(d['held_from'])}" if d["held_from"] is not None else \
             "its SKUs do not all hold target by the end"
@@ -342,7 +350,7 @@ def sku_facts(V, s) -> pd.DataFrame:
     """A SKU's position, plan and result, from the computed plan."""
     R = V["R"]
     op = m["opening_position"].set_index("sku")
-    on_hand = {site: float(obj.opening[f"inventory|{s}|{site}"]) for site in ("RENO", "CMH")}
+    on_hand = {site: float(R["obj"].opening[f"inventory|{s}|{site}"]) for site in ("RENO", "CMH")}
     rows = [("Line · size", f"{LINE_NAME[SKU.at[s, 'line_id']]} · {SKU.at[s, 'size']}"),
             ("In stock at the snapshot", f"{on_hand['RENO'] + on_hand['CMH']:,.0f}  (Reno {on_hand['RENO']:,.0f}, "
                                          f"PDC {on_hand['CMH']:,.0f})"),
@@ -373,9 +381,9 @@ def next_weeks(V, n: int = 12):
             rows.append({"Line": LINE_WORDS[ln], "SKU": s, "Size": SKU.at[s, "size"],
                          **dict(zip(cols, V["built"].loc[s, weeks].astype(int).tolist()))})
     builds = pd.DataFrame(rows)
-    use = pd.DataFrame({c: [f"{int(V['built'].loc[SKUS_BY_LINE[ln], t].sum()):,} / {int(CAP[ln][t - 1]):,}"
+    use = pd.DataFrame({c: [f"{int(V['built'].loc[SKUS_BY_LINE[ln], t].sum()):,} / {int(capacity(V, ln)[t - 1]):,}"
                             for ln in LINES] for c, t in zip(cols, weeks)},
                        index=pd.Index([LINE_WORDS[ln] for ln in LINES], name="Line"))
-    full = pd.DataFrame({c: [bool(V["built"].loc[SKUS_BY_LINE[ln], t].sum() >= CAP[ln][t - 1] - 0.5) for ln in LINES]
+    full = pd.DataFrame({c: [bool(V["built"].loc[SKUS_BY_LINE[ln], t].sum() >= capacity(V, ln)[t - 1] - 0.5) for ln in LINES]
                          for c, t in zip(cols, weeks)}, index=use.index)
     return builds, use, full

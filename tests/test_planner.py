@@ -177,3 +177,20 @@ def test_locked_scenarios_have_no_ask_box(planner):
     for key in sc.CASES:
         planner.sidebar.radio[0].set_value(key).run()
         assert not [t for t in planner.text_area if t.key == f"ask_{key}"]
+
+
+# ---------------- scenarios that carry changes ----------------
+
+def test_a_scenario_with_changes_runs_with_them_and_a_copy_keeps_them(tmp_path, monkeypatch):
+    """Same settings as A, MTB carbon line down three weeks: the planner must run it with the change (the cached run
+    is keyed on the changes too, so it cannot reuse A's result), and a copy must keep the change."""
+    from dataclasses import replace
+    monkeypatch.setattr(store, "FOLDER", tmp_path)
+    store.save(replace(sc.CASE_E1, key="C", name="Scenario C · line down"), tmp_path)
+    at = AppTest.from_file(str(PLANNER / "app.py"), default_timeout=180).run()
+    held = lambda: next(m.value for m in at.metric if m.label == "All targets held from")
+    assert held() == "6 Sep 2027"                                                   # A
+    at.sidebar.radio[0].set_value("C").run()
+    assert not at.exception and held() == "4 Oct 2027"                              # A's settings, line down
+    next(b for b in at.sidebar.button if b.label == "Copy this scenario").click().run()
+    assert store.load_all(tmp_path)["D"].changes == sc.CASE_E1.changes and held() == "4 Oct 2027"

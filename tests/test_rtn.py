@@ -176,3 +176,26 @@ def test_weeks_of_supply_by_hand():
     assert wos.at["A", 3] == pytest.approx(-7 / 8)     # backlog of 7 = 7/8 of week 4's demand
     capped = rtn.weeks_of_supply(pd.DataFrame([[100]], index=["A"], columns=[0]), demand)
     assert capped.at["A", 0] == 4                      # only 4 weeks of demand to cover
+
+
+def test_outlook_is_checked_like_the_rest_of_the_object():
+    """Arrivals known after the plan: weeks H+1..T, never negative, and only on order resources."""
+    from dataclasses import replace
+    obj = tiny()
+    ids = obj.resources["resource_id"]
+    good = pd.DataFrame(0.0, index=ids, columns=[5, 6])
+    good.loc["order|A|C"] = [2, 1]
+    with_outlook = replace(obj, outlook=good)
+    rtn.validate(with_outlook)
+    assert list(rtn.arrivals_all(with_outlook).columns) == [1, 2, 3, 4, 5, 6]
+    assert rtn.arrivals_all(obj).equals(obj.arrivals)                         # no outlook: the plan weeks only
+    for bad in (good.set_axis([6, 7], axis=1),                                # must start at H + 1
+                good.assign(**{"5": 1.0}).rename(columns={"5": 8}),           # weeks must be consecutive
+                good.mul(-1),                                                 # never negative
+                good.iloc[::-1]):                                             # indexed like the resources
+        with pytest.raises(ValueError):
+            rtn.validate(replace(obj, outlook=bad))
+    on_capacity = good.copy()
+    on_capacity.loc["capacity||L", 5] = 10
+    with pytest.raises(ValueError, match="not an order"):
+        rtn.validate(replace(obj, outlook=on_capacity))

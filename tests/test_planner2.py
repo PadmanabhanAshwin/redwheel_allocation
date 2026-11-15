@@ -68,11 +68,13 @@ def test_home_shows_every_scenario_and_opens_one(folder):
 
 def test_every_tab_of_every_built_in_scenario(folder):
     at = start("scenario.py")
-    for k in sc.CASES:
+    built_in = {**sc.CASES, **sc.EVENTS}                       # A, B and the two events on A
+    for k in built_in:
         at.selectbox(key="_current").set_value(k).run()
         ok(at)
-        assert at.title[0].value == sc.CASES[k].name
-        assert [t.label for t in at.tabs] == ["Summary", "Builds", "Inventory", "SKU detail", "Settings"]
+        assert at.title[0].value == built_in[k].name
+        assert [t.label for t in at.tabs] == ["Summary", "Builds", "Inventory", "SKU detail", "Events", "Settings"]
+    at.selectbox(key="_current").set_value("B").run()
     at.selectbox(key="_compare_to").set_value("A").run()
     ok(at)
     assert metric(at, "All targets held from") == "27 Sep 2027"
@@ -283,3 +285,91 @@ def test_example_questions_fill_the_ask_boxes(folder):
     at.button(key="cmpex_1").click().run()
     ok(at)
     assert at.text_area(key="cmp_q").value == "Which settings explain most of the difference?"
+
+
+# ---------------- scenarios that carry changes ----------------
+
+def test_a_scenario_with_changes_runs_with_them_and_a_what_if_keeps_them(folder):
+    """Same settings as A, MTB carbon line down three weeks. The planner must run it with the change (not reuse A's
+    cached result); a what-if started from it changes settings and keeps the change, preview included."""
+    from dataclasses import replace
+    store.save(replace(sc.CASE_E1, key="C", name="Scenario C · line down"), folder)
+    at = start("scenario.py")
+    assert metric(at, "All targets held from") == "6 Sep 2027"                      # A
+    at.selectbox(key="_current").set_value("C").run()
+    ok(at)
+    assert metric(at, "All targets held from") == "4 Oct 2027"
+    at.button(key="sc_whatif").click().run()
+    at.switch_page("whatif.py").run()
+    ok(at)
+    widget(at.number_input, "Build · Road · base").set_value(1).run()
+    assert metric(at, "Targets held from") == "4 Oct 2027"                          # preview: line still down
+    button(at, "Create and run scenario").click().run()
+    ok(at)
+    saved = store.load_all(folder)
+    assert saved["D"].changes == sc.CASE_E1.changes and saved["D"].build_weeks["road-base"] == 1
+
+
+def test_the_plan_run_is_what_is_cached(folder):
+    """The cache must sit on the run (keyed on settings and changes), never on a helper keyed by scenario letter: a
+    letter can mean another scenario later (delete C, create a new C), and a stale result would then be shown."""
+    start()                                                       # imports the planner's modules
+    import planner2.state as p2s
+    import planner.state as p1s
+    assert hasattr(p2s._run, "clear") and not hasattr(p2s.changes_json, "clear")
+    assert hasattr(p1s._run, "clear")
+
+
+# ---------------- what the pages show for a scenario with changes ----------------
+
+@pytest.fixture(scope="module")
+def views():
+    """Views of A, E1 (line down) and a stock correction, as the planner draws them."""
+    import sys
+    sys.path[:0] = [str(ROOT), str(ROOT / "app")]
+    from dataclasses import replace
+    from redwheel.changes import Change
+    import ui
+    S = replace(sc.CASE_A, key="S", changes=(
+        Change("opening", {"kind": "inventory", "item": "RW-9324", "location": "RENO"}, "add", -200),))
+    return {k: ui.view_of(sc.run_case(c)) for k, c in (("A", sc.CASE_A), ("E1", sc.CASE_E1), ("S", S))}
+
+
+def test_capacity_shown_is_the_scenarios_own(views):
+    """The line is down in three of March 2027's five weeks: 750 of capacity, not 1,875, and all of it used."""
+    import ui
+    from planner2 import charts
+    grid = {k: ui.plan_grid(views[k], ui.SKUS_BY_LINE["mtb-carbon"], "Month")[0] for k in ("A", "E1")}
+    assert grid["A"].at["Capacity (used)", "Mar 2027"] == "1,875 (100%)"
+    assert grid["E1"].at["Capacity (used)", "Mar 2027"] == "750 (100%)"
+    assert list(charts.capacity(views["E1"], "mtb-carbon")[24:29]) == [375, 0, 0, 0, 375]
+    _, use, _ = charts.next_weeks(views["E1"], 30)
+    assert use.at["MTB carbon", "1 Mar"] == "0 / 0"
+
+
+def test_the_plan_reading_says_when_a_line_had_no_capacity(views):
+    from planner2 import charts
+    line = lambda k: next(t for t in charts.reading_text(views[k]) if t.startswith("**MTB carbon"))
+    assert line("A").startswith("**MTB carbon** uses all its capacity from the start to w/c 30 Aug 2027;")
+    assert line("E1").startswith("**MTB carbon** uses all its capacity from the start to w/c 27 Sep 2027 "
+                                 "(it has none in 3 of those weeks); its SKUs hold target from 4 Oct 2027.")
+
+
+def test_sku_facts_show_the_scenarios_stock(views):
+    from planner2 import charts
+    stock = lambda k: charts.sku_facts(views[k], "RW-9324").set_index("")["Value"]["In stock at the snapshot"]
+    assert stock("A") == "1,900  (Reno 1,250, PDC 650)" and stock("S") == "1,700  (Reno 1,050, PDC 650)"
+
+
+def test_a_scenario_is_flagged_as_a_duplicate_only_if_its_changes_match_too(folder):
+    from dataclasses import replace
+    from redwheel.changes import Change
+    other = Change("arrival", {"kind": "capacity", "location": "RENO/road-base"}, "set", 0, 10, 11)   # in no other scenario
+    store.save(replace(sc.CASE_A, key="C", name="Scenario C · road line down", changes=(other,)), folder)  # A's settings + a change
+    store.save(replace(sc.CASE_A, key="D", name="Scenario D · copy of A", parent="A"), folder)             # a true copy of A
+    store.save(replace(sc.CASE_E1, key="F", name="Scenario F · copy of E1"), folder)                       # a true copy of E1
+    at = start()
+    ok(at)
+    duplicate_badges = [m.value for m in at.markdown if "Same settings as" in m.value]   # a badge is markdown here
+    assert duplicate_badges == [":orange-badge[:material/content_copy: Same settings as A]",         # D, not C
+                                ":orange-badge[:material/content_copy: Same settings as E1]"]        # F

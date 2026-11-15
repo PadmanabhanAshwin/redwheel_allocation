@@ -3,7 +3,7 @@ import pandas as pd
 import streamlit as st
 
 from redwheel import aux_fns
-from ui import (CAP, CAPACITY, FORECAST, LINES, LINE_NAME, ORDER, SIZE_COLOR, SIZE_RANK, SKU, SKUS_BY_LINE, WEEKS, cell,
+from ui import (CAPACITY, FORECAST, H, LINES, LINE_NAME, ORDER, SIZE_COLOR, SIZE_RANK, SKU, SKUS_BY_LINE, WEEKS, cell,
                 line_grid, obj, scenario_header, style)
 
 BACKLOG_BG = "#bdbbb4"
@@ -52,7 +52,7 @@ def render(key: str):
                         hovertemplate=f"{s} built: %{{y:,.0f}}<extra></extra>", **cell(i))
             total = total + y
             shown.add(size)
-        cap = by_month(CAP[ln])
+        cap = by_month(V["R"]["obj"].arrivals.loc[f"capacity||RENO/{ln}", 1:H].to_numpy())   # the scenario's
         fc = by_month(V["demand"].loc[sk].sum().to_numpy())
         fig.add_scatter(x=X, y=cap, name="capacity", mode="markers", legendgroup="c", legendrank=5, showlegend=first,
                         marker=dict(symbol="line-ew", size=16, line=dict(color=CAPACITY, width=2)),

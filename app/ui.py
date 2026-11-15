@@ -289,7 +289,8 @@ def plan_grid(V: dict, skus: list, gran: str):
         rows["In transit to the PDC"] = at_end(V["transit"])
     rows.update({"Open orders": at_end(V["open_orders"]), "Net inventory": at_end(V["net"])})
     if whole_lines:
-        cap = {p: sum(obj.arrivals.loc[f"capacity||RENO/{ln}", weeks_in[p]].sum() for ln in lines) for p in labels}
+        o = V["R"]["obj"]                                   # the scenario's object: a change may have edited capacity
+        cap = {p: sum(o.arrivals.loc[f"capacity||RENO/{ln}", weeks_in[p]].sum() for ln in lines) for p in labels}
         rows["Capacity (used)"] = {start: None, **{p: f"{cap[p]:,.0f} ({rows['Builds'][p] / cap[p]:.0%})" for p in labels}}
     ok0, ok = V["start_ok"].loc[skus], V["at_target"].loc[skus]
     rows["% SKUs @ nominal inv."] = {start: f"{ok0.mean():.0%}", **{p: f"{ok[last[p]].mean():.0%}" for p in labels}}

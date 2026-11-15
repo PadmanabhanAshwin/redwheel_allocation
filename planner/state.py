@@ -3,12 +3,13 @@
 Scenarios A and B are built in and locked; any other scenario is a copy, saved to outputs/scenarios/ and editable.
 A run is cached on the scenario's priors table, so a change re-plans and an unchanged scenario does not."""
 import io
+import json
 from dataclasses import replace
 
 import pandas as pd
 import streamlit as st
 
-from redwheel import priors, scenarios as sc, store
+from redwheel import changes as ch, priors, scenarios as sc, store
 import ui
 
 BUILT_IN = sc.CASES
@@ -30,9 +31,11 @@ def locked(key: str) -> bool:
 
 
 @st.cache_resource(max_entries=32, show_spinner=False)   # the spinner is drawn by view(), in the sidebar
-def _run(key: str, name: str, summary: str, parent: str, table_csv: str) -> dict:
+def _run(key: str, name: str, summary: str, parent: str, table_csv: str, changes_json: str = "[]") -> dict:
+    """Cached on everything the run reads: the settings table and the changes."""
     t = pd.read_csv(io.StringIO(table_csv), dtype=str, keep_default_na=False)
-    return ui.view_of(sc.run_case(sc.Case(key, name, t, summary, parent)))
+    changes = ch.from_records(json.loads(changes_json))
+    return ui.view_of(sc.run_case(sc.Case(key, name, t, summary, parent, changes)))
 
 
 def view(key: str) -> dict:
@@ -40,7 +43,8 @@ def view(key: str) -> dict:
     above the workbench tabs would make Streamlit treat them as new and jump back to the first tab."""
     c = st.session_state.cases[key]
     with st.sidebar, st.spinner(f"Planning {c.name} …"):
-        return _run(c.key, c.name, c.summary, c.parent, priors.normalise(c.priors).to_csv(index=False))
+        return _run(c.key, c.name, c.summary, c.parent, priors.normalise(c.priors).to_csv(index=False),
+                json.dumps(ch.to_records(c.changes), sort_keys=True))
 
 
 def next_key() -> str:
@@ -53,7 +57,7 @@ def duplicate(key: str) -> str:
     src = ss.cases[key]
     k = next_key()
     ss.cases[k] = sc.Case(k, f"Scenario {k} · copy of {key}", priors.normalise(src.priors),
-                          f"A copy of scenario {key}; change its priors to explore.", key)
+                          f"A copy of scenario {key}; change its priors to explore.", key, src.changes)
     store.save(ss.cases[k])
     ss.active, ss.compare_to = k, key
     ss.version += 1

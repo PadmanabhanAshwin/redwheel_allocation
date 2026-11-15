@@ -4,7 +4,7 @@ Everything here comes from computed plans (ui.view_of) and scenario settings; no
 The LLM is told to use nothing else, so a question the sheet cannot answer gets "the facts do not say"."""
 from __future__ import annotations
 
-from planner2 import charts
+from planner2 import charts, events
 from planner2.components import CUSTOMERS, GROUPS, describe_changes, ship_from, target_text, targets, wk
 from redwheel import priors
 from redwheel.config import LINES, PLAN_END, PLAN_START
@@ -16,7 +16,8 @@ MODEL = (f"How every plan is made: a linear programme plans weekly builds per SK
          "shortfall per line and week, then total shortfall, then stock above target. Orders ship as soon as stock "
          "exists, oldest first (an assumption; shipping is not decided). A checked property of every plan: a SKU is "
          "below target only while its line has run full every week, allowing for lead time. Demand forecast, capacity "
-         "and opening stock and orders are the same in every scenario; only the settings differ.")
+         "and opening stock and orders are the same in every scenario, except where a scenario lists events (edits to those "
+         "numbers, made before planning); otherwise only the settings differ.")
 
 
 def scenario_facts(label: str, case, V) -> str:
@@ -34,15 +35,30 @@ def scenario_facts(label: str, case, V) -> str:
              + f"; on-time fill rate {c['On-time fill rate']:.1%}; weeks below target (summed over SKU-site positions) "
              f"{c['Position-weeks below target']:,}; bikes built {c['Bikes built']:,}; bikes transferred to the PDC "
              f"{c['Bikes transferred to the PDC']:,}; average bikes in transit {c['Average bikes in transit']:,.0f}."]
+    lines.append(event_facts(case, V))
     r = charts.plan_reading(V)
     for ln, d in r["lines"].items():
         lines.append(f"Line {charts.LINE_WORDS[ln]}: "
-                     + (f"full capacity from the start to w/c {fmt_date(d['full_from_start_to'])}" if d["full_from_start_to"] is not None
-                        else "spare capacity from the first week")
+                     + (f"all capacity used from the start to w/c {fmt_date(d['full_from_start_to'])}"
+                        + (f" (no capacity at all in {d['no_capacity_weeks']} of those weeks)" if d["no_capacity_weeks"] else "")
+                        if d["full_from_start_to"] is not None else "spare capacity from the first week")
                      + f"; full in {d['weeks_full']} weeks in total; SKUs hold target from "
                      + (fmt_date(d["held_from"]) if d["held_from"] is not None else "never")
                      + f"; {d['below']} SKU-site weeks below target; {d['used']:.0%} of capacity used.")
     return "\n".join(lines)
+
+
+def event_facts(case, V) -> str:
+    """A scenario's events, each with the numbers it changed, from the computed plan's change report."""
+    if not case.changes:
+        return "Events: none (the data is as given)."
+    rep = V["R"]["change_report"]
+    out = []
+    for i, c in enumerate(case.changes):
+        r = rep.iloc[i]
+        out.append(f"{events.title(c)}: {int(r['cells'])} numbers changed, total {r['before']:,.0f} -> {r['after']:,.0f} bikes"
+                   + (f" (reason: {c.reason})" if c.reason else ""))
+    return "Events (edits to the data this scenario plans from): " + "; ".join(out) + "."
 
 
 def facts(items: list) -> str:
@@ -54,4 +70,8 @@ def facts(items: list) -> str:
             d = describe_changes(ref_case.priors, case.priors)
             parts.append(f"SETTINGS IN {lab} THAT DIFFER FROM {ref_lab}: "
                          + ("; ".join(f"{r.Setting}: {r.From} -> {r.To}" for r in d.itertuples()) or "none") + ".")
+            e = events.differences(ref_case.changes, case.changes)
+            parts.append(f"EVENTS IN {lab} THAT DIFFER FROM {ref_lab}: "
+                         + ("; ".join(f"{r.Setting.removeprefix('Event · ')}: {r.From} -> {r.To}" for r in e.itertuples())
+                            or "none") + ".")
     return "\n\n".join(parts)

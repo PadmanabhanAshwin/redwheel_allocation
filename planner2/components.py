@@ -114,7 +114,7 @@ def show_changes(table: pd.DataFrame, empty: str = "No changes."):
         return
     cols = ["Setting", "From", "To"] + (["Why"] if table["Why"].str.len().any() else [])
     st.dataframe(table[cols], hide_index=True, width="stretch",
-                 column_config={"Setting": st.column_config.TextColumn(width="medium"),
+                 column_config={"Setting": st.column_config.TextColumn(width="large"),
                                 "Why": st.column_config.TextColumn(width="large")})
 
 

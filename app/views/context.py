@@ -9,7 +9,7 @@ st.title("Supply–Demand Context")
 st.markdown(
     "Redwheel builds ten bicycle SKUs on four production lines at Reno and ships from Reno and the Columbus "
     "distribution centre to three channels (direct-to-consumer, dealers, commercial). Position at the "
-    f"**{fmt_date(SNAP)} snapshot**, and the demand and capacity every scenario plans against "
+    f"**{fmt_date(SNAP)} snapshot**, and the demand and capacity scenarios plan against, as given "
     f"({fmt_date(SNAP)} – {fmt_date(WEEKS.iloc[-1])}, {H} weeks).")
 
 on_hand = int(obj.opening[[f"inventory|{s}|{l}" for s in SKU.index for l in ("RENO", "CMH")]].sum())

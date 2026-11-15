@@ -1,8 +1,11 @@
 """Scenario: one plan in depth, always read against another scenario (by default the one it came from)."""
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
 from planner2 import charts
+from planner2 import event_tab
+from planner2 import events
 from planner2 import facts
 from planner2 import state
 from planner2.components import describe_changes, fdate, header, settings_view, show_changes
@@ -75,9 +78,12 @@ with st.container(horizontal=True):
     st.badge(f"Build time: {rl['Build time']}", color="gray")
     st.badge(f"Reno → PDC: {rl['Reno → PDC transfer']}", color="gray")
     st.badge(f"Plan decides: {rl['The plan decides']}", color="gray")
+    n_events = len(case.changes)                      # always drawn, so the tabs below keep their place
+    st.badge(f"Events: {n_events}" if n_events else "Events: none", icon=":material/bolt:" if n_events else None,
+             color="orange" if n_events else "gray")
 charts.kpis(V, V0)
 
-tabs = st.tabs(["Summary", "Builds", "Inventory", "SKU detail", "Settings"])
+tabs = st.tabs(["Summary", "Builds", "Inventory", "SKU detail", "Events", "Settings"])
 
 # ---------------- summary ----------------
 with tabs[0]:
@@ -190,13 +196,19 @@ with tabs[3]:
         st.caption("Circles: stock and orders (opening level). Squares: tasks. Faded: ship routes this scenario does "
                    "not use. +N wk: a delay.")
 
-# ---------------- settings ----------------
+# ---------------- events ----------------
 with tabs[4]:
+    event_tab.render(V, V0, key, case)
+
+# ---------------- settings ----------------
+with tabs[5]:
     st.markdown("#### Settings")
     settings_view(case.priors, ss.cases[vs].priors if V0 is not None else None)
     if V0 is not None:
         st.markdown(f"#### Differences from {ss.cases[vs].name}")
-        show_changes(describe_changes(ss.cases[vs].priors, case.priors), empty="The same settings.")
+        show_changes(pd.concat([describe_changes(ss.cases[vs].priors, case.priors),
+                                events.differences(ss.cases[vs].changes, case.changes)], ignore_index=True),
+                     empty="The same settings and events.")
     c = st.columns([1, 1, 3])
     if c[0].button("What-if from this", icon=":material/tune:", key="set_whatif", width="stretch"):
         state.new_draft(key)

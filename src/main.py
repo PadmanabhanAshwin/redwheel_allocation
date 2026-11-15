@@ -109,11 +109,13 @@ arrows[arrows.task_id.str.contains("RW-9304")]          # every arrow touching o
 obj = rtn.RTN(items=items, locations=dim_location, weeks=weeks,
               resources=resources, tasks=tasks, arrows=arrows,
               opening=aux_fns.build_opening(m, resources),
-              arrivals=aux_fns.build_arrivals(m, resources, weeks))
+              arrivals=aux_fns.build_arrivals(m, resources, weeks),
+              outlook=aux_fns.build_outlook(m | {"dim_week": dim_week}, resources, weeks))   # forecast after the plan
 rtn.validate(obj)
 kind_loc = resources.set_index("resource_id")[["kind", "location"]]
 print("arrivals: forecast", int(obj.arrivals[kind_loc.kind == "order"].values.sum()),
-      "| capacity", int(obj.arrivals[kind_loc.kind == "capacity"].values.sum()))
+      "| capacity", int(obj.arrivals[kind_loc.kind == "capacity"].values.sum()),
+      "| outlook (forecast after the plan)", int(obj.outlook.values.sum()))
 obj.opening.groupby([kind_loc.kind, kind_loc.location]).sum().unstack(fill_value=0)
 
 # %% 2.5 run the equation with no plan: nothing built, nothing shipped
@@ -166,4 +168,11 @@ print("total built: LP", round(plan.runs.values.sum()), "| rounded", int(builds.
 # the build plan: units per line per week (first 8 weeks shown)
 builds.groupby(builds.index.str.split("|").str[2]).sum().loc[:, 1:8]
 
-#%%
+# %% 4.1 events: a scenario changes the object's numbers; the same object and solver plan it
+from redwheel import scenarios as sc
+base, event = sc.run_case(sc.CASE_A), sc.run_case(sc.CASE_E1)
+print(sc.CASE_E1.changes[0])
+print(event["change_report"][["field", "op", "value", "resources", "cells", "before", "after"]].to_string(index=False))
+held = pd.DataFrame({"A": sc.held_by_line(base).max(axis=1), "E1": sc.held_by_line(event).max(axis=1)})
+print("bikes built: A", int(base["builds"].values.sum()), "| E1", int(event["builds"].values.sum()))
+held                                                   # the week each line holds its targets from

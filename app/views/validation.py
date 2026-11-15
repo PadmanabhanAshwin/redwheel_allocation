@@ -15,7 +15,8 @@ base = checks[checks["area"].isin(["Master data", "Object"])]
 st.dataframe(base.assign(Result=base["pass"].map({True: "pass", False: "FAIL"})).drop(columns="pass")
              .rename(columns={"area": "Area", "check": "Check", "value": "Value"}),
              hide_index=True, width="stretch")
-st.caption("The same for every scenario: scenarios change rules, not the data or the network.")
+st.caption("The same for every scenario: scenarios change rules, not the network. An event also edits a few of one "
+           "scenario's own numbers; its Events tab lists them. These checks are on the data as given.")
 
 st.subheader("Checks on each scenario's plan")
 cases = load_cases()

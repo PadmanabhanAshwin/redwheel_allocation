@@ -51,11 +51,14 @@ def test_opening_positions_under_b(b, m):
     assert net0.xs("RENO", level="pool").sum() == 1_965 - 3_852
 
 
-def test_position_demand_splits_the_forecast_by_channel_served(b, m):
-    _, pool_def, _ = b
-    d = sc.position_demand(m, pool_def)
+def test_demand_read_from_the_object_splits_the_forecast_by_channel_served(b, m):
+    """The demand a position faces is read from the object's own order arrivals, plan weeks and outlook.
+    It must be the forecast table exactly: every week to 156, split by the channels each pool serves."""
+    obj, _, pos = b
+    d = rtn.order_arrivals(obj, pos).rename_axis(["item", "pool"])
     total = aux_fns.forecast_by_item(m)
-    assert np.allclose(d.groupby("item").sum().loc[total.index].values, total.values)       # nothing lost
+    assert list(d.columns) == list(total.columns) == list(range(1, 157))
+    assert (d.groupby("item").sum().loc[total.index].values == total.values).all()           # nothing lost
     f = m["fact_forecast"]
     web = f[f["channel"] == "dtc"]["forecast_units"].sum()
     assert d.xs("CMH", level="pool").values.sum() == web

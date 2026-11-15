@@ -1,11 +1,13 @@
 """What-if: make a new scenario (or change one of yours) from any scenario's settings.
 
 1 · describe the change in words (Claude proposes settings)  2 · or set them directly  3 · review the changes, checked
-against the network, and run. Running creates the scenario (or saves yours) and opens its plan."""
+against the network, and run. Running creates the scenario (or saves yours) and opens its plan. Step 2 also holds the
+scenario's events (a line down, a demand change, a stock correction), which change the data it plans from."""
 import streamlit as st
 
-from planner2 import state
+from planner2 import events, state
 from planner2.components import describe_changes, header, settings_editor, show_changes
+from planner2.event_card import events_card
 from redwheel import llm, priors
 from ui import fmt_date, obj
 
@@ -16,6 +18,7 @@ if ss.draft is None or ss.draft["base"] not in ss.cases:
 d = ss.draft
 base = d["base"]
 base_case = ss.cases[base]
+d.setdefault("changes", tuple(base_case.changes))     # a draft made before drafts carried events
 
 EXAMPLES = {    # chip label -> request
     "Web orders via the PDC": "Web orders ship only from the PDC; dealer and commercial orders ship straight from "
@@ -27,8 +30,9 @@ EXAMPLES = {    # chip label -> request
 
 header("Change your scenario" if d["edit"] else "What-if",
        eyebrow=f"Editing {base_case.name}" if d["edit"] else f"New scenario from {base_case.name}",
-       subtitle="Describe the change in words or set it directly. Every change is checked against the network "
-                "before it runs; nothing is saved until you run it.")
+       subtitle="Describe the change in words or set it directly, or add an event: a line down, a demand change, a "
+                "stock correction. Every change is checked against the network before it runs; nothing is saved "
+                "until you run it.")
 
 
 # ---------------- where it starts ----------------
@@ -114,21 +118,24 @@ with left:
         if d["note"]:
             getattr(st, d["note"][0])(d["note"][1])
         st.caption("Claude sees your request, the current settings and the network's structure (sites, channels, "
-                   "lines) — no orders, stock or customer data.")
+                   "lines) — no orders, stock or customer data. It proposes settings only: a line down, a demand "
+                   "change or a stock correction is an event, added in step 2.")
 
     # ---------------- 2 · set it directly ----------------
     st.markdown("<div class='rw-step' style='margin-top:0.8rem'>2 · Or set it directly</div>", unsafe_allow_html=True)
+    events_card(d, obj)
     draft = settings_editor(d["seed"], key=f"w{ss.wv}")
     ss["wi_last"] = draft
 
 
 # ---------------- 3 · review and run ----------------
-def preview(table, against):
-    """Headline results of the settings as they stand, against the starting scenario. Planned on the fly (about a
-    second, cached), nothing saved."""
+def preview(table, against, changes):
+    """Headline results of the settings and events as they stand, against the starting scenario. Planned on the fly
+    (about a second, cached), nothing saved."""
     try:
         with st.spinner("Planning a preview …"):
-            P = state._run("P", "Preview", "", against, priors.normalise(table).to_csv(index=False))
+            P = state._run("P", "Preview", "", against, priors.normalise(table).to_csv(index=False),
+                           state.changes_text(changes))
     except Exception as e:
         st.warning(f"No preview: {type(e).__name__}: {e}")
         return
@@ -163,15 +170,24 @@ def start_over():
 with right:
     with st.container(border=True, key="review"):
         st.markdown("<div class='rw-step'>3 · Review and run</div>", unsafe_allow_html=True)
-        changes = describe_changes(base_case.priors, draft, d["reasons"])
+        setting_changes = describe_changes(base_case.priors, draft, d["reasons"])
+        moved = events.moves(base_case.changes, d["changes"])          # events added or removed against the start
+        nothing = setting_changes.empty and not moved
         errs = priors.validate(draft, obj)
+        bad = events.problem(obj, d["changes"])
+        errs = errs + ([f"Events: {bad}"] if bad else [])
         st.markdown(f"**Changes from {base_case.name}**")
-        show_changes(changes, empty="No changes yet. Describe one, or use the controls on the left.")
+        if nothing:
+            st.caption("No changes yet. Describe one, or use the controls on the left.")
+        if not setting_changes.empty:
+            show_changes(setting_changes)
+        for what, c in moved:
+            st.markdown(f"- **Event {what}:** {events.title(c)}")
         if errs:
             st.error("This can't run yet:\n\n" + "\n".join(f"- {e}" for e in errs), icon=":material/block:")
-        elif not changes.empty:
+        elif not nothing:
             st.success("Passes every check against the network.", icon=":material/check_circle:")
-            preview(draft, base)
+            preview(draft, base, d["changes"])
         name = st.text_input("Name", value=d["name"], key=f"wi_name_{ss.wv}",
                              placeholder="e.g. MTB carbon two-week build")
         summary = st.text_area("Description", value=d["summary"], key=f"wi_summ_{ss.wv}", height=80,
@@ -179,16 +195,17 @@ with right:
         d["name"], d["summary"] = name, summary
         label = "Save and re-plan" if d["edit"] else "Create and run scenario"
         run = st.button(label, type="primary", icon=":material/play_arrow:", key="wi_run", width="stretch",
-                        disabled=bool(errs) or changes.empty)
+                        disabled=bool(errs) or nothing)
         st.button("Start over", key="wi_reset", width="stretch", on_click=start_over, icon=":material/restart_alt:")
         if run:
             if not summary.strip():                               # describe it by its changes
-                summary = f"From {base}: " + "; ".join(f"{r.Setting} {r.To}" for r in changes.itertuples())
+                summary = f"From {base}: " + "; ".join([f"{r.Setting} {r.To}" for r in setting_changes.itertuples()]
+                                                       + [f"event {what}: {events.title(c)}" for what, c in moved])
             if d["edit"]:
-                state.update(base, draft, name, summary)
+                state.update(base, draft, name, summary, d["changes"])
                 k, parent = base, ss.cases[base].parent or state.BASE
             else:
-                k = state.create(base, draft, name or "what-if", summary)
+                k = state.create(base, draft, name or "what-if", summary, d["changes"])
                 parent = base
             ss.toast = f"Planned {ss.cases[k].name}."
             ss.draft = None

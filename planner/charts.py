@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from redwheel import aux_fns
-from ui import (BAD_BG, CAP, CAPACITY, FORECAST, FQ_END, FQ_ORDER, GOOD_BG, H, HIGHLIGHT_BG, INK, LINES, LINE_NAME,
+from ui import (BAD_BG, CAPACITY, FORECAST, FQ_END, FQ_ORDER, GOOD_BG, H, HIGHLIGHT_BG, INK, LINES, LINE_NAME,
                 MUTED, ORDER, SIZE_COLOR, SIZE_RANK, SKU, SKUS_BY_LINE, WEEKS, cell, fmt_date, line_grid, m, obj,
                 pool_label, status_table, style)
 
@@ -84,7 +84,7 @@ def build_chart(V, key):
                         hovertemplate=f"{s} built: %{{y:,.0f}}<extra></extra>", **cell(i))
             total = total + y
             shown.add(size)
-        cap = by_month(CAP[ln])
+        cap = by_month(V["R"]["obj"].arrivals.loc[f"capacity||RENO/{ln}", 1:H].to_numpy())   # the scenario's
         fc = by_month(V["demand"].loc[sk].sum().to_numpy())
         fig.add_scatter(x=X, y=cap, name="capacity", mode="markers", legendgroup="c", legendrank=5, showlegend=first,
                         marker=dict(symbol="line-ew", size=16, line=dict(color=CAPACITY, width=2)),

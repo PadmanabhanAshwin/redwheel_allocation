@@ -11,6 +11,8 @@ Generic. Nothing here knows about bikes or Redwheel; `aux_fns.build_object` maps
                 + arrival[r, t]
 
 Weeks t = 1..H. t = 0 is the opening level. A level is the quantity at the end of week t.
+Arrivals may be known past the plan, for weeks H+1..T (the outlook). Nothing is decided there; a target that
+looks ahead from late in the plan reads them.
 """
 from __future__ import annotations
 
@@ -46,6 +48,7 @@ class RTN:
     arrows: pd.DataFrame      # task_id, resource_id, amount, delay
     opening: pd.Series        # resource_id -> level at t = 0
     arrivals: pd.DataFrame    # resource_id x t (1..H): what comes from outside
+    outlook: pd.DataFrame | None = None   # resource_id x t (H+1..T): arrivals known after the plan (orders only)
 
 
 def resource_id(kind: str, item: str | None, location: str) -> str:
@@ -160,6 +163,14 @@ def validate(obj: RTN) -> None:
     need(obj.arrivals.index.equals(pd.Index(res["resource_id"])), "arrivals not indexed by resources")
     need(list(obj.arrivals.columns) == weeks, "arrivals columns must be weeks 1..H")
     need((obj.arrivals.values >= 0).all(), "negative arrival")
+    if obj.outlook is not None:
+        H, out = len(weeks), obj.outlook
+        need(out.index.equals(pd.Index(res["resource_id"])), "outlook not indexed by resources")
+        need(len(out.columns) > 0 and list(out.columns) == list(range(H + 1, H + 1 + len(out.columns))),
+             "outlook columns must be weeks H+1..T")
+        need((out.values >= 0).all(), "negative arrival in the outlook")
+        need((out[(res["kind"] != "order").to_numpy()].values == 0).all(),
+             "outlook arrivals on a resource that is not an order")
 
 
 # ---------- the equation ----------
@@ -204,6 +215,22 @@ def net_position(obj: RTN, X: pd.DataFrame) -> pd.DataFrame:
     ours = res["location"].map(obj.locations.set_index("location_id")["ours"])
     sign = np.where((res["kind"] == "inventory") & ours, 1.0, np.where(res["kind"] == "order", -1.0, 0.0))
     return X.mul(sign, axis=0).groupby(res["item"]).sum()
+
+
+def arrivals_all(obj: RTN) -> pd.DataFrame:
+    """Arrivals for every week they are known: the plan (1..H) and the outlook (H+1..T). resource_id x t."""
+    return obj.arrivals if obj.outlook is None else pd.concat([obj.arrivals, obj.outlook], axis=1)
+
+
+def order_arrivals(obj: RTN, positions: dict) -> pd.DataFrame:
+    """The demand each position faces: arrivals onto its order resources, weeks 1..T. position x t.
+    positions: {key: {resource_id: sign}}, as the targets are set on (see engine.decide)."""
+    A = arrivals_all(obj)
+    orders = set(obj.resources.loc[obj.resources["kind"] == "order", "resource_id"])
+    out = pd.DataFrame([A.loc[[r for r in members if r in orders]].sum() for members in positions.values()])
+    out.index = (pd.MultiIndex.from_tuples(positions.keys()) if all(isinstance(k, tuple) for k in positions)
+                 else pd.Index(positions.keys()))
+    return out
 
 
 def weeks_of_supply(net: pd.DataFrame, demand: pd.DataFrame) -> pd.DataFrame:

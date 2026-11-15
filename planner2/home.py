@@ -1,7 +1,7 @@
 """Home: what the planner does, where things stand at the snapshot, and every scenario with its headline result."""
 import streamlit as st
 
-from planner2 import state
+from planner2 import events, state
 from redwheel import priors
 from planner2.components import fdate, header
 from ui import CAP, H, SKU, SNAP, WEEKS, m, obj, r
@@ -38,8 +38,9 @@ hc[0].subheader("Scenarios")
 if hc[1].button("New what-if", icon=":material/add:", type="primary", key="home_new", width="stretch",
                 on_click=whatif_from, args=(ss.current,)):
     st.switch_page("whatif.py")
-st.markdown("<div class='rw-muted'>Each scenario is the same data and optimiser under different assumptions. "
-            "A is the base case; B tests a distribution-centre policy. Yours appear here too.</div>",
+st.markdown("<div class='rw-muted'>Each scenario is the same optimiser under different assumptions or events. "
+            "A is the base case; B tests a distribution-centre policy; E1 and E2 are events on A (a line down, "
+            "demand up). Yours appear here too.</div>",
             unsafe_allow_html=True)
 slot = st.empty()
 planned = {k: state.safe_view(k, slot) for k in ss.cases}
@@ -73,7 +74,11 @@ for i in range(0, len(keys), per_row):
                     st.badge("Yours", icon=":material/person:", color="blue")
                 if c.parent:
                     st.badge(f"From {c.parent}", color="gray")
-                same = next((o for o in keys[:keys.index(k)] if priors.diff(ss.cases[o].priors, c.priors) == []), None)
+                if c.changes:
+                    st.badge(f"{len(c.changes)} event{'s' if len(c.changes) != 1 else ''}", icon=":material/bolt:",
+                             color="violet")
+                same = next((o for o in keys[:keys.index(k)] if priors.diff(ss.cases[o].priors, c.priors) == []
+                             and events.same(ss.cases[o].changes, c.changes)), None)
                 if same:
                     st.badge(f"Same settings as {same}", icon=":material/content_copy:", color="orange")
                 if not V["checks"]["pass"].all():
@@ -97,9 +102,9 @@ st.subheader("How to use it")
 steps = [
     ("1 · Read a plan", "Open a scenario: when every SKU reaches target, what limits it, what to build each month, "
                         "and how each SKU's stock moves. Ask questions about it in words."),
-    ("2 · Try a what-if", "Change where each channel's orders ship from, build and transfer times, or targets. "
-                          "Describe it in words and Claude proposes the settings, or set them yourself. Every change "
-                          "is checked against the network before it runs."),
+    ("2 · Try a what-if", "Change where orders ship from, build and transfer times, or targets: describe it in "
+                          "words and Claude proposes the settings, or set them yourself. Or add an event: a line "
+                          "down, a demand change, a stock correction. Every change is checked first."),
     ("3 · Compare", "Put scenarios side by side: headline results, the settings that differ, and how stock and "
                     "builds move week by week. Ask why they differ."),
 ]
@@ -111,7 +116,8 @@ for col, (title, text) in zip(st.columns(3, gap="medium"), steps):
 with st.expander("Assumptions behind every plan"):
     st.markdown(
         "- **Data:** the nine Redwheel files, snapshot " + fdate(SNAP) + ". Forecast, capacity, stock and open orders "
-        "are the same in every scenario; only the scenario's settings differ.\n"
+        "are the same in every scenario, except where a scenario has events: these edit a few of those numbers for that "
+        "scenario only (listed on its Events tab). Otherwise only the scenario's settings differ.\n"
         "- **Targets** (weeks of supply, from the brief): road 8, rising to 10 in 2028 (taken as 3 Jan 2028); MTB base "
         "12; MTB carbon 15. A SKU is at target when its net inventory covers the next N weeks of forecast.\n"
         "- **Open orders** count against stock from day one; nothing waits for a need-by date.\n"

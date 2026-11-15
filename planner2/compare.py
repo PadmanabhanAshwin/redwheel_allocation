@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from planner2 import charts
+from planner2 import events
 from planner2 import facts
 from planner2 import state
 from planner2.components import CUSTOMERS, GROUPS, describe_changes, header, ship_from, target_text, targets, wk
@@ -112,11 +113,12 @@ def setting_values(t):
     return out
 
 
-vals = {label[k]: setting_values(ss.cases[k].priors) for k in picked}
+vals = {label[k]: {**setting_values(ss.cases[k].priors),
+                   "Events": "; ".join(events.title(c) for c in ss.cases[k].changes) or "none"} for k in picked}
 side = pd.DataFrame(vals)
 side = side[side.nunique(axis=1) > 1].rename_axis("Setting")
 if side.empty:
-    st.caption("All picked scenarios have the same settings.")
+    st.caption("All picked scenarios have the same settings and events.")
 else:
     st.dataframe(side, width="stretch")
 

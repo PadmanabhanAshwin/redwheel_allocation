@@ -224,6 +224,22 @@ def build_arrivals(m: dict, resources: pd.DataFrame, weeks: pd.DataFrame) -> pd.
     return a.reindex(index=resources["resource_id"], columns=weeks["t"], fill_value=0)
 
 
+def build_outlook(m: dict, resources: pd.DataFrame, weeks: pd.DataFrame) -> pd.DataFrame:
+    """Arrivals known after the plan: the forecast for the weeks past the horizon (H+1..T), onto orders.
+    The capacity file stops at the horizon, so nothing else has an outlook."""
+    cust = m["dim_location"].dropna(subset=["channel"]).set_index("channel")["location_id"]
+    t = m["dim_week"].set_index("week_start")["week_idx"]
+    H = len(weeks)
+    f = m["fact_forecast"].assign(t=m["fact_forecast"]["week_start"].map(t))
+    f = f[f["t"] > H]
+    ids = "order|" + f["sku"] + "|" + f["channel"].map(cust)
+    unknown = set(ids) - set(resources["resource_id"])
+    if unknown:
+        raise ValueError(f"outlook: no resource for {sorted(unknown)[:3]}")
+    a = f["forecast_units"].groupby([ids.values, f["t"].astype(int).values]).sum().unstack(fill_value=0)
+    return a.reindex(index=resources["resource_id"], columns=range(H + 1, int(t.max()) + 1), fill_value=0)
+
+
 def forecast_by_item(m: dict) -> pd.DataFrame:
     """Total forecast (all channels) per sku x week index, every forecast week (1..156),
     including the weeks after the plan horizon that targets near the end look ahead into."""
@@ -401,7 +417,8 @@ def build_object(m: dict, build_weeks: int | dict = BUILD_WEEKS, transfer_weeks:
     obj = rtn.RTN(items=items, locations=locations, weeks=weeks,
                   resources=resources, tasks=tasks, arrows=arrows,
                   opening=build_opening(m, resources),
-                  arrivals=build_arrivals(m, resources, weeks))
+                  arrivals=build_arrivals(m, resources, weeks),
+                  outlook=build_outlook(m, resources, weeks))
     rtn.validate(obj)
     return obj
 
