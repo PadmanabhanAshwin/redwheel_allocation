@@ -65,6 +65,10 @@ What you will get:
 - per step, how far it could not be met;
 - a tenth plan check.
 
+Words, so the UI, the deck and the design agree: **net inventory**, **open orders**, **target** (as you
+already use them); the three floors are **due**, **owed**, **target** ("overdue orders" on screen for due);
+a walk is made of **steps**; the planner-facing name is **Priority order** unless the user says otherwise.
+
 What the story needs on screen, and planner2 does not have: **a per-bike row for one line** (orders cleared
 on, at target on), against the scenario it is compared with. The point is "these two bikes are healthy
 months earlier and no customer waits longer", which a per-line number hides.

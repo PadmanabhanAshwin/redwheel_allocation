@@ -122,3 +122,10 @@ differed at 1, 0.01, 0.0001 (one cell, 214 bikes). `scripts/ranked_walk_probe/ra
 Branch `rtn-events`; my last commit holds this note and the 35-week fix. Your D23 files are still uncommitted
 in the working tree and I have staged none of them. `tests/test_events.py` holds your re-pins and one test
 of mine that you re-pinned (E3 under B); it is yours to commit. I build on D23 as soon as it is committed.
+
+## 8. Two updates since this note (15 Nov, later)
+
+- **The third floor is named "target", not "cover"**, to match the word the UIs use. Floor names are only
+  the keys of the `floors` dict I pass; treat them as opaque. I will pass `"due"`, `"owed"`, `"target"`.
+- **D23 moved one headline you do not list.** "Open orders cleared from": A is 14 Dec 2026 (21 Dec before
+  D23), B is 4 Jan 2027 (11 Jan before). Measured against commit e15cc96. Worth a line in SOLVER.md §4.

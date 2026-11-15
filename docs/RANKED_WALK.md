@@ -68,7 +68,7 @@ placed). The plan's whole job is to keep that number high enough. "High enough" 
 ```
    net inventory of RW-4418, week 1
             │
-     +857 ──┼──  COVER   the weeks-of-supply target (the next 15 weeks of forecast)
+     +857 ──┼──  TARGET  the weeks-of-supply target (the next 15 weeks of forecast)
             │            below this: short of safety stock
             │
         0 ──┼──  OWED    below this: a customer is waiting for a bike
@@ -80,11 +80,13 @@ placed). The plan's whole job is to keep that number high enough. "High enough" 
 ```
 
 Each level is a **floor**. Being below a floor is a **need**, and the lower the floor, the more it hurts.
+The three are called **due**, **owed** and **target**; on screen they read as overdue orders, open orders and
+the weeks-of-supply target, the words the planner already uses.
 RW-4418 starts under all three: 1,162 bikes to climb before nobody is waiting past their date, 123 more
-before nobody is waiting at all, then 857 more to hold its target. The floors move week by week: cover
+before nobody is waiting at all, then 857 more to hold its target. The floors move week by week: target
 follows the forecast, and due rises to zero as orders fall due.
 
-This is why the example worked the way it did. Today's rule has one floor, cover, and measures how far
+This is why the example worked the way it did. Today's rule has one floor, target, and measures how far
 below it each bike is. A bike with customers waiting is always further below than one without, so it goes
 first. The other floors were there all along, implied.
 
@@ -97,7 +99,7 @@ Nothing is added to the model of the world. A floor is read from numbers the obj
 ```
  THE OBJECT                         A POSITION                     ITS FLOORS
  stock of RW-4418 at Reno   (+)
- stock of RW-4418 at PDC    (+) ──► net inventory of RW-4418 ──►  cover = forecast of the next 15 weeks
+ stock of RW-4418 at PDC    (+) ──► net inventory of RW-4418 ──►  target = forecast of the next 15 weeks
  web orders for RW-4418     (−)      (one number per week)               (the object's order arrivals)
  dealer orders for RW-4418  (−)                                   owed  = 0
  commercial orders          (−)                                   due   = −(open orders not due yet)
@@ -106,7 +108,7 @@ Nothing is added to the model of the world. A floor is read from numbers the obj
 
 - A **position** is a set of the object's resources, added up with signs. It exists today: the routing rule
   defines it (in scenario B there are two per bike, one at Reno and one at the PDC).
-- A **floor** is one number per position per week, computed from the object. Cover is computed today. Owed
+- A **floor** is one number per position per week, computed from the object. Target is computed today. Owed
   is zero. Due needs the need-by dates, which the order files have and the object does not yet carry.
 
 So the walk does not describe the world. It says which of the world's numbers the plan must protect, and in
@@ -123,7 +125,7 @@ A **step** has three parts:
 
 | Part | Choices |
 |---|---|
-| Floor | due · owed · cover |
+| Floor | due · owed · target |
 | Which bikes | all, or a selection (a line, a list), written the way a change selects resources |
 | How they share | **evenly** (equally short, in weeks: today's rule) or **ranked** (one at a time, in a stated order) |
 
@@ -133,20 +135,20 @@ that result and takes step 2, and so on. Last, as today, it trims stock above ta
 The three rules from the example, written as walks:
 
 ```
- Today                         1. cover · all bikes · evenly
+ Today                         1. target · all bikes · evenly
 
- Rank the bikes: Y first       1. cover · all bikes · ranked: Y, X          ← the trap
+ Rank the bikes: Y first       1. target · all bikes · ranked: Y, X         ← the trap
 
  Customers, then stock         1. owed  · all bikes · evenly
-                               2. cover · all bikes · ranked: Y, X
+                               2. target · all bikes · ranked: Y, X
 ```
 
 And as data, a walk is a short list of records, stored with the scenario next to its changes:
 
 ```
  Step(floor="owed",  who={},                        share="even")
- Step(floor="cover", who={"line_id": "mtb-carbon"}, share="ranked", order=["RW-9304", "RW-4418", "RW-6416"])
- Step(floor="cover", who={},                        share="even")      # every bike not yet covered
+ Step(floor="target", who={"line_id": "mtb-carbon"}, share="ranked", order=["RW-9304", "RW-4418", "RW-6416"])
+ Step(floor="target", who={},                       share="even")      # every bike not in a target step yet
 ```
 
 A scenario with no walk gets today's rule, through today's code.
@@ -160,12 +162,12 @@ same 94,429 bikes, and holds all targets from 6 Sep 2027.
 
 | Walk | Differs from today's plan | Customers | Stock |
 |---|---|---|---|
-| **cover evenly** (today's rule, run as a walk) | **0 cells** | – | – |
-| **owed evenly → cover evenly** | **0 cells** | – | – |
-| due evenly → owed evenly → cover evenly | 35 cells, at most 24 bikes | no headline number moves | no headline number moves |
-| **owed evenly → cover ranked** (9304, 4418, 6416) | 117 cells | **exactly as today**: every bike's orders cleared 14 Dec 2026, fill 96.4% | RW-9304 at target 22 Feb 2027 and RW-4418 on 26 Jul, not 6 Sep; RW-6416 on 6 Sep as today. 244 bike-weeks below target, not 278 |
-| owed ranked → cover ranked | 159 cells | orders cleared 5 Oct, 9 Nov, 14 Dec, not all on 14 Dec; fill 97.4%; the same bike-weeks of waiting in total | as the row above |
-| cover ranked (the trap) | 159 cells | RW-6416's customers wait until **26 Jul 2027**; fill 94.3%; **2.8 times** the bike-weeks of waiting | RW-9304 at target 26 Oct 2026, RW-4418 on 8 Mar 2027 |
+| **target evenly** (today's rule, run as a walk) | **0 cells** | – | – |
+| **owed evenly → target evenly** | **0 cells** | – | – |
+| due evenly → owed evenly → target evenly | 35 cells, at most 24 bikes | no headline number moves | no headline number moves |
+| **owed evenly → target ranked** (9304, 4418, 6416) | 117 cells | **exactly as today**: every bike's orders cleared 14 Dec 2026, fill 96.4% | RW-9304 at target 22 Feb 2027 and RW-4418 on 26 Jul, not 6 Sep; RW-6416 on 6 Sep as today. 244 bike-weeks below target, not 278 |
+| owed ranked → target ranked | 159 cells | orders cleared 5 Oct, 9 Nov, 14 Dec, not all on 14 Dec; fill 97.4%; the same bike-weeks of waiting in total | as the row above |
+| target ranked (the trap) | 159 cells | RW-6416's customers wait until **26 Jul 2027**; fill 94.3%; **2.8 times** the bike-weeks of waiting | RW-9304 at target 26 Oct 2026, RW-4418 on 8 Mar 2027 |
 
 What this shows:
 
@@ -186,14 +188,14 @@ A planner should not have to type bike ids in order. There are two layers.
 
 **The rule** is what a person, a file, or Claude writes:
 
-> "After customers are served, build cover for the MTB carbon bikes with the most open orders first."
+> "After customers are served, build stock for the MTB carbon bikes with the most open orders first."
 
 **The walk** is what code produces from the rule and the scenario's own numbers:
 
 ```
- 1. owed  · all bikes  · evenly
- 2. cover · MTB carbon · ranked: RW-9304 (1,435 owed), RW-4418 (1,310), RW-6416 (767)
- 3. cover · the rest   · evenly
+ 1. owed   · all bikes  · evenly
+ 2. target · MTB carbon · ranked: RW-9304 (1,435 on order), RW-4418 (1,310), RW-6416 (767)
+ 3. target · the rest   · evenly
 ```
 
 The walk is what gets saved, shown for approval, and given to the solver.
