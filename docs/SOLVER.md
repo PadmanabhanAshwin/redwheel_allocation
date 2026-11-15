@@ -113,8 +113,18 @@ Is it optimising anything? Yes, but less than "an LP" suggests, and the deck sho
   `aux_fns.compare_plans` gives the LP 278 position-weeks below target and all targets held from 6 Sep 2027. The
   planner's lowest-cover-first rule gives 335 and 1 May 2028, with the same 94,429 bikes.
 - **In B, also decided:** which pool the stock sits in, and when to transfer.
+- **Deliveries by a date: the most possible, checked (D28).** This is not a term in the objective; it is a property
+  of the plans. `engine.fewest_owed` keeps the LP's rows and minimises one line's units owed in one week, which is the
+  same as maximising its deliveries by then. On A, R, R+ and R+'s four events, the plan's owed equals that minimum
+  in every week (121) on every line (4), with 484 certified solves per scenario (`scenarios.most_delivered`). So "the
+  most deliveries before a cutoff" would choose the same builds, and no cutoff objective is needed. It is checked, not
+  a theorem: in principle the 0.1 total term could keep cover on a small SKU while a larger one on its line waits. On
+  this data it never does. With a build time, a closure costs deliveries one build time later: R+C26 closes 21 and 28
+  Dec 2026 and the first customer waits on 4 Jan 2027.
 - **Not decided:** shipping (projected afterwards: oldest orders first, as soon as stock exists, O10), anything after
-  week 121 (O14). Priorities between SKUs are decided only when a scenario carries a walk (§2a). Events are known from week 1 (O25).
+  week 121 (O14). With a build time of L weeks, builds in the last L weeks land after week 121, so the LP builds
+  nothing then (R: week 121; R+: weeks 120–121 on the carbon lines). Show a line's builds through week 121 − L, or
+  label those weeks. Priorities between SKUs are decided only when a scenario carries a walk (§2a). Events are known from week 1 (O25).
 
 ## 4. D23: why the divisor changed, and what moved
 
@@ -183,7 +193,11 @@ divisor the plan used). `net`, `target_units`, `demand` and the shape of `builds
   a window with no demand still plans.
 - `tests/test_optimality.py`: every solve of every built-in scenario certified optimal from its own duals
   (`engine.certificate`: primal violation, dual violation, duality gap), and the same objective from interior point.
-- `tests/test_engine.py` (ties): the tie-break on a case with real ties; no ties in A, E1, E4, P1.
+- `tests/test_engine.py` (ties): the tie-break on a case with real ties; no ties in A, E1, E4, P1, R+, R+C27
+  (no run moves by more than the runs the hold tolerance buys at the run cost, + 0.5 bike: 1.88 on A, 2.35 on R+).
+- `tests/test_r_cases.py`: R and R+ pinned; R+E1 and R+E4 keep E1's and E4's footprints; the Christmas closure
+  absorbed in 2027 (owed identical every week, 1,928 bikes built ahead) and not in 2026 (only MTB carbon, only
+  4 Jan–1 Feb 2027); the most delivered by every week on R+, R+C26, R+C27; a plan built later shows a gap of 100.
 - `tests/test_base_case.py`: the frozen base plan (TIMING re-pinned for D23; BUILT, 278 and the dates unchanged).
 - `tests/test_events.py`, `tests/test_baseline.py`: events and the LP against the planner's rule.
 - D23 was validated against an independent build of the LP from the previous commit's source with the divisor

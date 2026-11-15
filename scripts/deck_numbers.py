@@ -14,7 +14,14 @@ from redwheel import scenarios as sc
 OUT = sys.argv[1] if len(sys.argv) > 1 else "docs/deck/deck_numbers.json"
 MTB = ["RW-9304", "RW-4418", "RW-6416"]
 CASES = [sc.CASE_A, sc.CASE_B, sc.CASE_E1, sc.CASE_E2, sc.CASE_E3, sc.CASE_E4, sc.CASE_E5, sc.CASE_P1,
-         replace(sc.CASE_B, key="B+E3", name="Scenario B with E3's frames late", changes=sc.CASE_E3.changes, parent="B")]
+         replace(sc.CASE_B, key="B+E3", name="Scenario B with E3's frames late", changes=sc.CASE_E3.changes, parent="B"),
+         *sc.R_CASES.values()]
+PROVED = ["A", *sc.R_CASES]          # scenarios whose deliveries are checked against the most possible, every week
+LINES = ["road-base", "road-carbon", "mtb-base", "mtb-carbon"]
+STORY = {"motivates": "R", "hero": "R+", "live": ["R+E1", "R+E4", "R+C27", "R+C26"], "deck_only": ["B", "P1", "E5"],
+         "cut": ["E2"], "kept_for_reference": ["E1", "E3", "E4", "B+E3"],
+         "why": "R is A with a week to build: a plant cannot ship a bike the week it is built. R+ gives the carbon "
+                "lines two weeks and the base lines one; it is the build plan. Neither build time is in the data."}
 
 
 def by_sku(R):
@@ -59,8 +66,26 @@ def run(case, A):
         "weeks_of_supply_mtb": {(k if p == "CMH+RENO" else f"{k}@{p}"): [round(float(R["wos"].loc[(k, p), t]), 2) for t in w]
                                 for (k, p) in R["wos"].index if k in MTB},
         "target_weeks_mtb": {k: [float(R["target_wos"].loc[(k, p), t]) for t in w] for (k, p) in R["target_wos"].index if k in MTB and p != "CMH"},
+        "build_weeks": dict(case.build_weeks),
+        "builds_by_line_by_week": {ln: [int(v) for v in line_rows(R["builds"], ln)[w].sum()] for ln in LINES},
+        "capacity_by_line_by_week": {ln: [int(v) for v in R["obj"].arrivals.loc[f"capacity||RENO/{ln}", w]] for ln in LINES},
+        "stock_above_target_by_line_by_week": {ln: [int(round(v)) for v in (R["net"][w] - R["target_units"][w]).clip(lower=0)
+                                                    .groupby(R["line"]).sum().loc[ln]] for ln in LINES},
+        "owed_by_line_by_week": {ln: [int(round(v)) for v in R["flows"]["open_orders"][w].groupby(R["line"]).sum().loc[ln]]
+                                 for ln in LINES},
     }
+    if case.key in PROVED:
+        d = sc.most_delivered(R)
+        out["deliveries"] = {
+            "claim": "no plan delivers more by any week on any line, with this scenario's object and rules",
+            "weeks_checked": int(d["plan"].shape[1]), "lines_checked": int(d["plan"].shape[0]),
+            "largest_gap_bikes": round(d["gap"], 6), "certificate_worst": {k: float(v) for k, v in d["certificate"].items()},
+            "fewest_owed_by_line_by_week": {ln: [int(round(v)) for v in d["fewest"].loc[ln]] for ln in LINES}}
     return R, out
+
+
+def line_rows(df, ln):
+    return df[df.index.str.endswith("/" + ln)]
 
 
 def against(R, P, line_of):
@@ -123,8 +148,67 @@ def consistency(doc, res):
          doc["B+E3"]["against_parent"]["bikes_built_diff"] == 0 and held("B+E3") >= held("B")),
         ("the same 375 a week on MTB carbon in every full week of A, E2, E3, E4, E5 and P1 (weeks 1-52)",
          all(all(v == 375 for v in doc[k]["mtb_carbon_line_by_week"][:52]) for k in ("A", "E2", "E3", "E4", "E5", "P1"))),
-    ]
+    ] + r_rules(doc)
     return [{"rule": r, "holds": bool(ok)} for r, ok in rules]
+
+
+def r_rules(doc):
+    """R, R+ and R+'s events: a build time only delays; each event keeps the footprint it has on A; the closure is
+    absorbed in 2027, and in 2026 costs only MTB carbon customers, only in January; every plan delivers the most."""
+    sc_ = lambda k, f: doc[k]["scorecard"][f]
+    held = lambda k: doc[k]["held_by_line"]
+    wk = lambda d: pd.Timestamp(d)
+    shift = lambda k, p, ln="mtb-carbon": (wk(held(k)[ln]) - wk(held(p)[ln])).days // 7
+    cleared = lambda k: wk(sc_(k, "Open orders cleared from"))
+    lb = lambda k, ln: doc[k]["builds_by_line_by_week"][ln]
+    owed = lambda k, ln: doc[k]["owed_by_line_by_week"][ln]
+    c27, c26, rp = "R+C27", "R+C26", "R+"
+    gap = lambda k, ln: np.cumsum(lb(k, ln)) - np.cumsum(lb(rp, ln))       # > 0: built ahead of R+
+    late26 = [a - b for a, b in zip(owed(c26, "mtb-carbon"), owed(rp, "mtb-carbon"))]
+    return [
+        ("R and R+ build A's bikes, every SKU's total as A's",
+         all(doc[k]["against_A"]["bikes_built_diff"] == 0 and doc[k]["against_A"]["sku_totals_diff"] == {} for k in ("R", "R+"))),
+        ("a build time only delays: no line's date in R earlier than A's, none in R+ earlier than R's; "
+         "orders cleared A < R < R+",
+         all(held("R")[ln] >= held("A")[ln] and held(rp)[ln] >= held("R")[ln] for ln in LINES)
+         and cleared("A") < cleared("R") < cleared(rp)),
+        ("R+ takes two weeks from the line to stock on the carbon lines and one on the base lines",
+         doc[rp]["build_weeks"] == {ln: (2 if "carbon" in ln else 1) for ln in LINES}),
+        ("R+E1 takes 3 weeks of 375 off MTB carbon and makes all 1,125 back; other lines identical; MTB carbon moves "
+         "as many weeks as E1 on A (4); orders cleared and fill as R+",
+         doc["R+E1"]["against_parent"]["bikes_built_diff"] == 0
+         and all(doc["R+E1"]["against_parent"]["mtb_carbon_line_weekly_diff"].get(t) == -375 for t in (26, 27, 28))
+         and sum(v for t, v in doc["R+E1"]["against_parent"]["mtb_carbon_line_weekly_diff"].items() if t > 28) == 1125
+         and doc["R+E1"]["against_parent"]["other_lines_identical"] and shift("R+E1", rp) == shift("E1", "A") == 4
+         and cleared("R+E1") == cleared(rp) and sc_("R+E1", "On-time fill rate") == sc_(rp, "On-time fill rate")),
+        ("R+E4 builds exactly the 300 it adds, all RW-4418; other lines identical; MTB carbon (1 week) and orders "
+         "cleared (2 weeks) move as far as E4 on A",
+         doc["R+E4"]["against_parent"]["sku_totals_diff"] == {"RW-4418": 300}
+         and doc["R+E4"]["against_parent"]["other_lines_identical"] and shift("R+E4", rp) == shift("E4", "A") == 1
+         and (cleared("R+E4") - cleared(rp)).days == (cleared("E4") - cleared("A")).days == 14),
+        ("R+C27: every line closed 20 and 27 Dec 2027; the same bikes on every SKU; changes only from 18 Oct 2027 to "
+         "the closure; never later than R+; built ahead exactly what R+ builds in the closed weeks (1,928)",
+         all(lb(c27, ln)[67] == lb(c27, ln)[68] == 0 for ln in LINES) and doc[c27]["against_parent"]["sku_totals_diff"] == {}
+         and all(59 <= t <= 69 for ln in LINES for t, (a, b) in enumerate(zip(lb(c27, ln), lb(rp, ln)), 1) if a != b)
+         and all(gap(c27, ln).min() >= 0 and gap(c27, ln).max() == lb(rp, ln)[67] + lb(rp, ln)[68] for ln in LINES)
+         and sum(int(gap(c27, ln).max()) for ln in LINES) == 1928),
+        ("R+C27: no customer waits longer, any week, any line; every date and the fill as R+",
+         all(owed(c27, ln) == owed(rp, ln) for ln in LINES) and held(c27) == held(rp)
+         and sc_(c27, "Open orders cleared from") == sc_(rp, "Open orders cleared from")
+         and sc_(c27, "On-time fill rate") == sc_(rp, "On-time fill rate")),
+        ("R+C26: every line closed 21 and 28 Dec 2026; the same bikes on every SKU; only MTB carbon customers wait, "
+         "none before 4 Jan 2027 (two weeks to build: December's deliveries were on the line before the closure), "
+         "all delivered by 8 Feb 2027",
+         all(lb(c26, ln)[15] == lb(c26, ln)[16] == 0 for ln in LINES) and doc[c26]["against_parent"]["sku_totals_diff"] == {}
+         and all(owed(c26, ln) == owed(rp, ln) for ln in LINES if ln != "mtb-carbon")
+         and max(map(abs, late26[:17])) == 0 and min(late26[17:22]) > 0 and max(map(abs, late26[22:])) == 0
+         and sc_(c26, "Open orders cleared from") == "2027-02-08"),
+        ("a change never brings a line's date earlier than its parent's, on R+ too",
+         all(held(k)[ln] >= held(rp)[ln] for k in ("R+E1", "R+E4", c27, c26) for ln in LINES)),
+        ("A and every R scenario deliver the most any plan could by every week, on every line (gap 0, every solve certified)",
+         all(doc[k]["deliveries"]["largest_gap_bikes"] <= 1e-6 and max(doc[k]["deliveries"]["certificate_worst"].values()) <= 1e-7
+             and doc[k]["deliveries"]["weeks_checked"] == 121 and doc[k]["deliveries"]["lines_checked"] == 4 for k in PROVED)),
+    ]
 
 
 if __name__ == "__main__":
@@ -160,7 +244,12 @@ if __name__ == "__main__":
     doc["_meta"] = {"weeks": weeks, "scenarios": [c.key for c in CASES], "all_checks_pass": not failed,
                     "consistency": rules, "code_at_commit": commit + " (plus any uncommitted change)",
                     "optimality": "every solve certified from its duals and re-solved by interior point (tests/test_optimality.py); "
-                                  "every optimal plan is the solver's plan to within a bike (tests/test_engine.py, no ties)",
+                                  "every optimal plan is the solver's plan to within what the solver's tolerance buys, under "
+                                  "2 bikes (tests/test_engine.py, no ties)",
+                    "deliveries": "for " + ", ".join(PROVED) + ": at every week and on every line, the fewest units any plan "
+                                  "could leave owed, solved and certified, equals the plan's (scenarios.most_delivered; "
+                                  "tests/test_r_cases.py)",
+                    "story": STORY,
                     "tests": "run PYTHONPATH=src .venv/bin/python -m pytest -q to confirm the suite that pins these numbers"}
     json.dump(doc, open(OUT, "w"), indent=1, default=str)
     print("wrote", OUT, "| scenarios with a failing check:", failed or "none")

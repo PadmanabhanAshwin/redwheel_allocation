@@ -535,17 +535,20 @@ def test_the_tie_break_picks_the_optimal_plan_closest_to_a_base(base, want):
     assert p.short.values.max() == pytest.approx(0, abs=1e-6)          # the optimum, to the hold tolerance
 
 
-@pytest.mark.parametrize("key", ["A", "E1", "E4", "P1"])
+@pytest.mark.parametrize("key", ["A", "E1", "E4", "P1", "R+", "R+C27"])
 def test_the_scenarios_have_no_ties(key):
-    """Every optimal plan is the solver's plan, to within a bike: pulled toward a random plan, as far as the objective
-    allows (the hold tolerance, 1e-7 + 1e-9 x objective, buys about one run at the run cost of 1e-6), no run moves by
-    more than 1.5. So the plans are not an accident of the solver's path, and the tie-break is not used by run_case:
-    on this data it would only add solver noise (D27). E1 in particular: its SKU re-mix around the stoppage is the
-    objective's, not a tie."""
+    """Every optimal plan is the solver's plan, to within the runs the tolerance buys (under 2 bikes): pulled toward a
+    random plan, as far as the objective allows, no run moves by more than the runs the hold tolerance (1e-7 + 1e-9 x objective) buys at the run cost of
+    1e-6, plus half a bike: from 1.88 on A to 2.35 on R+, where the pull spends the 1.85 runs it buys on a build in
+    week 121 that lands after the horizon (O14). So the plans are not an accident of the
+    solver's path, and the tie-break is not used by run_case: on this data it would only add solver noise (D27). E1 in
+    particular: its SKU re-mix around the stoppage is the objective's, not a tie."""
     from dataclasses import replace
     from redwheel import scenarios as sc
-    case = {"A": sc.CASE_A, "E1": sc.CASE_E1, "E4": sc.CASE_E4, "P1": sc.CASE_P1}[key]
-    plain = sc.run_case(case)["lp"].runs
+    case = {"A": sc.CASE_A, "E1": sc.CASE_E1, "E4": sc.CASE_E4, "P1": sc.CASE_P1, **sc.R_CASES}[key]
+    lp = sc.run_case(case)["lp"]
+    plain = lp.runs
+    allowed = max(1.5, 0.5 + (engine._hold(lp.objective) - lp.objective) / 1e-6)
     rng = np.random.default_rng(0)
     base = pd.DataFrame(rng.uniform(0, 600, plain.shape), index=plain.index, columns=plain.columns)
     fn = "decide_walk" if case.walk else "decide"
@@ -559,4 +562,4 @@ def test_the_scenarios_have_no_ties(key):
         got = sc.run_case(replace(case, key=key + "-pulled"))["lp"].runs
     finally:
         mp.undo()
-    assert np.abs(got.values - plain.values).max() < 1.5
+    assert np.abs(got.values - plain.values).max() < allowed

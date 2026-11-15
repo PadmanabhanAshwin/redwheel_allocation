@@ -108,3 +108,58 @@ the code changes.
   Say "the line shares the loss", not "the solver happens to swap bikes".
 - P1's ranking moves only MTB carbon (117 cells on its own). Its first step, "orders past their date first", covers
   every line and re-mixes road carbon in 14 cells in weeks 3–7 (at most 11 bikes in a cell). Say which step did what.
+
+## 7. 15 Nov, last: R+ is the build plan (supersedes the story in §5 and the table's role in §6)
+
+Read `docs/deck/deck_numbers.json` again, once. It now has 15 scenarios, 24 consistency rules (all hold) and
+`_meta.story`, which says what to show. §6's numbers are unchanged; only their role changes.
+
+**The story.** A ships a bike the week it is built, and no plant does that. **R** is A with a week from the line to
+stock that can ship, and it shows why build time matters. **R+** gives the carbon lines two weeks and the base lines
+one: it is the build plan. Both build times are assumptions, because the data has no lead times; say so once.
+Stock stays pooled at Reno and the PDC, because the order files record no ship-from site. B's routing is therefore a
+what-if, not the plan.
+
+| Scenario | What changed | Bikes built | MTB carbon at target | Every order cleared | On-time fill |
+|---|---|---|---|---|---|
+| A | nothing (ships the week it is built) | 94,429 | 6 Sep 2027 | 14 Dec 2026 | 96.4% |
+| **R** | a week to build, every line | 94,429 | 20 Sep 2027 | 28 Dec 2026 | 95.5% |
+| **R+** (the plan) | carbon lines 2 weeks, base lines 1 | 94,429 | 4 Oct 2027 | 11 Jan 2027 | 94.8% |
+| R+E1 | MTB carbon line down 3 weeks (1–15 Mar 2027) | 94,429 | 1 Nov 2027 (+4 weeks, as on A) | 11 Jan 2027 | 94.8% |
+| R+E4 | a fleet order: 300 RW-4418, week of 9 Nov 2026 | 94,729 | 11 Oct 2027 (+1, as on A) | 25 Jan 2027 (+2, as on A) | 94.0% |
+| R+C27 | closed for Christmas: 20 + 27 Dec 2027 | 94,429 | 4 Oct 2027 | 11 Jan 2027 | 94.8% |
+| R+C26 | closed for Christmas: 21 + 28 Dec 2026 | 94,429 | 25 Oct 2027 | 8 Feb 2027 | 93.8% |
+
+**The live set, on R+:** line down, fleet order, then Christmas 2027 and Christmas 2026. Deck only: B, P1, E5 (lots of 50).
+Cut: E2. E1, E3 and E4 on A stay in the file for reference: R+E1 and R+E4 move exactly as far as E1 and E4 move A.
+
+**Christmas, the pair that makes the point (one change each: every line's capacity 0 for two weeks):**
+- *2027, absorbed.* The lines have room in the autumn. Each line builds ahead as late as it can: the carbon lines run
+  full from 25 Oct 2027 (MTB carbon 305 → 580 a week), road base from 1 Nov, MTB base from 29 Nov. Together they build
+  ahead exactly what R+ would have built in the two closed weeks: 1,928 bikes. Stock above target builds up, peaks
+  in the closure (MTB carbon +1,051 in the week of 27 Dec 2027), and is back to R+'s level on every line by 10 Jan
+  2028. No customer waits longer in any week, and every date and the fill are unchanged. Chart it from `builds_by_line_by_week` with `capacity_by_line_by_week`, R+ against R+C27, weeks
+  55–72, plus `stock_above_target_by_line_by_week`.
+- *2026, it hurts.* The lines are already full, clearing the opening backlog, so nothing can be built ahead (road
+  base, the one line with room, builds 229 ahead). Only MTB carbon customers wait: from 4 Jan to 1 Feb 2027, up to 724
+  bikes, 2,169 bike-weeks. Everything is delivered by 8 Feb. **December's deliveries are not hit:** those bikes were on
+  the line before the closure, so with two weeks to build the closure costs January. Chart it from
+  `owed_by_line_by_week["mtb-carbon"]`, R+ against R+C26.
+
+**The most deliveries by any date, proved (for the "why believe it" slide).** For A, R, R+ and the four R+ events,
+we solved for the fewest bikes any plan could leave owed, on each line in each of the 121 weeks (484 certified solves
+per scenario). The plan matches it every time (`deliveries` block, `largest_gap_bikes`: 0). Say: "No plan delivers
+more by any date." Do not say the solver maximises deliveries; it does not have to, because its plan already
+delivers the most. A plan that builds 100 bikes later shows a gap of 100 (the test).
+
+**Corrections and caveats:**
+- §6 fact 2 becomes: "Pulled toward any other plan, the optimum moves by under 2 bikes: what the solver's tolerance
+  allows." On R+ the 1.85 bikes it allows go to a build in the last week that never lands.
+- With a build time, the last weeks build nothing, because their bikes would land after week 121 (R: week 121;
+  R+: weeks 120–121 on the carbon lines, 121 on the base lines). End a builds chart at week 119, or label those weeks.
+- Words: "two weeks from the line to stock" or "two weeks to build"; "closed for Christmas"; "built ahead". Not
+  "lead-time offset" or "cutoff objective".
+
+**For the UI:** `scenarios.R_CASES` holds R, R+ and the four R+ events. Their keys contain "+", so quote them
+anywhere a key goes into a URL or a widget key. The run is `sc.run_case(case)` as for every scenario, and the proof
+is `sc.most_delivered(R)` (about 7 s; precomputed in the file).

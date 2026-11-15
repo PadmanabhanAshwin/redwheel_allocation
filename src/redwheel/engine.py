@@ -498,3 +498,40 @@ def decide_walk(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekl
     worst = sum(short[gix == g].max(axis=0).sum() for g in range(nG))
     score = w_worst * worst + w_short * short.sum() + w_excess * excess.sum() + w_run * x[lp.o_run:lp.o_lvl].sum()
     return _plan(lp, x[:lp.n_var], score, record)
+
+
+def fewest_owed(obj: rtn.RTN, free: list[str], target_units: pd.DataFrame, weekly_demand: pd.Series | pd.DataFrame,
+                group: pd.Series, cutoffs: list[int], positions: dict | None = None) -> tuple[pd.DataFrame, dict]:
+    """The fewest units any plan can leave owed at the end of a week, per group: the LP's own constraints, with the
+    objective replaced by the group's units owed that week, the sum over its positions of max(0, -net). What is owed
+    is what is left of the orders after stock ships, so this is the most a plan can deliver by that week, stated as
+    what it cannot. A plan delivers the most it can by a cutoff exactly when its own units owed there equal this.
+
+    Arguments as in `decide`; the targets and weekly demand only build the same rows, they do not enter the
+    objective. Returns (group x cutoff, the worst certificate over every solve: see `certificate`)."""
+    lp = _build(obj, free, target_units, weekly_demand, group, 1.0, 0.1, 0.001, positions, 0.0)
+    n0, nI, H = lp.n_var, lp.nI, lp.H
+    pad = lambda A: sparse.hstack([A, sparse.csr_matrix((A.shape[0], nI))]).tocsr()
+    A_eq, A_ub0 = pad(lp.A_eq), pad(lp.A_ub)
+    bounds = np.vstack([lp.bounds, np.column_stack([np.zeros(nI), np.full(nI, np.inf)])])
+    gix = np.asarray(lp.group_ix)
+    out = pd.DataFrame(index=lp.groups, columns=list(cutoffs), dtype=float)
+    worst = {"primal": 0.0, "dual": 0.0, "gap": 0.0}
+    for T in cutoffs:
+        rows, cols, vals = [], [], []
+        for si, s in enumerate(lp.items):                       # -net_s(T) - owed_s <= 0
+            for r, sg in lp.members[s]:
+                rows.append(si); cols.append(lp.o_lvl + r * H + (T - 1)); vals.append(-sg)
+            rows.append(si); cols.append(n0 + si); vals.append(-1.0)
+        A_ub = sparse.vstack([A_ub0, sparse.csr_matrix((vals, (rows, cols)), shape=(nI, n0 + nI))]).tocsr()
+        b_ub = list(lp.b_ub) + [0.0] * nI
+        for g in range(lp.nG):
+            c = np.zeros(n0 + nI)
+            c[n0 + np.flatnonzero(gix == g)] = 1.0
+            sol = linprog(c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=lp.b_eq, bounds=bounds, method="highs")
+            if sol.status != 0:
+                raise RuntimeError(f"LP not solved: {sol.message}")
+            cert = certificate(c, A_ub, b_ub, A_eq, lp.b_eq, bounds, sol)
+            worst = {k: max(worst[k], cert[k]) for k in worst}
+            out.at[lp.groups[g], T] = cert["objective"]
+    return out, worst

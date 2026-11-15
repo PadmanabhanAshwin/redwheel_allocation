@@ -118,6 +118,46 @@ PRIORITY = {c.key: c for c in (CASE_P1,)}
 # Kept out of EVENTS, like E3, until the planner shows a walk.
 
 
+# R and R+: scenario A's routing (stock pooled against every order, the plan decides builds), with a build time.
+# A ships a bike the week it is built, which no plant does. The data has no lead times, so both are assumptions:
+# R, a week on every line; R+, two weeks on the carbon lines and one on the base lines. R+ is the build plan.
+CASE_R = Case("R", "Scenario R · A with a week to build",
+              priors.table(ALL_ROUTES, build_weeks=1, transfer_weeks=1, decides=("make",), lines=LINES),
+              summary="Scenario A, with a week from the line to stock that can ship. Stock at Reno and the PDC is "
+                      "pooled against every order; the plan decides builds.",
+              parent="A")
+CASE_RP = Case("R+", "Scenario R+ · build time by model",
+               priors.table(ALL_ROUTES, build_weeks={ln: 2 if "carbon" in ln else 1 for ln in LINES},
+                            transfer_weeks=1, decides=("make",), lines=LINES),
+               summary="Scenario R, with the carbon bikes taking two weeks from the line to stock that can ship and "
+                       "the base bikes one. The build plan.",
+               parent="R")
+
+
+def _on_rp(key: str, name: str, summary: str, changes: tuple) -> Case:
+    return Case(key, name, CASE_RP.priors, summary=summary, parent="R+", changes=changes)
+
+
+CLOSED = "the plant closed for Christmas"
+CASE_RP_E1 = _on_rp("R+E1", "Scenario R+ · MTB carbon line down three weeks",
+                    "Scenario R+, with the MTB carbon line down for the three weeks starting 1, 8 and 15 Mar 2027.",
+                    CASE_E1.changes)
+CASE_RP_E4 = _on_rp("R+E4", "Scenario R+ · a fleet order lands",
+                    "Scenario R+, with a commercial order for 300 RW-4418 (MTB carbon, size M) on top of the forecast "
+                    "in the week of 9 Nov 2026.", CASE_E4.changes)
+CASE_RP_C27 = _on_rp("R+C27", "Scenario R+ · closed for Christmas 2027",
+                     "Scenario R+, with every line closed for the two weeks starting 20 and 27 Dec 2027. "
+                     "The plan knows in advance.",
+                     (Change("arrival", {"kind": "capacity"}, "set", 0, 68, 69,
+                             f"{CLOSED}, weeks of 20 and 27 Dec 2027"),))
+CASE_RP_C26 = _on_rp("R+C26", "Scenario R+ · closed for Christmas 2026",
+                     "Scenario R+, with every line closed for the two weeks starting 21 and 28 Dec 2026, while the "
+                     "lines are still clearing the open orders.",
+                     (Change("arrival", {"kind": "capacity"}, "set", 0, 16, 17,
+                             f"{CLOSED}, weeks of 21 and 28 Dec 2026"),))
+R_CASES = {c.key: c for c in (CASE_R, CASE_RP, CASE_RP_E1, CASE_RP_E4, CASE_RP_C27, CASE_RP_C26)}
+
+
 # ---------- pools: which stock faces which demand, read from the routing rule ----------
 
 def pools(ship_routes: tuple) -> dict:
@@ -485,3 +525,22 @@ def checks(R: dict) -> pd.DataFrame:
         rows.append(("Walk: a later step is served only when every earlier step on the line was met or held back",
                      f"{len(R['walk']['steps'])} steps, {out_of_order} served out of order", out_of_order == 0))
     return pd.DataFrame(rows, columns=["check", "value", "pass"])
+
+
+# ---------- the most any plan can deliver by a week ----------
+
+def most_delivered(R: dict, cutoffs: list | None = None) -> dict:
+    """The plan against the most any plan could deliver by each cutoff week (default: every week), line by line,
+    with this scenario's object and rules. Owed is what is left of the orders once stock ships, so the most
+    delivered is the fewest owed (`engine.fewest_owed`, one certified solve per line and week).
+    Returns {"plan", "fewest": line x cutoff, units owed; "gap": the largest plan - fewest, in bikes;
+    "certificate": the worst over every solve}. A gap of 0: no plan delivers more by any of those weeks on any line."""
+    obj, case = R["obj"], R["case"]
+    cut = list(cutoffs or range(1, len(obj.weeks) + 1))
+    free = list(obj.tasks.loc[obj.tasks["kind"].isin(case.decides), "task_id"])
+    keys = list(R["positions"])
+    fewest, cert = engine.fewest_owed(obj, free, R["target_units"].loc[keys], R["weekly_demand"].loc[keys],
+                                      R["line"].loc[keys], cut, positions=R["positions"])
+    plan = R["flows"]["open_orders"].loc[keys, cut].groupby(R["line"]).sum()
+    return {"plan": plan, "fewest": fewest.loc[plan.index], "gap": float((plan - fewest.loc[plan.index]).values.max()),
+            "certificate": cert}

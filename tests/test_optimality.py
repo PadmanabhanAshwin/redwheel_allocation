@@ -14,7 +14,7 @@ from scipy.optimize import linprog as real_linprog
 from redwheel import engine, scenarios as sc
 
 CASES = [sc.CASE_A, sc.CASE_B, sc.CASE_E1, sc.CASE_E2, sc.CASE_E3, sc.CASE_E4, sc.CASE_E5, sc.CASE_P1,
-         replace(sc.CASE_B, key="B+E3", changes=sc.CASE_E3.changes, parent="B")]
+         replace(sc.CASE_B, key="B+E3", changes=sc.CASE_E3.changes, parent="B"), *sc.R_CASES.values()]
 
 
 @pytest.fixture(scope="module")
