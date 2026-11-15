@@ -259,74 +259,82 @@ def fulfilment():
 p3 = page(3, "Network structures", "", alone() + rule(520) + kitting() + vrule(980, 560, 930) + fulfilment())
 
 # ================================================================ 5 · linear program
-# Top: the object for one week (MTB carbon, week 1) and the rows it becomes; the LP's week-1 answer from base_mtb.json
-# (builds 269 / 79 / 27; weeks short 36.98 / 36.98 / 36.99). Bottom: the translation, constraints from the object and
-# the objective from the scenario (engine._build, engine.decide_walk; docs/SOLVER.md §1, §2, §2a).
+# Constraints from the object, objective from the scenario, and what the LP decides. Sources: engine._build (rows and
+# sizes), base_mtb.json (week 1), aux_fns.compare_plans on aux_fns.run_plan (LP vs lowest cover first), run_case E3 vs A
+# (RW-4418 +1,394 in weeks 55-59), docs/WORKING_NOTES.md D27 (optimality).
 SH = ["9304", "4418", "6416"]; OPEN_STOCK = {"9304": 10, "4418": 25, "6416": 15}
 E_ = lambda op: f" {op} "; PL = " + "; MI = " − "; SL = " / "
-it = lambda s: f'<tspan style="{MF}">{s}</tspan>'
 SUMV = lambda sub: f'Σ{v("", sub)} '
-def vn(x, c, kind, name, val, w, h=56):
-    return (f'<rect class="res" x="{x}" y="{c-h/2}" width="{w}" height="{h}" rx="12"/>' + txt(x + 13, c - 7, kind, 15, GREY)
-            + txt(x + 13, c + 18, name, 18, INK, 700) + txt(x + w - 14, c + 18, val, 20, INK, 700, "end"))
-G4 = 404; R4 = [G4 - 74, G4, G4 + 74]
-def frag():
-    g = vn(110, G4, "capacity", "MTB carbon", "375", 186)
-    for c, n in zip(R4, SH):
-        g += sar(296, G4 + (c - G4) / 8, 356, c, curve=c != G4) + stk(356, c, f"make {n}", 120, 46, 18)
-        g += sar(476, c, 514, c) + vn(514, c, "inventory", f"RW-{n}, Reno", OPEN_STOCK[n], 212)
-    return g + txt(320, R4[0] - 10, "−1", 19, AMB, 700, "middle") + txt(495, R4[0] - 12, "+1", 19, AMB, 700, "middle")
-MX0 = 850; MCOL = [1206, 1290, 1374]; MK = 1124
-def rows_of():
-    y0 = 304; top = y0 + 12; RH = 44
-    g = txt(MK, y0, "opening + arrival", 16, GREY, 700, "end") + "".join(meq(c, y0, v("N", n, 15), 22, "middle", AMB) for c, n in zip(MCOL, SH))
-    rows = [("MTB carbon", "375", ["−1", "−1", "−1"])] + [(f"RW-{n}, Reno", str(OPEN_STOCK[n]), ["+1" if j == i else "" for j in range(3)]) for i, n in enumerate(SH)]
-    g += f'<path d="M{MCOL[0]-38} {top} h-8 v{RH*4} h8 M{MCOL[2]+38} {top} h8 v{RH*4} h-8" fill="none" stroke="{INK}" stroke-width="2"/>'
-    for i, (lab, st, ent) in enumerate(rows):
-        yy = top + RH * i + 30
-        g += txt(MX0, yy, lab, 19, INK, 700) + txt(MK, yy, st, 21, INK, 400, "end")
-        g += "".join(txt(c, yy, e, 21, AMB, 700, "middle") for c, e in zip(MCOL, ent)) + txt(1438, yy, "≥ 0", 21)
-    g += txt(1500, top + 30, "builds ≤ 375", 19, GREY) + vrule(1490, top + RH + 8, top + RH * 4 - 4) + txt(1504, top + RH * 2 + 30, "stock never negative", 19, GREY)
-    yb = top + RH * 4 + 26
-    g += rule(yb, MX0, 1810)
-    for j, (lab, vals, note) in enumerate([("builds", ["269", "79", "27"], "375: the line is full"), ("weeks short of target", ["37.0", "37.0", "37.0"], "equal: the worst is minimised")]):
-        yy = yb + 36 + 34 * j
-        g += txt(MX0, yy, lab, 19) + "".join(txt(c, yy, s, 21, INK, 700, "middle") for c, s in zip(MCOL, vals)) + txt(1500, yy, note, 19, GREY)
+it = lambda s: f'<tspan style="{MF}">{s}</tspan>'
+LCF = {"held": ("6 Sep 2027", "1 May 2028"), "below": ("278", "335"), "bikes": "94,429"}
+E3 = {"extra": "1,394", "weeks": 5, "gap": 8}
+
+# --- constraints: the MTB carbon line in week 1, nodes as rows and columns
+def rnode(x, c, kind, name, w=196, h=44):
+    return f'<rect class="res" x="{x}" y="{c-h/2}" width="{w}" height="{h}" rx="10" style="stroke-width:2"/>' + txt(x + 11, c - 5, kind, 13, GREY) + txt(x + 11, c + 14, name, 17, INK, 700)
+def tbox(cx, c, name, w=104, h=36):
+    return f'<rect class="task" x="{cx-w/2}" y="{c-h/2}" width="{w}" height="{h}" rx="5"/>' + txt(cx, c + 6, name, 16, "#fff", 700, "middle")
+KC = [474, 588, 702]; KY = [388, 440, 492, 544]
+def constraints():
+    g = txt(110, 252, f'{B_("Constraints")}<tspan style="fill:{GREY}"> from the object</tspan>', 24)
+    g += txt(110, 286, "task → column resource → row edge → entry", 18, GREY)
+    g += txt(388, 340, "opening + arrival", 15, GREY, 700, "end") + "".join(tbox(c, 334, f"make {n}") for c, n in zip(KC, SH))
+    rows = [("capacity", "MTB carbon", "375", ["−1", "−1", "−1"])] + [("inventory", f"RW-{n}, Reno", str(OPEN_STOCK[n]), ["+1" if j == i else "" for j in range(3)]) for i, n in enumerate(SH)]
+    g += f'<path d="M{KC[0]-52} {KY[0]-26} h-8 v{KY[3]-KY[0]+52} h8 M{KC[2]+52} {KY[0]-26} h8 v{KY[3]-KY[0]+52} h-8" fill="none" stroke="{INK}" stroke-width="2"/>'
+    for c, (kind, name, st, ent) in zip(KY, rows):
+        g += rnode(110, c, kind, name) + txt(388, c + 8, st, 21, INK, 400, "end")
+        g += "".join(txt(x, c + 8, e, 22, AMB, 700, "middle") for x, e in zip(KC, ent)) + txt(786, c + 8, "≥ 0", 21)
+    g += txt(846, KY[0] + 8, "builds ≤ 375", 18, GREY) + vrule(838, KY[1] - 18, KY[3] + 18) + txt(852, KY[2] - 18, "stock never", 18, GREY) + txt(852, KY[2] + 6, "negative", 18, GREY)
+    g += meq(110, 620, f'{v("X", "r,t")}{E_("=")}{v("c", "r")}{v("X", "r,t−1")}{PL}{SUMV("i")}{v("μ", "ir")}{v("N", "i,t−θ")}{PL}{v("π", "r,t")}{E_("≥")}0', 27)
+    g += txt(110, 656, "One row per resource and week: 8,954 in scenario A, none written by hand.", 18, GREY)
     return g
 
-# bottom: the translation. (from, to-math, note)
-CON = [("task " + it("i"), v("N", "i,t"), "runs in week " + it("t") + ", up to the run limit"),
-       ("resource " + it("r"), f'{v("X", "r,t")}{E_("≥")}0', "level after week " + it("t")),
-       ("edge " + it("μ, θ"), f'{v("μ", "ir")}{v("N", "i,t−θ")}', "a term of " + it("r") + "’s row"),
-       ("opening, arrival, carry", f'{v("X", "r,0")}, {v("π", "r,t")}, {v("c", "r")}', "the row’s constants")]
-BAL = f'{v("X", "r,t")}{E_("=")}{v("c", "r")}{v("X", "r,t−1")}{PL}{SUMV("i")}{v("μ", "ir")}{v("N", "i,t−θ")}{PL}{v("π", "r,t")}'
-OBJ = [("net inventory", f'{v("net", "k,t")}{E_("=")}{v("stock", "k,t")}{MI}{v("open orders", "k,t")}', "from the levels"),
-       ("floor", f'{v("s", "k,t")}{E_("≥")}{v("f", "k,t")}{MI}{v("net", "k,t")}, {v("s", "k,t")}{E_("≥")}0', "f: due, owed (0), target"),
-       ("priority order", f'({v("f", "1")}, {v("S", "1")}), … , ({v("f", "J")}, {v("S", "J")})', "each pair a step")]
-def subS(pre, post): return (f'<tspan dy="7" dx="1" style="{MF};font-size:19px">{pre}S</tspan><tspan dy="4" style="{MF};font-size:13px">j</tspan>'
-                             f'<tspan dy="-4" style="{MF};font-size:19px">{post}</tspan><tspan dy="-7" style="font-size:10px"> </tspan> ')
-STEPQ = f'step {it("j")}: min {SUMV("g,t")}max{subS("k∈", "∩g")}{v("s", "k,t")}{SL}{v("d", "k,t")}{PL}0.1 Σ{subS("k∈", ", t")}{v("s", "k,t")}{SL}{v("d", "k,t")}'
-HOLDQ = f'hold step {it("j")} at its optimum; then step {it("j")}{PL}1'
-PY0, PH = 640, 370
-def panel(x, w, col, head, sub, rows, ax, mx, nx):
-    g = f'<rect x="{x}" y="{PY0}" width="{w}" height="{PH}" rx="12" fill="#fff" stroke="{col}" stroke-width="2.5"/>'
-    g += txt(x + 26, PY0 + 44, f'{B_(head)}<tspan style="fill:{GREY}"> {sub}</tspan>', 24)
-    for i, (a, m, n) in enumerate(rows):
-        y = PY0 + 100 + 44 * i
-        g += txt(x + 26, y, a, 20, INK, 700) + txt(x + ax, y, "→", 20, GREY) + meq(x + mx, y, m, 26) + txt(x + nx, y, n, 18, GREY)
+# --- objective: rule A, and week 1 on the MTB carbon line
+W1 = {f"RW-{n}": dict(b=BD["builds"][f"RW-{n}"][0], d=float(BD["rate"][f"RW-{n}"][0]),
+                      before=(float(BD["target_units"][f"RW-{n}"][0]) - float(BD["net"][f"RW-{n}"][0]) + float(BD["demand_all"][f"RW-{n}"][0])) / float(BD["rate"][f"RW-{n}"][0]),
+                      after=float(BD["short_weeks"][f"RW-{n}"][0])) for n in SH}
+assert sum(w["b"] for w in W1.values()) == 375 and all(abs(w["before"] - w["b"] / w["d"] - w["after"]) < 0.02 for w in W1.values())
+OX = 1090
+def objective():
+    g = vrule(1040, 232, 662) + txt(OX, 252, f'{B_("Objective")}<tspan style="fill:{GREY}"> from the scenario</tspan>', 24)
+    g += txt(OX, 286, "Rule A: the worst SKU on each line first, then the total", 18, GREY)
+    g += meq(OX, 344, f'min {SUMV("g,t")}max{v("", "k∈g")} {v("u", "k,t")}{PL}0.1 {SUMV("k,t")}{v("u", "k,t")}', 27)
+    g += meq(OX, 392, f'{v("u", "k,t")}{E_("=")}({v("target", "k,t")}{MI}{v("net", "k,t")}){PLUS}{SL}{v("d", "k,t")}', 25) + txt(1520, 392, "weeks short", 18, GREY)
+    g += txt(OX, 424, "net: stock − open orders · d: weekly demand over the target window", 16, GREY)
+    g += txt(OX, 474, "Week of 7 Sep 2026, MTB carbon: 375 built; weeks short before → after", 16, GREY, 700)
+    x0, x1, w0, w1 = 1250, 1790, 36.0, 43.0
+    X = lambda w: x0 + (w - w0) * (x1 - x0) / (w1 - w0)
+    ys = [512, 552, 592]
+    g += f'<line x1="{X(37)}" y1="492" x2="{X(37)}" y2="608" stroke="{LIGHT}" stroke-width="1.5" stroke-dasharray="4 4"/>'
+    for y, n in zip(ys, SH):
+        k = f"RW-{n}"; w = W1[k]; xb, xa = X(w["before"]), X(w["after"])
+        g += f'<rect x="{OX}" y="{y-12}" width="14" height="14" fill="{COL[k]}"/>' + txt(OX + 22, y + 1, k, 18, INK, 700)
+        g += f'<path d="M{xb-8} {y-5} L{xa+10} {y-5}" stroke="{AMB}" stroke-width="2" fill="none" marker-end="url(#g)"/>'
+        g += f'<circle cx="{xb}" cy="{y-5}" r="6" fill="#fff" stroke="{GREY}" stroke-width="2"/><circle cx="{xa}" cy="{y-5}" r="6" fill="{INK}"/>'
+        g += txt(xb + 12, y + 1, f'{w["before"]:.1f}', 16, GREY) + txt((xb + xa) / 2 + 4, y - 18, f'+{w["b"]}', 16, AMB, 700, "middle")
+    g += f'<line x1="{x0}" y1="612" x2="{x1}" y2="612" stroke="{RULE_C}" stroke-width="1.5"/>'
+    g += "".join(txt(X(t), 634, f"{t}", 15, GREY, 400, "middle") for t in (39, 41, 43)) + txt(X(37), 634, "37.0", 16, INK, 700, "middle")
     return g
-def translation():
-    g = panel(110, 820, INK, "Constraints", "from the object", CON, 272, 306, 520)
-    g += meq(136, PY0 + 100 + 44 * 3 + 58, BAL, 27) + txt(136, PY0 + PH - 22, "One row per resource and week: 8,954 in scenario A, none written by hand.", 18, GREY)
-    g += panel(970, 840, AMB, "Objective", "from the scenario", OBJ, 196, 232, 590)
-    ys = PY0 + 100 + 44 * 2 + 62
-    g += meq(996, ys, STEPQ, 26) + meq(996, ys + 44, HOLDQ, 26)
-    g += f'<path class="wire" style="stroke:{AMB};stroke-width:2" marker-end="url(#g)" d="M1458 {ys+36} H1690 V{ys-8} H1640"/>'
-    g += txt(996, PY0 + PH - 22,"Rule A is one step: target, every SKU. d: weekly demand over the target window.", 18, GREY)
+
+# --- what the LP decides (scenario A)
+def findings():
+    g = rule(690) + txt(110, 736, f'{B_("What the LP decides")}<tspan style="fill:{GREY}"> scenario A</tspan>', 24)
+    cols = [("Capacity sets the totals", ["A line below target runs full. MTB carbon", "builds 375 a week to 30 Aug 2027 and is at", "target on 6 Sep 2027, when capacity is 580."]),
+            ("The objective sets mix and timing", ["Equal weeks short on a full line (above).", "It sees all 121 weeks: when RW-4418 frames", f'stop for {E3["gap"]} weeks (E3), it builds {E3["extra"]} ahead.']),
+            ("Against lowest cover first", [f'Week by week, no look-ahead; same {LCF["bikes"]} bikes.']),
+            ("Proved optimal", ["The duals certify every solve.", "HiGHS, under 0.2 s.", "9 of 9 plan checks."])]
+    for i, (h, body) in enumerate(cols):
+        x = 110 + i * 430
+        g += txt(x, 784, h, 20, INK, 700) + lines(x, 818, body, 18, INK, 28)
+    x = 110 + 2 * 430
+    g += txt(x + 236, 852, "LP", 16, GREY, 700, "end") + txt(x + 390, 852, "the rule", 16, GREY, 700, "end")
+    for j, (lab, (a, b)) in enumerate([("targets held", LCF["held"]), ("SKU-weeks below", LCF["below"])]):
+        yy = 880 + 28 * j
+        g += txt(x, yy, lab, 18) + txt(x + 236, yy, a, 18, INK, 700, "end") + txt(x + 390, yy, b, 18, INK, 400, "end")
+    g += rule(936) + txt(110, 982, "Rule A shares a shortage evenly. A priority order decides who goes first: next slide.", 22)
     return g
-p4 = page(4, "Linear program", "",
-          txt(110, 250, "Object: MTB carbon line, week of 7 Sep 2026", 18, GREY, 700) + txt(MX0, 250, "LP: one column per task, one row per resource, one entry per edge", 18, GREY, 700)
-          + frag() + arrow_big(760, G4) + rows_of() + translation())
+
+p4 = page(4, "Linear program", "", constraints() + objective() + findings())
 
 # ================================================================ 6 · priority orders
 def stepline(x, y, n, s, col=AMB):
