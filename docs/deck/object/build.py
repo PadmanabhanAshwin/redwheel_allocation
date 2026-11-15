@@ -1,6 +1,6 @@
 """The object deck: six 1920x1080 slides as SVG in one HTML file.
 
-Usage: python3 build.py OUTDIR  ->  OUTDIR/object.html and OUTDIR/p1..p8.html; print object.html to PDF with Chrome.
+Usage: python3 build.py OUTDIR  ->  OUTDIR/object.html and OUTDIR/p1..p6.html; print object.html to PDF with Chrome.
 Data, read from this folder: base_mtb.json (dump_base.py, scenario A) and slide5_builds.json (the solver session,
 scenarios A and P1). Numbers that are not in those files are in NUM below; refresh them at the final run.
 
@@ -364,115 +364,93 @@ def bw(sc, ln):
     w = DN[sc]["build_weeks"][ln]
     return "same week" if w == 0 else f"{w} week{'s' if w > 1 else ''}"
 
-def kpis(sc, parent):
-    s = DN[sc]["scorecard"]; p = DN[parent]["scorecard"] if parent else None
-    tiles = [("Bikes built", f'{s["Bikes built"]:,}', "same bikes, same total per bike" if p and s["Bikes built"] == p["Bikes built"] and not DN[sc]["against_parent"]["sku_totals_diff"] else ""),
-             ("Every order cleared", fd(D_(s["Open orders cleared from"])), (wdiff(s["Open orders cleared from"], p["Open orders cleared from"]) + f" against {parent}") if p else ""),
-             ("All targets held from", fd(D_(s["All targets held from"])), (wdiff(s["All targets held from"], p["All targets held from"]) + f" against {parent}") if p else ""),
-             ("On-time fill", f'{100*s["On-time fill rate"]:.1f}%', f'{round(100*s["On-time fill rate"], 1) - round(100*p["On-time fill rate"], 1):+.1f} pt against {parent}' if p else "")]
-    g = ""
-    for i, (lab, val, dl) in enumerate(tiles):
-        x = 110 + i * 430
-        g += txt(x, 246, lab, 18, GREY, 700) + txt(x, 298, val, 40, INK, 700) + txt(x, 330, dl, 18, GREY)
-    return g
-
-def axis_dates(x0, x1, w0, w1, y, ticks):
-    X = lambda w: x0 + (w - w0) * (x1 - x0) / (w1 - w0)
-    return "".join(f'<line x1="{X(w)}" y1="{y}" x2="{X(w)}" y2="{y+6}" stroke="{LIGHT}" stroke-width="1.5"/>' + txt(X(w), y + 26, lab, 15, GREY, 400, "middle") for w, lab in ticks)
 def poly(pts, col, wdt, dash=False):
     d = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
     return f'<polyline points="{d}" fill="none" stroke="{col}" stroke-width="{wdt}" stroke-linejoin="round"{" stroke-dasharray=" + chr(34) + "7 5" + chr(34) if dash else ""}/>'
-def marker(x, y0, y1, lab, anchor="start", ly=None):
-    return f'<line x1="{x}" y1="{y0}" x2="{x}" y2="{y1}" stroke="{INK}" stroke-width="1.5" stroke-dasharray="3 4"/>' + txt(x + (8 if anchor == "start" else -8), ly or y0 + 16, lab, 16, INK, 700, anchor)
-CY0, CY1 = 430, 690
-def chart_orders(sc, parent):
-    x0, x1, w0, w1 = 110, 920, 1, 22
-    X = lambda w: x0 + (w - w0) * (x1 - x0) / (w1 - w0); Y = lambda v: CY1 - v * (CY1 - CY0) / 5500
-    g = txt(110, 396, B_("Open orders, all lines") + f'<tspan style="fill:{GREY}"> bikes owed to customers, end of week</tspan>', 19)
-    g += "".join(f'<line x1="{x0}" y1="{Y(v)}" x2="{x1}" y2="{Y(v)}" stroke="{RULE_C}" stroke-width="1"/>' + txt(x0 - 8, Y(v) + 5, f"{v:,}", 14, GREY, 400, "end") for v in (0, 2000, 4000))
-    if parent: g += poly([(X(w), Y(v)) for w, v in zip(range(1, 23), total_owed(parent)[:22])], LIGHT, 2.5, True)
-    g += poly([(X(w), Y(v)) for w, v in zip(range(1, 23), total_owed(sc)[:22])], INK, 3)
-    wc = cleared_week(total_owed(sc))
-    g += marker(X(wc), CY0, CY1, f"every order cleared {fd(DW[wc])}", "end" if X(wc) > 600 else "start")
-    return g + axis_dates(x0, x1, w0, w1, CY1, [(1, "Sep"), (5, "Oct"), (9, "Nov"), (13, "Dec"), (18, "Jan 2027"), (22, "Feb")])
-MTB = ["RW-9304", "RW-4418", "RW-6416"]
-def chart_wos(sc, parent):
-    x0, x1, w0, w1 = 1000, 1810, 1, 62
-    X = lambda w: x0 + (w - w0) * (x1 - x0) / (w1 - w0); Y = lambda v: CY1 - (v + 25) * (CY1 - CY0) / 42
-    g = txt(1000, 396, B_("Weeks of supply, MTB carbon") + f'<tspan style="fill:{GREY}"> against its 15-week target</tspan>', 19)
-    g += "".join(f'<line x1="{x0}" y1="{Y(v)}" x2="{x1}" y2="{Y(v)}" stroke="{RULE_C}" stroke-width="1"/>' + txt(x0 - 8, Y(v) + 5, f"{v}", 14, GREY, 400, "end") for v in (-20, -10, 0, 10))
-    g += f'<line x1="{x0}" y1="{Y(15)}" x2="{x1}" y2="{Y(15)}" stroke="{GREY}" stroke-width="1.5" stroke-dasharray="6 5"/>' + txt(x1, Y(15) - 8, "target 15", 14, GREY, 700, "end")
-    if parent:
-        g += "".join(poly([(X(w), Y(v)) for w, v in zip(range(1, 63), DN[parent]["weeks_of_supply_mtb"][k][:62])], LIGHT, 2, True) for k in MTB)
-    g += "".join(poly([(X(w), Y(v)) for w, v in zip(range(1, 63), DN[sc]["weeks_of_supply_mtb"][k][:62])], INK, 2.5) for k in MTB)
-    wt = WK_OF_DN(DN[sc]["held_by_line"]["mtb-carbon"])
-    g += marker(X(wt), CY0, CY1, f"targets held from {fd(DW[wt])}", "end", CY1 - 14)
-    g += txt(1000, CY1 + 58, "one line per bike: RW-9304, RW-4418, RW-6416", 15, GREY)
-    return g + axis_dates(x0, x1, w0, w1, CY1, [(1, "Sep 2026"), (18, "Jan 2027"), (35, "May"), (53, "Sep")])
 WK_OF_DN = lambda s: {v: k for k, v in DW.items()}[D_(s)]
-def legend(parent):
-    if not parent: return ""
-    return (poly([(1500, 372), (1540, 372)], INK, 3) + txt(1548, 377, "this scenario", 15, GREY)
-            + poly([(1660, 372), (1700, 372)], LIGHT, 2.5, True) + txt(1708, 377, parent, 15, GREY))
-def by_line(sc, parent):
-    g = rule(784)
-    cols = [(110, "line", "start"), (440, "build time", "end"), (780, "every order cleared", "end"), (920, "", "end"), (1640, "targets held from", "end"), (1790, "", "end")]
-    g += "".join(txt(x, 818, h, 15, GREY, 700, a) for x, h, a in cols)
-    for i, ln in enumerate(LORDER):
-        y = 852 + 30 * i
-        c, h = line_cleared(sc, ln), D_(DN[sc]["held_by_line"][ln])
-        g += txt(110, y, LNAME[ln], 18, INK, 700) + txt(440, y, bw(sc, ln), 18, INK, 400, "end")
-        g += txt(780, y, "none waiting" if c == DW[1] else fd(c), 18, INK, 400, "end") + txt(1640, y, fd(h), 18, INK, 400, "end")
-        if parent:
-            g += txt(920, y, wdiff(c, line_cleared(parent, ln)), 16, GREY, 400, "end") + txt(1790, y, wdiff(h, DN[parent]["held_by_line"][ln]), 16, GREY, 400, "end")
-    return g
-def scenario_page(n, sc, parent, title, changed, point):
-    body = (kpis(sc, parent) + rule(356) + legend(parent) + chart_orders(sc, parent) + chart_wos(sc, parent)
-            + by_line(sc, parent) + rule(986) + txt(110, 1026, point, 22))
-    return page(n, title, changed, body)
-AN = lambda n: f'A{v("", n, 15)}'
-p5 = scenario_page(5, "A", None, "Scenario A · the base plan",
-                   "A bike ships the week it is built. Stock at Reno and the PDC is pooled against every order; the plan decides weekly builds per bike.",
-                   "Capacity sets the dates; the solver sets the mix on full lines. No plant ships a bike the week it is built.")
-p6 = scenario_page(6, "R", "A", "Scenario R · a week to build",
-                   f"One number per line changes: build time from the same week to 1 week (make’s output entry from {AN('0')} to {AN('1')}). Nothing else.",
-                   "The same bikes arrive later, so customers wait longer. Build time is worth modelling.")
-p7 = scenario_page(7, "R+", "R", "Scenario R+ · the plan",
-                   f"Build time by model: two weeks to build on the carbon lines ({AN('2')}), one on the base lines ({AN('1')}).",
-                   "This is the build plan. The build times are assumptions: the data has no lead times.")
+def full_run(sc, ln):                          # weeks 1..n at capacity
+    b, c = DN[sc]["builds_by_line_by_week"][ln], DN[sc]["capacity_by_line_by_week"][ln]
+    n = 0
+    while n < 121 and b[n] >= c[n] - 0.5: n += 1
+    return n
+for ln in LORDER:                              # the slide's claim: full from week 1 to just before the target is held
+    assert full_run("R+", ln) == WK_OF_DN(DN["R+"]["held_by_line"][ln]) - DN["R+"]["build_weeks"][ln] - 1, ln
 
-# ================================================================ 7 · A, R, R+ compared
-def compared():
+# ---- 5 · the build plan (R+)
+TEND = 119                                     # builds after week 119 would land after the plan ends
+def panel_line(x0, y0, w, h, ln):
+    v = DN["R+"]; b, c = v["builds_by_line_by_week"][ln][:TEND], v["capacity_by_line_by_week"][ln][:TEND]
+    held, clr = WK_OF_DN(v["held_by_line"][ln]), cleared_week(v["owed_by_line_by_week"][ln])
+    top = max(c) * 1.12
+    X = lambda t: x0 + (t - 1) * w / (TEND - 1); Y = lambda q: y0 + h - q * h / top
+    g = txt(x0, y0 - 18, f'{B_(LNAME[ln])}<tspan style="fill:{GREY};font-size:15px">\u2003build time {bw("R+", ln)}\u2003·\u2003' + (f'orders cleared {fd(DW[clr])}' if clr > 1 else "no orders waiting") + f'\u2003·\u2003target held {fd(DW[held])}</tspan>', 20)
+    area = f"M{X(1)} {Y(0)} " + " ".join(f"L{X(t)} {Y(q)}" for t, q in zip(range(1, TEND + 1), b)) + f" L{X(TEND)} {Y(0)} Z"
+    g += f'<path d="{area}" fill="{tint(INK, .18)}" stroke="none"/>'
+    step = []
+    for t, q in zip(range(1, TEND + 1), c): step += [(X(t) - w / (2 * TEND), Y(q)), (X(t) + w / (2 * TEND), Y(q))]
+    g += poly(step, INK, 2.5)
+    g += f'<line x1="{x0}" y1="{y0+h}" x2="{x0+w}" y2="{y0+h}" stroke="{LIGHT}" stroke-width="1"/>'
+    g += txt(x0 - 8, Y(c[0]) + 5, f"{c[0]}", 13, INK, 700, "end") + txt(x0 - 8, y0 + h + 4, "0", 13, GREY, 400, "end")
+    xh = X(held)
+    g += f'<line x1="{xh}" y1="{y0}" x2="{xh}" y2="{y0+h}" stroke="{INK}" stroke-width="1.5" stroke-dasharray="3 4"/>'
+    g += txt(xh + 7, y0 + h - 10, "target held", 14, INK, 700)
+    g += "".join(txt(X(t), y0 + h + 20, lab, 13, GREY, 400, "middle") for t, lab in [(1, "Sep 2026"), (18, "Jan 2027"), (70, "Jan 2028"), (TEND, "Dec 2028")])
+    return g
+def build_plan():
+    s = DN["R+"]["scorecard"]
+    g = txt(110, 250, f'{B_(f"{s[chr(66)+chr(105)+chr(107)+chr(101)+chr(115)+chr(32)+chr(98)+chr(117)+chr(105)+chr(108)+chr(116)]:,}")} bikes · every order cleared {B_(fd(D_(s["Open orders cleared from"])))}'
+                      f' · all targets held from {B_(fd(D_(s["All targets held from"])))} · on-time fill {B_(f"{100*s[chr(79)+chr(110)+chr(45)+chr(116)+chr(105)+chr(109)+chr(101)+chr(32)+chr(102)+chr(105)+chr(108)+chr(108)+chr(32)+chr(114)+chr(97)+chr(116)+chr(101)]:.1f}%")}', 22)
+    g += (poly([(1500, 244), (1540, 244)], INK, 2.5) + txt(1548, 249, "capacity", 15, GREY)
+          + f'<rect x="1650" y="237" width="40" height="14" fill="{tint(INK, .18)}"/>' + txt(1698, 249, "builds", 15, GREY))
+    for i, ln in enumerate(LORDER):
+        x0, y0 = 150 + (i % 2) * 880, 360 + (i // 2) * 320
+        g += panel_line(x0, y0, 780, 210, ln)
+    g += rule(978) + txt(110, 1020, "Every line builds at capacity from the first week until just before it holds its target.", 22)
+    return g
+p5 = page(5, "The build plan", "Scenario R+: weekly builds against capacity, by line. Build times are assumptions; the data has no lead times.", build_plan())
+
+# ---- 6 · build time: A, R, R+
+def build_time():
     sc = ["A", "R", "R+"]; S = {k: DN[k]["scorecard"] for k in sc}
-    rows = [("Build time", ["same week", "1 week", "carbon 2 weeks, base 1"]),
+    x0, x1, y0, y1 = 170, 960, 300, 640; W1 = 20
+    X = lambda t: x0 + (t - 1) * (x1 - x0) / (W1 - 1); Y = lambda q: y1 - q * (y1 - y0) / 4000
+    g = txt(110, 252, B_("Open orders, MTB carbon") + f'<tspan style="fill:{GREY}"> bikes owed to customers, end of week</tspan>', 20)
+    g += "".join(f'<line x1="{x0}" y1="{Y(q)}" x2="{x1}" y2="{Y(q)}" stroke="{RULE_C}" stroke-width="1"/>' + txt(x0 - 10, Y(q) + 5, f"{q:,}", 14, GREY, 400, "end") for q in (0, 1000, 2000, 3000, 4000))
+    for k, col, wd in [("A", LIGHT, 2.5), ("R", GREY, 2.5), ("R+", INK, 3)]:
+        o = DN[k]["owed_by_line_by_week"]["mtb-carbon"][:W1]
+        g += poly([(X(t), Y(q)) for t, q in zip(range(1, W1 + 1), o)], col, wd)
+        wc = cleared_week(DN[k]["owed_by_line_by_week"]["mtb-carbon"])
+        g += f'<circle cx="{X(wc)}" cy="{Y(0)}" r="5" fill="{col}"/>'
+        lx = 740 + 80 * ["A", "R", "R+"].index(k)
+        g += poly([(lx, 280), (lx + 30, 280)], col, wd) + txt(lx + 36, 285, k, 16, INK, 700)
+    g += "".join(txt(X(t), y1 + 26, lab, 14, GREY, 400, "middle") for t, lab in [(1, "Sep 2026"), (5, "Oct"), (9, "Nov"), (13, "Dec"), (18, "Jan 2027")])
+    rows = [("Build time", ["same week", "1 week", "carbon 2, base 1"]),
             ("Bikes built", [f'{S[k]["Bikes built"]:,}' for k in sc]),
             ("Every order cleared", [fd(D_(S[k]["Open orders cleared from"])) for k in sc]),
             ("All targets held from", [fd(D_(S[k]["All targets held from"])) for k in sc]),
             ("On-time fill", [f'{100*S[k]["On-time fill rate"]:.1f}%' for k in sc]),
             None] + [(f" {LNAME[ln]}", [fd(D_(DN[k]["held_by_line"][ln])) for k in sc]) for ln in LORDER]
-    xs = [960, 1340, 1760]; RH = 40
-    g = f'<rect x="1450" y="222" width="340" height="{RH * len(rows) + 42}" rx="10" fill="{tint(AMB, .08)}"/>'
-    g += "".join(txt(x, 252, h, 20, INK, 700, "end") for x, h in zip(xs, ["A", "R", "R+ · the plan"]))
+    xs = [1420, 1590, 1780]; RH = 38
+    g += f'<rect x="1610" y="222" width="190" height="{RH * len(rows) + 40}" rx="10" fill="{tint(AMB, .08)}"/>'
+    g += "".join(txt(x, 250, h, 18, INK, 700, "end") for x, h in zip(xs, ["A", "R", "R+ · the plan"]))
     for i, r in enumerate(rows):
-        y = 296 + RH * i
+        y = 292 + RH * i
         if r is None:
-            g += txt(110, y, "Targets held from, by line", 18, GREY, 700); continue
-        lab, vals = r
-        g += txt(110, y, lab, 21, INK, 700 if not lab.startswith(" ") else 400) + "".join(txt(x, y, val, 21, INK, 700 if j == 2 else 400, "end") for j, (x, val) in enumerate(zip(xs, vals)))
-    deliv = all(DN[k]["deliveries"]["largest_gap_bikes"] == 0 for k in sc)
-    checks = all(DN[k]["checks"]["passed"] == DN[k]["checks"]["of"] for k in sc)
-    assert deliv and checks
-    g += rule(736) + txt(110, 784, B_("Why believe it"), 24)
-    why = [("Optimal, proved", ["Every solve is certified from its own duals,", "and a second algorithm finds the same optimum."]),
-           ("No plan delivers more by any date", ["For each line and each of the 121 weeks, the most any plan", "could deliver was solved for; the plan matches it every time."]),
-           ("Consistent", ["R and R+ build exactly A’s bikes; a build time only delays.", f'Every plan check passes ({DN["R+"]["checks"]["passed"]} of {DN["R+"]["checks"]["of"]}).'])]
+            g += txt(1040, y, "Targets held from, by line", 16, GREY, 700); continue
+        lab, vals = r; sub = lab.startswith(" ")
+        g += txt(1040, y, lab, 18, INK, 400 if sub else 700) + "".join(txt(x, y, val, 18, INK, 700 if j == 2 else 400, "end") for j, (x, val) in enumerate(zip(xs, vals)))
+    assert all(DN[k]["deliveries"]["largest_gap_bikes"] == 0 and DN[k]["checks"]["passed"] == DN[k]["checks"]["of"] for k in sc)
+    g += rule(720) + txt(110, 766, B_("Why believe it"), 22)
+    why = [("Optimal, proved", ["Every solve is certified from its own duals;", "a second algorithm finds the same optimum."]),
+           ("No plan delivers more by any date", ["For each line and each of the 121 weeks, the plan", "delivers the most any plan could."]),
+           ("Consistent", ["R and R+ build exactly A’s bikes; a build time", f'only delays. Every plan check passes ({DN["R+"]["checks"]["passed"]} of {DN["R+"]["checks"]["of"]}).'])]
     for i, (h, body) in enumerate(why):
         x = 110 + i * 580
-        g += txt(x, 834, h, 21, INK, 700) + lines(x, 870, body, 18, GREY, 28)
-    return g + rule(986) + txt(110, 1026, "Next: we change the world live.", 22)
-p8 = page(8, "A, R and R+ compared", "", compared())
+        g += txt(x, 812, h, 20, INK, 700) + lines(x, 846, body, 18, GREY, 27)
+    return g + rule(978) + txt(110, 1020, "The same bikes in all three; a longer build time moves every date later. Next: we change the world live.", 22)
+p6 = page(6, "Build time: A, R and R+", "A ships a bike the week it is built; R adds a week to build; R+ gives each model its own build time.", build_time())
 
-pages = [p1, p2, p3, p4, p5, p6, p7, p8]
+pages = [p1, p2, p3, p4, p5, p6]
 head = f'<!doctype html><html><head><meta charset="utf-8"><style>{CSS}</style></head><body>'
 (out / "object.html").write_text(head + "".join(pages) + "</body></html>")
 for i, p in enumerate(pages, 1): (out / f"p{i}.html").write_text(head + p + "</body></html>")
