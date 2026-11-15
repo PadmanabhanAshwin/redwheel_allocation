@@ -110,6 +110,7 @@ def stage(x, w, head, sub, rows, red, dy=23):
     y = TOP1 + 104
     for r in rows:
         if r.startswith("§"): y += 10; g += meq(x + 20, y, r[1:], 22); y += 10
+        elif r.startswith("~"): g += txt(x + 20 + (18 if r[1:].startswith("\t") else 0), y, r[1:].lstrip("\t"), 16, GREY)
         else: g += txt(x + 20 + (18 if r.startswith("\t") else 0), y, r.lstrip("\t"), 17)
         y += dy
     g += f'<rect x="{x+10}" y="{RTOP}" width="{w-20}" height="{BOT1-RTOP-10}" rx="8" fill="#f3f4f6"/>' + txt(x + 22, RTOP + 26, "Redwheel", 15, AMB, 700)
@@ -131,29 +132,32 @@ s1 = (
              "c: 1 for stock and orders, 0 for capacity · π: arrivals"],
             [f'{NUM["resources"][0]} resources, {NUM["tasks"][0]} tasks, {NUM["edges"]} edges', f'{NUM["weeks"]} weekly periods from 7 Sep 2026', "Detail on the next slide"])
     + flow_arrow(840, 880)
-    + stage(880, 330, "Scenario", "settings of one run, stored as data",
+    + stage(880, 330, "Scenario", "edits to 𝒪, rules, objective",
             [f'{B_("Edits to 𝒪")}: opening levels, arrivals,', "\trun limits, delays θ", f'{B_("Rules")}: permitted routes; task kinds', "\tthe solver decides",
-             f'{B_("Objective")}: stock targets; priority', "\torder as ordered steps", "Entered through 14 edit forms"],
+             f'{B_("Objective")}: stock targets; priority', "\torder as ordered steps",
+             "~Examples", "~\tline down 3 weeks: capacity = 0", "~\tweb orders from Columbus: route", "~\tRW-9304 first: priority order"],
             [f"{N_SCEN} scenarios", "A: base", "B: web orders from Columbus", "E1–E5: events", "P1: priority order"])
     + flow_arrow(1210, 1250)
     + stage(1250, 290, "Solver", "method by problem structure",
-            ["LP: continuous quantities", "MIP: lot sizes, minimum runs", "Rule-based heuristic"],
+            ["LP: build and transfer plans", "MIP: lot sizes, set-ups,", "\tminimum runs", "Heuristics: dispatch and", "\tallocation rules", "Sampling: safety stock", "\tunder uncertainty"],
             ["LP in HiGHS", "Variables: runs N ≥ 0", "Rows: one balance per", "\tresource and period", "Objective: priority order", "A: 13,068 variables, &lt; 0.2 s", "Lots: by rounding the LP"])
     + flow_arrow(1540, 1580)
-    + stage(1580, 230, "Plan", "per scenario", ["Runs N by task, period", "Levels X: stock, backlog", "Target dates", "Check results"],
-            [f'A: {A_SC["Bikes built"]:,} bikes', "all targets held from", f"{A_HELD.day} {A_HELD:%b %Y}", f'{SC["A"]["checks"]["passed"]} of {SC["A"]["checks"]["of"]} checks pass'])
+    + stage(1580, 230, "Plan", "per scenario", ["Runs N per task and", "\tperiod: the build plan", "Levels X: stock, backlog", "Date each target is met", "Feasibility checks"],
+            [f'A: {A_SC["Bikes built"]:,} bikes', "all targets held from", f"{A_HELD.day} {A_HELD:%b %Y}"])
     # planning question
-    + box(110, 830, 730, 150) + txt(130, 866, "Planning question", 21, INK, 700)
-    + meq(130, 910, "q = (𝒪, σ, Ω),     answer = Ω(𝒪 | σ)", 30)
-    + txt(130, 942, "𝒪 object · σ scope: resources, tasks, horizon · Ω operator: project, decide, intervene, diagnose, evaluate", 15, GREY)
-    + txt(130, 966, "Redwheel: σ = 74 resources × 121 weeks; Ω = decide, project, intervene, evaluate", 15, INK)
+    + box(110, 822, 730, 176) + txt(130, 856, "Planning question", 21, INK, 700)
+    + meq(130, 896, "q = (𝒪, σ, Ω),   answer = Ω(𝒪 | σ)", 30)
+    + txt(130, 926, "𝒪 object · σ scope: resources, tasks, horizon · Ω operator: project, decide, intervene, diagnose, evaluate", 15, GREY)
+    + txt(130, 958, f'{B_("Example")}  E1: “MTB carbon line down 3 weeks from 1 Mar 2027”', 16)
+    + txt(130, 982, "𝒪: the network · σ: the line’s 3 SKUs, 121 weeks · Ω: intervene, decide, evaluate against A", 16)
     # LLM interface
-    + box(880, 830, 930, 150, stroke=AMB) + txt(900, 866, "LLM interface", 21, AMB, 700)
-    + txt(900, 900, '<tspan font-weight="700">Input</tspan>  natural-language request → typed edit forms → validated in code → proposal for approval', 17)
-    + txt(900, 928, '<tspan font-weight="700">Output</tspan>  answers from the computed plan’s facts', 17)
-    + txt(900, 958, "No access to orders, stock or forecasts; no part in the solve.", 16, GREY)
-    + f'<path d="M1045 830 L1045 803" stroke="{AMB}" stroke-width="2.5" stroke-dasharray="5 4" marker-end="url(#g)"/>'
-    + f'<path d="M1695 803 L1695 828" stroke="{AMB}" stroke-width="2.5" stroke-dasharray="5 4" marker-end="url(#g)"/>'
+    + box(880, 822, 930, 176, stroke=AMB) + txt(900, 856, "LLM interface", 21, AMB, 700)
+    + txt(900, 892, f'{B_("Input")}  natural-language request → typed edit forms → validated in code → proposal for approval', 17)
+    + txt(900, 922, f'{B_("Output")}  answers stated from computed results only', 17)
+    + txt(900, 958, "No free-form model formulation: the LLM fills fixed forms; it does not write constraints or solve.", 16, GREY)
+    + txt(900, 982, "No access to orders, stock or forecasts.", 16, GREY)
+    + f'<path d="M1045 822 L1045 803" stroke="{AMB}" stroke-width="2.5" stroke-dasharray="5 4" marker-end="url(#g)"/>'
+    + f'<path d="M1695 803 L1695 820" stroke="{AMB}" stroke-width="2.5" stroke-dasharray="5 4" marker-end="url(#g)"/>'
 )
 p1 = page(1, "Planning system", "", s1)
 
