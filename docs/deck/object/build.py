@@ -104,112 +104,129 @@ def box(x, y, w, h, stroke=INK, dash=False, fill="#fff", sw=2.5):
     return f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="12" fill="{fill}" stroke="{stroke}" stroke-width="{sw}"{" stroke-dasharray=" + chr(34) + "6 5" + chr(34) if dash else ""}/>'
 
 # ================================================================ 1 · system
-def stage(x, w, head, sub, rows, top=236, h=470):
-    g = box(x, top, w, h) + txt(x + 22, top + 40, head, 26, INK, 700) + txt(x + 22, top + 68, sub, 17, GREY)
-    return g + lines(x + 22, top + 112, rows, 18, INK, 28)
-def subbox(x, y, w, h, head, rows):
-    return box(x, y, w, h, sw=1.5, fill="#f9fafb") + txt(x + 16, y + 30, head, 19, INK, 700) + lines(x + 16, y + 58, rows, 17, INK, 25)
-def flow_arrow(x1, x2, y=486): return f'<path class="wire" marker-end="url(#a)" d="M{x1} {y} L{x2-3} {y}"/>'
-TOP, H = 236, 470
+def stage(x, w, head, sub, rows, red, top=230, h=486, rtop=560):
+    g = box(x, top, w, h) + txt(x + 22, top + 40, head, 26, INK, 700) + txt(x + 22, top + 66, sub, 17, GREY)
+    g += "".join(meq(x + 22, top + 106 + i * 28, r[1:], 23) if r.startswith("§") else txt(x + 22, top + 106 + i * 28, r, 18) for i, r in enumerate(rows))
+    g += f'<rect x="{x+12}" y="{rtop}" width="{w-24}" height="{top+h-rtop-12}" rx="8" fill="#f3f4f6"/>' + txt(x + 26, rtop + 28, "Redwheel", 15, AMB, 700)
+    return g + lines(x + 26, rtop + 56, red, 17, INK, 25)
+def flow_arrow(x1, x2, y=470): return f'<path class="wire" marker-end="url(#a)" d="M{x1} {y} L{x2-3} {y}"/>'
+SC = json.load(open(next(f for f in (HERE.parent / "deck_numbers.json", HERE / "deck_numbers.json") if f.exists())))   # the solver session's end-to-end run
+A_SC = SC["A"]["scorecard"]; A_HELD = datetime.date.fromisoformat(A_SC["All targets held from"])
+N_SCEN = len([k for k in SC if not k.startswith("_") and "+" not in k])
 s1 = (
-    stage(110, 270, "Data", f'{NUM["files"]} CSV files', ["Open orders, 3 channels", "Forecast, 3 channels", "Stock: plant, dealers", "Line capacity, weekly"], TOP, H)
-    + box(126, 448, 238, 242, stroke=LIGHT, dash=True, sw=1.5) + txt(142, 478, "Assumed", 19, GREY, 700)
-    + lines(142, 508, ["Sites: Reno, Columbus", "Reno → Columbus: 1 wk", "Any site ships any", "channel", "1 line slot per bike"], 17, GREY, 25)
+    stage(110, 270, "Data", "inputs",
+          ["Part master", "Locations and routes", "Inventory by location", "Open orders, due dates", "Demand forecast", "Capacity", "Lead times, targets"],
+          ["10 SKUs, 4 lines", "2 sites, 3 channels", "Routes and lead times", "assumed"])
     + flow_arrow(380, 420)
-    + stage(420, 330, "Object", "Resource–task network",
-            [f'{NUM["resources"][0]} resources, {NUM["tasks"][0]} tasks, {NUM["edges"]} edges', "Opening levels", "Arrivals: forecast, capacity", "Order due dates", "Run limits per task"], TOP, H)
-    + meq(442, 646, f'{v("X", "r,t")} = {v("c", "r")}{v("X", "r,t−1")} + Σ μ{v("N")} + {v("π", "r,t")}', 24)
-    + txt(442, 676, "one balance per resource and week", 16, GREY)
-    + flow_arrow(750, 790)
-    + box(790, TOP, 360, H) + txt(812, TOP + 40, "Scenario", 26, INK, 700) + txt(812, TOP + 68, f'Stored as data; {NUM["tunables"]} edit forms', 17, GREY)
-    + subbox(806, 326, 328, 108, "Changes to the object", ["Stock, capacity, demand, orders,", "build and transfer limits"])
-    + subbox(806, 446, 328, 108, "Planning priors", ["Routes, build and transfer times,", "targets, tasks the LP decides"])
-    + subbox(806, 566, 328, 128, "Priority order", ["Ordered steps: floor, SKUs,", "sharing rule", "Default: one step, target"])
-    + flow_arrow(1150, 1190)
-    + stage(1190, 340, "Solver", "Linear program, HiGHS",
-            ["Variables: task runs N ≥ 0", "Constraints: balance rows", "Objective: priority order,", "one step at a time", "Rounding to whole bikes", "Plan checks"], TOP, H)
-    + meq(1212, 600, f'min  objective', 23) + meq(1212, 632, f's.t.  balance rows,  {v("N")} ≥ 0,  {v("X")} ≥ 0', 23)
-    + lines(1212, 664, ["Scenario A: 13,068 variables,", "8,954 balance rows"], 16, GREY, 22)
+    + stage(420, 400, "Object", "resource–task network",
+            [f'{B_("Resource")}: a level per week:', "   inventory, open orders, capacity",
+             f'{B_("Task")}: an operation that changes levels:', "   make, move, fulfil",
+             f'{B_("Edge")}: what one run takes or adds, and when',
+             "§" + f'{v("X", "r,t")} = {v("c", "r")}{v("X", "r,t−1")} + Σ μ {v("N")} + {v("π", "r,t")},   {v("X")} ≥ 0',
+             "Levels change only through task runs", "or arrivals"],
+            [f'{NUM["resources"][0]} resources, {NUM["tasks"][0]} tasks, {NUM["edges"]} edges', f'{NUM["weeks"]} weeks from 7 Sep 2026'])
+    + flow_arrow(820, 860)
+    + stage(860, 330, "Scenario", "the question asked",
+            [f'{B_("Changes")}: edits to the object’s', "numbers", f'{B_("Planning priors")}: routes, lead', "times, targets, decided tasks",
+             f'{B_("Priority order")}: the objective,', "as ordered steps"],
+            [f"{N_SCEN} scenarios: A base, B web", "via Columbus, E1–E5 events,", "P1 priority order"])
+    + flow_arrow(1190, 1230)
+    + stage(1230, 300, "Solver", "linear program",
+            [f'{B_("Variables")}: task runs N ≥ 0', f'{B_("Constraints")}: the balance,', "per resource and week", f'{B_("Objective")}: priority order,', "step by step",
+             "Then: whole units, plan checks"],
+            ["Scenario A: 13,068 variables,", "8,954 balance rows", "HiGHS, under 0.2 s"])
     + flow_arrow(1530, 1570)
-    + stage(1570, 240, "Plan", "Per scenario", ["Builds per SKU, week", "Stock and backlog", "Date each target held", "Check results"], TOP, H)
-    + lines(1592, 620, ["Viewed and compared", "in the planner UI"], 17, GREY, 25)
-    + box(790, 756, 1020, 150, stroke=AMB) + txt(812, 792, "Claude, at the edges", 22, AMB, 700)
-    + txt(812, 826, "Request in words → filled forms → checked in code → proposal for the planner", 18)
-    + txt(812, 854, "Sees settings and the catalogue only: no orders, stock or forecasts. Does not run the plan.", 17, GREY)
-    + txt(812, 884, "Answers questions about a computed plan from its facts sheet.", 17, GREY)
-    + f'<path d="M970 756 L970 712" stroke="{AMB}" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#g)"/>'
-    + f'<path d="M1690 710 L1690 754" stroke="{AMB}" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#g)"/>'
-    + txt(110, 970, "Every number in a plan comes from the object and the linear program.", 24, INK, 700)
+    + stage(1570, 240, "Plan", "per scenario", ["Builds per item, week", "Stock and backlog", "Date each target held", "Check results"],
+            [f'A: {A_SC["Bikes built"]:,} bikes', "all targets held from", f"{A_HELD.day} {A_HELD:%b %Y}", f'{SC["A"]["checks"]["passed"]} of {SC["A"]["checks"]["of"]} checks'])
+    + box(860, 762, 950, 128, stroke=AMB) + txt(882, 798, "Claude (LLM), at the edges", 21, AMB, 700)
+    + txt(882, 830, f'{B_("In")}: request in words → filled edit forms → checked in code → proposal for the planner', 18)
+    + txt(882, 860, f'{B_("Out")}: answers about a plan from its computed facts.  Never sees orders, stock or forecasts.', 18)
+    + f'<path d="M1025 762 L1025 722" stroke="{AMB}" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#g)"/>'
+    + f'<path d="M1690 720 L1690 760" stroke="{AMB}" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#g)"/>'
+    + txt(110, 960, "Every number in a plan comes from the object and the linear program.", 24, INK, 700)
 )
 p1 = page(1, "Planning system", "", s1)
 
 # ================================================================ 2 · Redwheel as an RTN
-GEN = [("Inventory, order resources", "SKU × location with stock or orders", "SKU master; locations"),
-       ("Capacity resources", "one per production line", "capacity plan"),
-       ("Make tasks", "one per SKU, on its line", "SKU master: class + trim"),
-       ("Move, fulfil tasks", "one per SKU and route", "routes, assumed")]
-def generation():
-    g = txt(110, 244, "Element", 17, GREY, 700) + txt(400, 244, "Rule", 17, GREY, 700) + txt(770, 244, "Source", 17, GREY, 700)
-    for i, (el, rl, src) in enumerate(GEN):
-        y = 284 + i * 32
-        g += txt(110, y, el, 20, INK, 700) + txt(400, y, rl, 20) + txt(770, y, src, 20, GREY)
-    for x, n, lab, br in [(1080, NUM["resources"][0], "resources", NUM["resources"][1]), (1380, NUM["tasks"][0], "tasks", NUM["tasks"][1]), (1640, NUM["edges"], "edges", "")]:
-        g += txt(x, 300, f"{n}", 48, INK, 700) + txt(x + (66 if n < 100 else 92), 300, lab, 22) + txt(x, 336, br, 17, GREY)
+COUNTS = [(NUM["resources"][0], "resources", ["40 inventory = 10 SKUs × {Reno, Columbus, in transit, dealers}", "30 order = 10 SKUs × {web, dealer, commercial}", "4 capacity = 4 lines"]),
+          (NUM["tasks"][0], "tasks", ["10 make = 10 SKUs, each on its line", "10 move = 10 SKUs × Reno → Columbus", "60 fulfil = 10 SKUs × 2 sites × 3 channels"]),
+          (NUM["edges"], "edges", ["make 2 × 10  +  move 4 × 10  +  fulfil 2 × 60"])]
+NODES = [("resource", "Inventory", "stock of a SKU at a location", "stock files"),
+         ("resource", "Order", "open orders of a SKU in a channel", "order files, forecast"),
+         ("resource", "Capacity", "builds available per week on a line", "capacity plan"),
+         ("task", "Make", "builds a SKU on its line", "part master"),
+         ("task", "Move", "Reno → Columbus, 1 week in transit", "assumed"),
+         ("task", "Fulfil", "ships a SKU from a site to a channel", "assumed")]
+def counts():
+    g = ""; y = 252
+    for n, lab, rows in COUNTS:
+        g += txt(110, y + 10, f"{n}", 40, INK, 700) + txt(110 + (50 if n < 100 else 74), y + 10, lab, 20)
+        g += lines(330, y - 4, rows, 17, GREY, 24)
+        y += 24 * len(rows) + 30
     return g
-U, M = 552, 752
-o = NUM["rw4418_open"]
-s2_graph = (res(110, M-60, 290, "MTB carbon line", "375 / wk") + edge(400, M, 446, M, "−1", ly=M-22) + task(450, M-60, "make") + edge(630, M, 676, M, "+1", ly=M-22)
-    + res(680, M-60, 290, "Reno", f'{o["reno"]} bikes') + edge(970, M, 1246, M, "−1", lx=1010, ly=M-22) + task(1250, M-60, "fulfil") + edge(1430, M, 1496, M, "−1", ly=M-22)
-    + edge(790, M-60, 790, U+64, "−1", lx=772, ly=(M+U)/2+10, anchor="end") + task(700, U-60, "move")
-    + edge(880, U, 1000, U, "+1, 1 wk", ly=U-22) + res(1004, U-60, 200, "Columbus", f'{o["cmh"]} bikes') + edge(1204, U, 1246, U, "−1", ly=U-22) + task(1250, U-60, "fulfil") + edge(1430, U, 1496, U, "−1", ly=U-22)
-    + f'<rect class="res" x="1500" y="{U-60}" width="310" height="{M-U+120}" rx="22"/><text x="1526" y="{U-12}" class="name">Open orders</text><text x="1526" y="{U+40}" class="num">{o["orders"]:,}</text>'
-    + "".join(txt(1526, U + 98 + i * 38, a, 21, GREY) + txt(1784, U + 98 + i * 38, f"{b:,}", 21, GREY, anchor="end") for i, (a, b) in enumerate([("Dealers", o["dealers"]), ("Web", o["web"]), ("Commercial", o["commercial"])]))
-    + rule(U + 196, 1526, 1784) + txt(1526, U + 234, "Forecast", 21, GREY) + txt(1784, U + 234, f'+{o["fc"]} / wk', 21, GREY, anchor="end"))
-p2 = page(2, "Redwheel resource–task network", "Scenario A, opening state on 7 Sep 2026.",
-          generation() + vrule(1040, 226, 370) + rule(400) + tag(110, 452, "RW-4418")
-          + s2_graph + rule(874)
-          + f'<rect class="res" x="110" y="906" width="40" height="26" rx="8"/>' + txt(162, 926, "resource: level", 21, GREY)
-          + f'<rect class="task" x="380" y="906" width="40" height="26" rx="5"/>' + txt(432, 926, "task: runs per week", 21, GREY)
-          + f'<path class="wire" marker-end="url(#a)" d="M680 919 L722 919"/>' + txt(736, 926, "edge: amount per run; delay in weeks, 0 unless shown", 21, GREY)
-          + txt(110, 980, "Decided by the solver: make, and move where the scenario allows. Not decided: fulfil; orders ship as stock allows, oldest first.", 21))
+def node_defs():
+    g = txt(960, 240, "Node", 16, GREY, 700) + txt(1100, 240, "Definition", 16, GREY, 700) + txt(1810, 240, "Source", 16, GREY, 700, "end")
+    for i, (kind, name, d, src) in enumerate(NODES):
+        y = 276 + i * 32
+        glyph = (f'<rect class="res" x="960" y="{y-16}" width="26" height="18" rx="6" style="stroke-width:2"/>' if kind == "resource"
+                 else f'<rect class="task" x="960" y="{y-16}" width="26" height="18" rx="3"/>')
+        g += glyph + txt(996, y, name, 18, INK, 700) + txt(1100, y, d, 18) + txt(1810, y, src, 17, GREY, anchor="end")
+    return g
+def nd(x, y, w, kind, name, task_=False, h=80):
+    if task_: return f'<rect class="task" x="{x}" y="{y}" width="{w}" height="{h}" rx="8"/>' + txt(x + w / 2, y + h / 2 + 9, name, 24, "#fff", 700, "middle")
+    return f'<rect class="res" x="{x}" y="{y}" width="{w}" height="{h}" rx="16"/>' + txt(x + 18, y + 30, kind, 15, GREY) + txt(x + 18, y + 60, name, 21, INK, 700)
+U2, M2 = 650, 830          # centre lines: upper (Columbus) and lower (Reno) rows
+s2_graph = (
+    nd(110, M2 - 40, 230, "capacity", "MTB carbon line") + edge(340, M2, 386, M2, "−1", ly=M2 - 14) + nd(390, M2 - 40, 130, "", "make", True) + edge(520, M2, 566, M2, "+1", ly=M2 - 14)
+    + nd(570, M2 - 40, 230, "inventory", "RW-4418, Reno") + edge(800, M2, 1206, M2, "−1", lx=840, ly=M2 - 14) + nd(1210, M2 - 40, 170, "", "fulfil ×3", True) + edge(1380, M2, 1496, M2, "−1", ly=M2 - 14)
+    + edge(685, M2 - 40, 685, U2 + 44, "−1", lx=668, ly=(M2 + U2) / 2 + 8, anchor="end") + nd(620, U2 - 40, 130, "", "move", True)
+    + edge(750, U2, 896, U2, "+1, 1 wk", ly=U2 - 14) + nd(900, U2 - 40, 240, "inventory", "RW-4418, Columbus") + edge(1140, U2, 1206, U2, "−1", ly=U2 - 14) + nd(1210, U2 - 40, 170, "", "fulfil ×3", True) + edge(1380, U2, 1496, U2, "−1", ly=U2 - 14)
+    + f'<rect class="res" x="1500" y="{U2-40}" width="310" height="{M2-U2+80}" rx="16"/>' + txt(1520, U2 - 8, "order ×3", 15, GREY) + txt(1520, U2 + 22, "RW-4418", 21, INK, 700)
+    + lines(1520, U2 + 64, ["web", "dealer", "commercial"], 19, INK, 30))
+p2 = page(2, "Redwheel resource–task network", "",
+          counts() + vrule(920, 224, 470) + node_defs() + rule(500) + txt(110, 548, "Subgraph of one SKU, RW-4418", 18, GREY, 700)
+          + s2_graph + txt(110, 950, "Edge label: amount per run; delay 0 unless shown. Each fulfil box stands for three tasks, one per channel.", 18, GREY))
 
-# ================================================================ 3 · material balance
-def balance():
-    E = 46
-    g = meq(110, 288, f'{v("X", "r,t", 21)} =', E) + meq(215, 288, f'{v("c", "r", 21)} {v("X", "r,t−1", 21)}', E) + meq(330, 288, "+", E)
-    g += meq(368, 288, f'Σ{v("", "i", 20)}Σ{v("", "θ", 18)} {v("μ", "i,r,θ", 21)} {v("N", "i,t−θ", 21)}', E) + meq(612, 288, "+", E)
-    g += meq(650, 288, v("π", "r,t", 21) + ",", E) + meq(790, 288, f'{v("X", "r,t", 21)} ≥ 0', E)
-    for x, s_ in [(272, "carry-over"), (490, "task runs"), (676, "arrivals"), (850, "non-negativity")]:
-        g += txt(x, 338, s_, 19, AMB, 700, "middle")
-    g += vrule(1040, 236, 350)
-    g += lines(1080, 262, ["c = 1: inventory, orders", "c = 0: capacity", "π: forecast orders, weekly capacity"], 19, GREY, 30)
-    return g
-def lane(y, k, runs, a, b):
-    c = y + 46
-    return (f'<rect class="task" x="700" y="{y}" width="320" height="92" rx="8"/>' + txt(724, y + 34, f"make {k}", 20, "#d1d5db") + txt(724, y + 74, f"N = {runs}", 32, "#fff", 700)
-            + f'<path class="wire" marker-end="url(#a)" d="M1020 {c} L1216 {c}"/>' + txt(1118, c - 14, "+1", 24, AMB, 700, "middle")
-            + f'<rect class="res" x="1220" y="{y}" width="590" height="92" rx="22"/>' + txt(1246, c + 9, f"{k} at Reno", 26, INK, 600)
-            + f'<text x="1784" y="{c+13}" class="num" text-anchor="end">{a} <tspan class="dim">→</tspan> {b}</text>')
-YL = [436, 544, 652]; CL = [y + 46 for y in YL]
-s3_fan = (f'<path class="wire" marker-end="url(#a)" d="M510 {CL[1]-28} C600 {CL[1]-28} 610 {CL[0]} 696 {CL[0]}"/><path class="wire" marker-end="url(#a)" d="M510 {CL[1]} L696 {CL[1]}"/><path class="wire" marker-end="url(#a)" d="M510 {CL[1]+28} C600 {CL[1]+28} 610 {CL[2]} 696 {CL[2]}"/>'
-          + txt(640, CL[0] - 18, "−1", 24, AMB, 700, "end") + txt(640, CL[1] - 14, "−1", 24, AMB, 700, "end") + txt(640, CL[2] + 38, "−1", 24, AMB, 700, "end")
-          + f'<rect class="res" x="110" y="{CL[1]-80}" width="400" height="160" rx="22"/>' + txt(136, CL[1] - 34, "MTB carbon line", 26, INK, 600)
-          + f'<text x="136" y="{CL[1]+18}" class="num">375 <tspan class="dim">→</tspan> 0</text>' + txt(136, CL[1] + 56, "available → unused", 21, GREY))
+# ================================================================ 3 · the network over time
 w3 = NUM["wk3"]
-def term_table():
-    xs = [980, 1330, 1560, 1790]
-    g = "".join(meq(x, 800, h, 24, "end", GREY) for x, h in zip(xs, [f'{v("c")}·{v("X", "t−1")}', f'Σ μ·{v("N")}', v("π", "t"), f'= {v("X", "t")}']))
-    runs = " ".join(f"−{w3[k][0]}" for k in ["RW-4418", "RW-6416", "RW-9304"])
-    for y, name, kind, vals in [(846, "MTB carbon line", "capacity, c = 0", ["0", runs, "+375", "= 0"]),
-                                (892, "RW-4418 at Reno", "inventory, c = 1", [f'{w3["RW-4418"][1]}', f'+{w3["RW-4418"][0]}', "0", f'= {w3["RW-4418"][2]}'])]:
-        g += txt(110, y, f'{B_(name)}  <tspan style="fill:{GREY};font-size:20px">{kind}</tspan>', 25)
-        g += "".join(f'<text x="{x}" y="{y}" class="cell" text-anchor="end">{s}</text>' for x, s in zip(xs, vals))
+FLOW = {"make": [79, 143, 142], "other": [296, 232, 233], "ship": [104, 143, 142], "fc": [50, 50, 50],
+        "stock": [25, 0, 0, 0], "orders": [1310, 1256, 1163, 1071], "cap": 375}     # RW-4418, scenario A, weeks 0-3 (run_case: builds, flows)
+CARRY, RUN, ARR = GREY, AMB, "#2563eb"
+def tsp(s, c, w=400): return f'<tspan fill="{c}" font-weight="{w}">{s}</tspan>'
+XC = [470, 840, 1210, 1580]; YR = {"cap": 346, "stock": 572, "orders": 798}; CW, CH = 270, 90
+def cell(cx, cy, level, eq=None):
+    g = f'<rect class="res" x="{cx-CW/2}" y="{cy-CH/2}" width="{CW}" height="{CH}" rx="16"/>' + txt(cx, cy + (2 if eq else 13), f"{level:,}", 34, INK, 700, "middle")
+    return g + (txt(cx, cy + 34, eq, 17, INK, 400, "middle") if eq else "")
+def run_box(cx, cy, name, n): return f'<rect class="task" x="{cx-82}" y="{cy-25}" width="164" height="50" rx="8"/>' + txt(cx, cy + 8, f'{name}  <tspan font-weight="700" fill="#fff">{n}</tspan>', 20, "#d1d5db", 400, "middle")
+def vline(x, y1, y2, lab, up=False):
+    d = f"M{x} {y2} L{x} {y1+4}" if up else f"M{x} {y1} L{x} {y2-4}"
+    return f'<path class="wire" marker-end="url(#a)" d="{d}"/>' + txt(x + 12, (y1 + y2) / 2 + 7, lab, 18, AMB, 700)
+def s3():
+    g = ""
+    for row, (name, kind) in {"cap": ("MTB carbon line", "capacity · c = 0"), "stock": ("RW-4418 stock", "inventory · c = 1"), "orders": ("RW-4418 open orders", "order · c = 1")}.items():
+        g += txt(110, YR[row] - 4, name, 21, INK, 700) + txt(110, YR[row] + 22, kind, 17, GREY)
+    g += txt(XC[0], 236, "opening", 18, GREY, 700, "middle") + "".join(txt(XC[i], 236, f"week {i} · {sdate(i)}", 18, INK, 700, "middle") for i in (1, 2, 3))
+    g += cell(XC[0], YR["stock"], FLOW["stock"][0]) + cell(XC[0], YR["orders"], FLOW["orders"][0])
+    for i in (1, 2, 3):
+        cx = XC[i]; mk, ot, sh, fc = FLOW["make"][i-1], FLOW["other"][i-1], FLOW["ship"][i-1], FLOW["fc"][i-1]
+        st0, st1, od0, od1 = FLOW["stock"][i-1], FLOW["stock"][i], FLOW["orders"][i-1], FLOW["orders"][i]
+        g += cell(cx, YR["cap"], 0, f'{tsp(FLOW["cap"], ARR)} − {tsp(mk, RUN, 700)} − {tsp(ot, RUN)} = 0')
+        g += cell(cx, YR["stock"], st1, f'{tsp(st0, CARRY)} + {tsp(mk, RUN, 700)} − {tsp(sh, RUN, 700)} = {st1}')
+        g += cell(cx, YR["orders"], od1, f'{tsp(f"{od0:,}", CARRY)} + {tsp(fc, ARR)} − {tsp(sh, RUN, 700)} = {od1:,}')
+        g += f'<path d="M{cx} {YR["cap"]-CH/2-36} L{cx} {YR["cap"]-CH/2-4}" stroke="{ARR}" stroke-width="2.5" fill="none" marker-end="url(#a)"/>' + txt(cx + 10, YR["cap"] - CH / 2 - 14, "+375", 17, ARR, 700)
+        g += f'<path d="M{cx} {YR["orders"]+CH/2+34} L{cx} {YR["orders"]+CH/2+4}" stroke="{ARR}" stroke-width="2.5" fill="none" marker-end="url(#a)"/>' + txt(cx + 10, YR["orders"] + CH / 2 + 26, f"+{fc} forecast", 17, ARR, 700)
+        ym, yf = (YR["cap"] + YR["stock"]) / 2, (YR["stock"] + YR["orders"]) / 2
+        g += vline(cx, YR["cap"] + CH / 2, ym - 25, "−1") + run_box(cx, ym, "make", mk) + vline(cx, ym + 25, YR["stock"] - CH / 2, "+1")
+        g += vline(cx, YR["stock"] + CH / 2, yf - 25, "−1") + run_box(cx, yf, "fulfil", sh) + vline(cx, yf + 25, YR["orders"] - CH / 2, "−1", up=True)
+        for row in ("stock", "orders"):
+            g += f'<path d="M{XC[i-1]+CW/2} {YR[row]} L{cx-CW/2-4} {YR[row]}" stroke="{CARRY}" stroke-width="2.5" fill="none" marker-end="url(#a)"/>'
     return g
-p3 = page(3, "Material balance", "",
-          balance() + rule(370) + tag(110, 412, "MTB carbon line, week of 21 Sep 2026, scenario A; Reno stock before orders ship")
-          + s3_fan + "".join(lane(y, k, w3[k][0], w3[k][1], w3[k][2]) for y, k in zip(YL, ["RW-4418", "RW-6416", "RW-9304"]))
-          + term_table() + rule(926)
-          + txt(110, 978, f'{NUM["resources"][0]} resources × {NUM["weeks"]} weeks = {NUM["resources"][0] * NUM["weeks"]:,} balance equations.', 25))
+p3 = page(3, "The network over time", "",
+          s3() + rule(904)
+          + meq(110, 958, f'{v("X", "r,t")} = {tsp(v("c", "r") + v("X", "r,t−1"), CARRY)} + {tsp("Σ μ " + v("N"), RUN)} + {tsp(v("π", "r,t"), ARR)},   {v("X", "r,t")} ≥ 0', 32)
+          + txt(720, 950, f'{tsp("carried", CARRY, 700)} · {tsp("task runs", RUN, 700)} · {tsp("arrivals", ARR, 700)}', 19, INK)
+          + txt(720, 980, "One node per resource and week; every node balances. Scenario A: 74 × 121 = 8,954 nodes.", 18, GREY)
+          + txt(110, 1010, "Make runs: the solver. Fulfil runs: the shipping projection, oldest orders first. Other SKUs on the line: 296, 232, 233.", 16, GREY))
 
 # ================================================================ 4 · network structures
 dA = lambda x, c: tk(x, c, "make") + ar(x+130, c, x+200, c, "+1") + rn(x+200, c, "Reno stock", "25") + ar(x+400, c, x+470, c, "−1") + tk(x+470, c, "move")
