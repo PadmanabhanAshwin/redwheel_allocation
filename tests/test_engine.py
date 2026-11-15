@@ -476,3 +476,20 @@ def test_walk_check_passes_the_walk_and_catches_a_plan_that_served_out_of_order(
     R2["walk"]["steps"] = [("owed", keys)] + [("target", [k]) for k in order[::-1]] + [("target", rest)]
     assert sc.walk_served_out_of_order(R2) > 50
     assert sc.walk_served_out_of_order(dict(R, walk=None)) == 0 and len(sc.checks(R)) == 9        # no walk: no row
+
+
+def test_walk_check_treats_a_bike_pinned_by_a_run_limit_as_held_back():
+    """P1's priority order with none of RW-9304 buildable in weeks 15-20, its own turn: the line keeps running on
+    the later steps' bikes while RW-9304 is below target, which the check must read as held back (10 of 10). The same
+    run without the limit is the ordinary P1 plan."""
+    from dataclasses import replace
+    from redwheel import scenarios as sc
+    from redwheel.changes import Change
+    case = replace(sc.CASE_P1, key="PL", changes=(Change("run_max", {"kind": "make", "item": "RW-9304"}, "set", 0, 15, 20),))
+    R = sc.run_case(case)
+    b = R["builds"].set_axis(R["builds"].index.str.split("|").str[1])
+    assert b.loc["RW-9304", 15:20].sum() == 0 and b.loc[["RW-4418", "RW-6416"], 15:20].sum().sum() == 6 * 375
+    assert (~R["at_target"].loc[[("RW-9304", "CMH+RENO")], 15:20]).all(axis=None)       # below target, pinned
+    chk = sc.checks(R)
+    assert chk["pass"].all() and len(chk) == 10
+    assert sc.walk_served_out_of_order(R) == 0

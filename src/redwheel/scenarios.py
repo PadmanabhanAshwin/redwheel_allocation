@@ -144,7 +144,10 @@ def position_levels(X: pd.DataFrame, pos: dict) -> pd.DataFrame:
 
 def round_moves(obj: rtn.RTN, lp_moves: pd.DataFrame, builds: pd.DataFrame) -> pd.DataFrame:
     """Whole-bike transfers: cumulative LP transfers rounded down, never more than the origin holds once the
-    whole-bike builds have landed, and never more than the task's run limit. Week by week, per move task."""
+    whole-bike builds have landed, and never more than the task's run limit. Week by week, per move task.
+
+    Rounded down from a thousandth of a bike above: a walk holds each step to the solver's tolerance, which can leave
+    a cumulative transfer a few hundred-thousandths of a bike under a whole number; that is the whole number."""
     out = pd.DataFrame(0, index=lp_moves.index, columns=lp_moves.columns, dtype=int)
     limit = rtn.run_limits(obj).reindex(index=lp_moves.index, columns=lp_moves.columns)
     a = obj.arrows
@@ -155,7 +158,7 @@ def round_moves(obj: rtn.RTN, lp_moves: pd.DataFrame, builds: pd.DataFrame) -> p
         lp_cum = lp_moves.loc[task].cumsum()
         done = 0
         for t in lp_moves.columns:
-            want = int(np.floor(lp_cum[t] + 1e-9)) - done
+            want = int(np.floor(lp_cum[t] + 1e-3)) - done
             q = max(0, min(want, int(np.floor(stock[t] + 1e-9)) - done))
             if not np.isnan(limit.at[task, t]):
                 q = min(q, int(np.floor(limit.at[task, t] + 1e-9)))
@@ -348,7 +351,7 @@ def walk_served_out_of_order(R: dict) -> int:
     On the LP's own runs and levels. For each step i, a position s in it below the step's floor in week t, whose
     feeding tasks were not at their run limit in week u = t - lead: every make task that ran in week u on the same
     capacity must have served a position of step i or earlier, i.e. a position it feeds that is at or below that
-    step's floor in the week the run lands for it. Counts (task, week) pairs that served no such position. A task
+    step's floor in the week the run lands for it or in any later week (stock carries forward). Counts (task, week) pairs that served no such position. A task
     may feed several positions (in B a bike built at Reno is moved to the PDC), so the test is on what the capacity
     was used for, not on which position the task is named after."""
     walk = R["walk"]
@@ -377,10 +380,13 @@ def walk_served_out_of_order(R: dict) -> int:
             gap[(i, s)] = net.loc[[s]].iloc[0] - floor.loc[[s], weeks].iloc[0]
 
     def served(task, u, i):
-        """Did this run in week u serve a position of step i or earlier?"""
+        """Did this run in week u serve a position of step i or earlier? Stock carries forward, so it did if that
+        position is at or below the step's floor in the week the run lands or in any later week (a build ahead of a
+        run limit, or ahead of another bike's turn, keeps a position above its floor later)."""
         for p in fed_by[task]:
             t_p = u + lead[p]
-            if t_p in weeks and any((i2, p) in gap and gap[(i2, p)][t_p] < 0.5 for i2 in range(i + 1)):
+            later = [t for t in weeks if t >= t_p]
+            if later and any((i2, p) in gap and (gap[(i2, p)][later] < 0.5).any() for i2 in range(i + 1)):
                 return True
         return False
 

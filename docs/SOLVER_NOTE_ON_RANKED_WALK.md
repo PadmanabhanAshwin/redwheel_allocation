@@ -67,7 +67,8 @@ default); `run_plan` never has one. `scenarios.round_moves` and `engine.round_ru
 
 > For each step i, a position s in it below its floor at t, whose feeding tasks were not at their run limit in week
 > u = t − lead: every make task that ran in week u on the same capacity must have served a position of step i or
-> earlier, i.e. a position it feeds that is at or below that step's floor in the week the run lands for it.
+> earlier, i.e. a position it feeds that is at or below that step's floor in the week the run lands for it or any later week
+> (stock carries forward: a build ahead of a run limit, or ahead of another bike's turn, serves a later dip).
 
 (Second correction, on B: the test is on what the capacity was used for, not on which position a task is named after.
 In B one make task feeds a bike's Reno and PDC positions, and building at Reno in week 1 is how the PDC's owed

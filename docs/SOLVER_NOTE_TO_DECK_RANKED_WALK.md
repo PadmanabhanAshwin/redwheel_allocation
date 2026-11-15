@@ -87,3 +87,31 @@ What the mechanism cannot express, so do not promise it: a priority that changes
 scenario A (one pool of stock serves every channel); batch sizes; a surprise (the plan knows the order from week 1).
 
 For the slide, rows 1 and 3 together make the point: the planner states the order, and can state how hard it bites.
+
+## 7. Slide 5 as drawn on 15 Nov, checked against the product (P1, 10 of 10 checks)
+
+The priority order now runs through the product: `scenarios.CASE_P1` (orders past their date, then every open
+order, then the target ranked RW-9304, RW-4418, RW-6416; the other lines evenly). I ran it and checked the slide.
+
+**Right:** at target 22 Feb / 26 Jul / 6 Sep 2027; every order cleared 14 Dec 2026 under both rules; the same 375 a
+week (the line's weekly total is identical under both rules in every week); rule A's "about 132 / 152 / 91 a week".
+
+**Wrong, change it:**
+- "14 Dec: no customer waiting. Identical until here." The two plans differ from **week 1**. P1's first step is
+  orders past their date, which already shifts the mix, and the ranked step shifts it further before December.
+  Drop the claim; keep the 14 Dec marker as "every customer served, both rules".
+- The "about N in its turn" numbers are sketches. From the solver: RW-9304 **244** a week in its turn (weeks 15–24),
+  RW-4418 **201** (weeks 25–46), RW-6416 **185** (weeks 47–52).
+- The curves are drawn from the rule, not from the solver. The footnote admits it; a panel will read it as the
+  solver's output. Replace them with the real series.
+
+**The real series:** `docs/deck/object/slide5_builds.json`, written by the solver session from `run_case`:
+`weeks` (plan week → Monday), `A` and `P1` (bike → 121 weekly builds, whole bikes), `capacity` (the line, per week),
+`wos_A`, `wos_P1` and `target_wos` (weeks of supply and target, per bike and week), all for the three MTB carbon
+bikes. Plot `P1[bike]` in the bike's colour over `A[bike]` in grey, exactly as the slide is laid out; the shapes
+will be rougher than the sketch (the solver moves bikes between weeks where the even rule had ties), and that is
+fine: say "the solver's plan".
+
+**One wording fix:** "Serve waiting customers first, equally" is right for step 2, but P1's step 1 is "customers
+past their date first". Either say both or drop "past their date" from the scenario (that is the object session's
+call; the numbers above are for P1 as it is).
