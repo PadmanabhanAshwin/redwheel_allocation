@@ -48,3 +48,29 @@ and will not match `run_case`; pass `engine.window_demand(tu, tw).loc[keys]`. `d
 Theirs, plus three of mine: **weeks short** (of target; "units short ÷ average forecast over the target's weeks" if
 someone asks), **the even rule** for today's objective when it must be named at all, **at its best** for a step that
 has been minimised and held. Never "fairness term", "LP objective" or "the divisor" on a slide or a screen.
+
+## 5. 15 Nov, late: two more scenarios, and the one file to read
+
+**Every number the deck quotes is in `docs/deck/deck_numbers.json`**, written by `scripts/deck_numbers.py` from a run
+of every scenario through `run_case` with every plan check (nine scenarios: A, B, E1–E5, P1, B+E3; all checks pass).
+Per scenario: `scorecard` (bikes built, all targets held from, open orders cleared from, on-time fill, position-weeks
+below target), `held_by_line`, `per_sku` (at target, orders cleared, weeks below, bike-weeks above target),
+`mtb_carbon_builds_by_week` and `mtb_carbon_line_by_week` with `mtb_carbon_capacity_by_week`, `weeks_of_supply_mtb`
+with `target_weeks_mtb`, the `changes` in plain fields, a walk's `walk` steps, and `against_A` (bikes built diff, SKU
+totals diff, cells that differ, the line's weekly diff, other lines identical). `_meta.weeks` maps plan week to its
+Monday. Regenerate with `PYTHONPATH=src .venv/bin/python scripts/deck_numbers.py`. If a number is not in the file,
+it is not final.
+
+Two scenarios added for the "something changes" part, both pinned by tests:
+
+| | Change | What the plan does |
+|---|---|---|
+| **E4, a fleet order lands** | 300 RW-4418 for a commercial customer, week of 9 Nov 2026 (one number: 7 → 307) | the line is full, so the 300 are built when capacity rises (weeks 53–54); MTB carbon holds target 13 Sep 2027 not 6 Sep; every open order cleared 28 Dec 2026 not 14 Dec; fill 96.4% → 95.6%; the other lines do not move |
+| **E5, RW-9304 built in lots of 50** | a fixed order quantity, the object's seventh number (121 numbers: 1 → 50) | every build of RW-9304 a whole lot (250, 150, 150, 150, 100, …); the line as full as A in every week; every line's date as A; orders cleared 21 Dec not 14 Dec; 1,744 bike-weeks of RW-9304 carried above target, the price of lots |
+
+Story for the slide set, in this order: a line down (E1, costs 4 weeks), demand up (E2, 191 bikes and a week),
+frames late (E3, absorbed), a fleet order (E4, customers wait), lots (E5, same dates, stock above target). One
+sentence each: "we changed N numbers, this moved, nothing else did."
+
+Words: "fixed order quantity" or "built in lots of 50"; not "FOQ" on a slide. Say the LP plans the flow and the
+build plan is cut into lots; do not say the solver chooses lot timing (the exact version is later work).
