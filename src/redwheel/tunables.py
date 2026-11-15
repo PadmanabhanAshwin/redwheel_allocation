@@ -221,7 +221,8 @@ def _tunables() -> dict:
         Tunable("target", "Target", "rules", "target", "setting",
                 "How many weeks of supply should a group hold, from a date?", "weeks of supply", True,
                 (Field("group", "Group", "choice", tuple(GROUP_NAME.items()), default="mtb_carbon"),
-                 Field("weeks", "Weeks of supply", "number", default=18.0, min=0.5, max=52),
+                 Field("weeks", "Weeks of supply", "number", default=18.0, min=0.5, max=T - H,
+                       help="At most the weeks of forecast known after the plan."),
                  _date("from", "From", 53, H, help="The plan's first week sets the target from the start."))),
     ]
     return {x.key: x for x in t}

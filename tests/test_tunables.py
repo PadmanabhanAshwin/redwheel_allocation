@@ -118,7 +118,8 @@ def test_each_data_form_selects_what_it_says():
     ("line_capacity", {"first": "soon"}, "From: a date is needed"),
     ("stock", {"bikes": 0}, "Correction (bikes): 0 would change nothing"),
     ("demand", {"percent": 0}, "Change (%): 0 would change nothing"),
-    ("target", {"weeks": 0}, "Weeks of supply: must be between 0.5 and 52"),
+    ("target", {"weeks": 0}, "Weeks of supply: must be between 0.5 and 35"),
+    ("target", {"weeks": 36}, "Weeks of supply: must be between 0.5 and 35"),
 ])
 def test_a_form_that_is_filled_wrong_is_refused_with_the_reason(key, values, message):
     with pytest.raises(ValueError) as e:
@@ -255,3 +256,18 @@ def test_every_data_tunable_runs_and_passes_every_plan_check(key, base, A):
     if key == "line_capacity":
         cap = R["obj"].arrivals.loc["capacity||RENO/road-base"]
         assert (cap.loc[5:10] == np.floor(A["obj"].arrivals.loc["capacity||RENO/road-base", 5:10] * 1.2 + 0.5)).all()
+
+
+def test_a_target_cannot_look_past_the_forecast():
+    """The forecast ends at week 156, 35 weeks after the plan. A 36-week target in the plan's last week would read week
+    157: it used to pass every check and then crash the run. The form and the rules table now refuse it, and the
+    longest target allowed plans."""
+    assert priors.max_target_weeks(tu._base()) == 35 and tu.TUNABLES["target"].field("weeks").max == 35
+    t = priors.normalise(sc.CASE_A.priors)
+    too_long = priors.apply_changes(t, [{"prior": "target_weeks", "applies_to": "mtb_carbon", "from_date": "2026-09-07", "new": "36"}])
+    assert priors.validate(too_long, tu._base()) == [
+        "target_weeks values must be more than 0 and at most 35: the forecast ends 35 weeks after the plan, and a "
+        "target cannot look past it"]
+    longest = tu.apply(sc.CASE_A, [tu.make("target", group="mtb_carbon", weeks=35, **{"from": D(2026, 9, 7)})], key="T")
+    assert tu.check(longest) == []
+    assert sc.checks(sc.run_case(longest))["pass"].all()

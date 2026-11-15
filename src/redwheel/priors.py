@@ -77,6 +77,12 @@ def _int_in_range(v) -> bool:
         return False
 
 
+def max_target_weeks(obj: rtn.RTN) -> int:
+    """The longest weeks-of-supply target the object can carry: a target of N weeks in the plan's last week reads the
+    forecast N weeks past it, and the object's arrivals are known only as far as its outlook."""
+    return int(rtn.arrivals_all(obj).columns.max()) - len(obj.weeks)
+
+
 def validate(t: pd.DataFrame, obj: rtn.RTN) -> list[str]:
     """Every reason this table cannot run on this network; empty when it can."""
     errs = []
@@ -124,8 +130,10 @@ def validate(t: pd.DataFrame, obj: rtn.RTN) -> list[str]:
     if dates.isna().any():
         errs.append("target_weeks rows need a from_date (YYYY-MM-DD)")
     weeks = pd.to_numeric(p["value"], errors="coerce")
-    if weeks.isna().any() or (weeks <= 0).any() or (weeks > 52).any():
-        errs.append("target_weeks values must be more than 0 and at most 52")
+    longest = max_target_weeks(obj)                 # a target reads the forecast that many weeks ahead, no further
+    if weeks.isna().any() or (weeks <= 0).any() or (weeks > longest).any():
+        errs.append(f"target_weeks values must be more than 0 and at most {longest}: the forecast ends {longest} "
+                    "weeks after the plan, and a target cannot look past it")
     groups = set(obj.items["target_group"])
     covered = set(p.loc[dates <= PLAN_START, "applies_to"])
     if groups - covered:

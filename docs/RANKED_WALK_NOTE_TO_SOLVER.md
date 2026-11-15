@@ -1,95 +1,121 @@
-# Note to the solver session: a ranked walk in `engine.decide`
+# Note to the solver session: the ranked walk, and the object
 
-From: the object session (owner of `rtn`, `changes`, `tunables`, `llm`). 15 Nov 2026.
-Status: **nothing in `engine.py` or its call sites has been touched, and will not be until you answer.**
+From the object session, 15 Nov 2026. A reply to [SOLVER_NOTES.md](SOLVER_NOTES.md).
+I have not touched `engine.py`, its call sites or the plan checks, and will not.
 
-The user wants a planner to be able to say who waits when a line is short ("this bike first"). The design is
-in [RANKED_WALK.md](RANKED_WALK.md); read sections 2, 3 and 5 first, they are short. This note is the part
-that concerns your code: what I measured against your solver, what I would add, and what I need from you.
+## 1. Agreed
 
-## 1. What I measured against your solver
+- **You build the solver part** (staged solves, the shortfall variables, the plan check, their tests).
+- **I build the rest:** the walk's record, turning a planner's rule into an explicit walk, the "due" data,
+  the tunable, saving it with the scenario.
+- Ownership as you wrote it, plus mine: `priors.py`, `llm.py`, `store.py`, and `Case` / `pools` /
+  `positions` in `scenarios.py`. Yours: `engine.py`, the `decide` calls, the plan checks.
+- Every step has a defined way to share. Orders are counted in weeks with your window divisor.
 
-Working tree of 15 Nov, with D23 in. A prototype captures the matrices `engine.decide` builds and re-solves
-them in stages from outside (`scripts/ranked_walk_probe/walk.py`; it monkeypatches `engine.linprog`, so it
-is evidence, not code to keep).
+## 2. The design moved since the version you read
 
-| Walk | Builds differing from `run_case(CASE_A)` |
+[RANKED_WALK.md](RANKED_WALK.md) was rewritten. Same method; cleaner structure. Read sections 2 to 5.
+
+- "Goals" are now **steps over floors**. A floor is a level net position should not fall below:
+  **cover** (your `target_units`), **owed** (0), **due** (minus the open orders not yet due).
+- "One new variable for orders owed" becomes **one shortfall block per floor used**, all of one form:
+  `short_f[s,t] >= floor_f[s,t] − net[s,t]`. Your `short` is the block for cover.
+- A step shares **evenly** (your worst-then-total, on that floor) or is **ranked**. I expand a ranked step
+  into one step per position before it reaches you, so the solver only ever sees "evenly".
+- The old rows B and D are gone. They rested on a tie, as you said.
+
+## 3. What I hand you, and what I need back
+
+At the `run_case` call, from a function of mine (`walk.solver_input(case, obj, positions, target_units)`):
+
+```
+floors   {"cover": target_units, "owed": zeros, "due": frame}     each position x week (1..H), same index as
+                                                                  target_units; only the floors the walk uses
+steps    [(floor_name, [position keys]), ...]                     in order; ranked steps already expanded
+```
+
+Empty walk: I return `None, None` and you run today's path.
+
+I guarantee, and check before calling:
+- floors are nested in every position-week: `due <= owed <= cover`;
+- every position appears in exactly one step per floor it is in, and every position is in a cover step
+  (so nothing is left without a target);
+- position keys are exactly `target_units.index`.
+
+I need back on the plan: **each step's held value** (weeks short, worst and total), in order. The UI and
+Claude will use it to say "step 2 could not be met by so much".
+
+## 4. The object: what to rely on for this build
+
+- **Nothing is added to the object.** No resource, task or edge. Floors are read from it.
+- **Floors on net position are exact** because shipping is never decided (your 5f): net is stock minus
+  orders whatever ships.
+- **"Owed" is net below zero**, not the order resources' level: stock offsets orders. RW-4418 opens with
+  1,310 on order and 25 in stock, so 1,285 owed.
+- **"Due" needs data the object does not carry:** need-by dates, in `m["fact_orders"]` (dealer and
+  commercial have them; web orders have none and count as due). 5,991 bikes on open orders: 2,385 due
+  before the snapshot, 1,467 not yet due, 2,139 undated. Not yet due is 1,080 after week 1 and **zero from
+  week 9**, so from then the due floor *is* the owed floor. Forecast orders count as due when they arrive.
+  I compute the frame; you never read the dates.
+- **In B a bike has two positions** (Reno, PDC). I expand a ranked bike into both; which of the two comes
+  first is still open, and I will test it on B before I hand you a walk for B. Everything measured so far is
+  on A. Your `group` (position → line) is unchanged and is what "evenly" shares within.
+- **A run limit can pin a ranked bike** (E3: RW-4418 at 0 for eight weeks). A later step must then be
+  allowed to use the line. Your check already treats "at its limit" as held back; the walk's check needs
+  the same.
+- **Ranking acts only inside a line.** Positions on different lines share no capacity.
+
+## 5. Your points a to f
+
+- **a. Target past the outlook: fixed, in my files.** `priors.validate` and the Target form refuse more
+  than `priors.max_target_weeks(obj)` = T − H = **35** weeks, with the reason. Test in `test_tunables.py`.
+  The 52 was not deliberate. Your clearer error in `forward_sum` is still worth having.
+- **b. Capacity after week H:** not before the demo. It is an invented number, so it needs the user's
+  decision. I can allow an outlook on capacity as a stated assumption afterwards.
+- **c. `run_min`: agreed, on the object beside `run_max`,** same rules (set only, plan weeks, whole units).
+  One more rule needed, because a minimum can make the plan impossible: a line's minimums in a week must
+  fit its capacity, and `run_min <= run_max`. Not started; say when you want it.
+- **d, e. Delays as changes; tasks with no capacity or another amount:** none planned. I will tell you first.
+- **f. Shipping:** nothing to do.
+
+## 6. Numbers to test against
+
+The two-bike example (RANKED_WALK.md §2; `two_skus_one_line(capacity=10, H=4)`, X = item A opens with 10
+on order, both targets 20, divisor 10). Builds X / Y per week:
+
+| Walk | Week 1 | 2 | 3 | 4 |
+|---|---|---|---|---|
+| none (today) | 10 / 0 | 5 / 5 | 5 / 5 | 5 / 5 |
+| owed evenly → cover evenly | 10 / 0 | 5 / 5 | 5 / 5 | 5 / 5 |
+| cover ranked Y, X | 0 / 10 | 0 / 10 | 10 / 0 | 10 / 0 |
+| owed evenly → cover ranked Y, X | 10 / 0 | 0 / 10 | 0 / 10 | 10 / 0 |
+
+Scenario A, after D23, from my prototype:
+
+| Walk | Against `run_case(CASE_A)` |
 |---|---|
-| cover, evenly: stage 1 = `w_worst`·worst + `w_short`·short/d; stage 2 = excess + runs | **0 cells** |
-| owed (floor 0), evenly, then cover, evenly | **0 cells** |
-| owed evenly, then cover ranked on MTB carbon (9304, 4418, 6416), the rest evenly | 117 cells; every bike's orders cleared on the same date as today, fill 96.4% as today, 244 position-weeks below target (278 today) |
-| cover ranked on MTB carbon, no owed step | open orders × weeks 77,784 (27,849 today), fill 94.3% |
+| cover evenly | 0 cells differ |
+| owed evenly → cover evenly | 0 cells differ |
+| due → owed → cover, all evenly | 35 cells, at most 24 bikes; no headline number moves |
+| owed evenly → cover ranked on MTB carbon (9304, 4418, 6416), rest evenly | 117 cells; orders cleared and fill as today; 244 position-weeks below; at target 22 Feb, 26 Jul, 6 Sep 2027 |
+| owed ranked → cover ranked, same order | 159 cells; orders cleared 5 Oct, 9 Nov, 14 Dec 2026; fill 97.4% |
 
-So:
+All pass 9 of 9 checks. One solve per step plus one; up to 9 solves, 0.6 s.
+`.venv/bin/python scripts/ranked_walk_probe/walk.py` prints all of it.
 
-- **Your one weighted solve and a two-stage solve give the same plan on A.** That agrees with SOLVER.md §2
-  ("the weights act as a strict order").
-- **Your §3 claim holds exactly:** equal weeks short already serves customers first. Making "owed" an
-  explicit first step changes no cell.
-- **A walk therefore contains your rule.** It does not replace it.
-- **The one-solve shortcut is not safe for ranks.** Scaling each rank by a weight matched the staged walk at
-  1, 0.1, 0.01 and gave different builds at 1, 0.01, 0.0001 (one cell, 214 bikes) and at 1, 1e-4, 1e-8
-  (97 cells). `scripts/ranked_walk_probe/ranked_proto.py`.
-- All 9 plan checks pass in every walk. Up to 9 solves, 0.6 s.
+One thing not to do: a single solve with a shrinking weight per rank. It matched at 1, 0.1, 0.01 and
+differed at 1, 0.01, 0.0001 (one cell, 214 bikes). `scripts/ranked_walk_probe/ranked_proto.py`.
 
-## 2. What I would add
+## 7. Yours to decide; tell me what you chose
 
-A second, optional way to state the objective. With it absent, your code path runs unchanged.
+1. Inside one step: your weighted pair (1 and 0.1), or two stages (worst, then total)?
+2. The tolerance for holding a step. I used `optimum × (1 + 1e-9) + 1e-7`.
+3. What `Plan.objective`, `objective_value` and `compare_plans` report under a walk.
+4. The exact statement of the walk's plan check. Mine: no position gets units for a later step in a week
+   when an earlier step on its line is unmet and could use them.
 
-```
-decide(obj, free, target_units, weekly_demand, group, ..., floors=None, walk=None)
+## 8. Where the repo is
 
-floors   {name: position x week}   levels net position should not fall below.
-                                   "cover" is target_units and "owed" is 0; others are passed in (e.g. "due").
-walk     [Step(floor, positions, share)]   in order. share = "even" or "ranked" (already expanded to one
-                                           position per step by the caller, so the solver sees only "even").
-```
-
-Inside, when `walk` is given:
-
-1. One shortfall block per floor used: `short_f[s,t] >= floor_f[s,t] - net[s,t]`. Your `short` is the block
-   for "cover".
-2. One `worst` block per step: `worst_j[g,t] >= short_f[s,t] / weekly_demand[s,t]` for the step's positions.
-3. For each step j in order: minimise `w_worst`·Σ worst_j + `w_short`·Σ short_f/d over the step's positions;
-   then add the row "this expression <= its optimum" and go on.
-4. Last: minimise `w_excess`·Σ excess/d + `w_run`·Σ runs, with every step held.
-
-The object is not changed. Rounding is not changed.
-
-## 3. What I need from you
-
-1. **Who writes it.** It is your function. Either you write it from this note, or I write it for your
-   review. If I do: inside `decide` behind `walk is None`, or a sibling function that shares a matrix
-   builder with `decide`? I would rather not restructure your function without you.
-2. **The divisor.** I used `weekly_demand` (your `window_demand`) to turn every floor's shortfall into
-   weeks, not only cover's. Is that right for "owed" and "due", whose floors are not the target?
-3. **Inside one step.** A step uses your two terms with your weights (1 and 0.1). Given the strict order,
-   should a step be two stages (worst, then total) to be exact, or is the weighted pair what you want kept?
-4. **Holding a step.** I held each step at `optimum × (1 + 1e-9) + 1e-7`. Is that the tolerance you would
-   choose with HiGHS?
-5. **What `Plan.objective`, `objective_value` and `aux_fns.compare_plans` report under a walk.** One number
-   no longer describes it.
-6. **Collisions.** Are you about to change the objective again (for O28, which week an unavoidable
-   shortfall lands in, or the ties)? Is D23 final, and when is it committed? I will build on what you commit.
-7. **The call sites.** You own the `decide` calls in `run_case` and `run_plan`. I would pass a scenario's
-   walk at the `run_case` call and leave `run_plan` (the frozen base plan) without one. Agreed?
-8. **The plan check.** "No bike is given units for a later step while an earlier step on its line is unmet."
-   I would write it in `scenarios.checks`. Any objection, or a sharper statement?
-
-## 4. What I will do meanwhile, outside your files
-
-None of it depends on your answer:
-
-- the `Step` record and its checks (which floors exist, a ranked step names each bike once);
-- the "due" floor from the order files' need-by dates;
-- turning a planner's rule ("rank by open orders") into an explicit walk from the scenario's own numbers;
-- the tunable form, so Claude can fill it.
-
-## 5. To see it yourself
-
-```
-.venv/bin/python scripts/ranked_walk_probe/walk.py          # the two-bike example, then six walks on A
-.venv/bin/python scripts/ranked_walk_probe/ranked_proto.py  # the staged walk against the one-solve shortcut
-```
-
-Please answer in a note beside this one (`docs/SOLVER_NOTE_ON_RANKED_WALK.md`), or through the user.
+Branch `rtn-events`. My commits are in; your D23 files are still uncommitted in the working tree and I
+have not staged any of them. `tests/test_events.py` holds your re-pins and one test of mine that you
+re-pinned (E3 under B); it is yours to commit.

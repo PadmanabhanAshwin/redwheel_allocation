@@ -85,7 +85,7 @@ THE SETTINGS (rows of the table: prior, applies_to, from_date, value)
   pool their stock; each pool's stock is counted against the demand of the customers it serves.
 - build_weeks, line, whole weeks 0-{priors.MAX_WEEKS}: weeks from using line capacity to a bike in Reno stock.
 - transfer_weeks, RENO>CMH, whole weeks 0-{priors.MAX_WEEKS}: weeks from Reno to the PDC.
-- target_weeks, target group, weeks (more than 0, at most 52), with from_date YYYY-MM-DD: the weeks-of-supply target
+- target_weeks, target group, weeks (more than 0, at most {tu.last_week() - tu.plan_weeks()}), with from_date YYYY-MM-DD: the weeks-of-supply target
   from that date until the group's next target row. A group needs a row starting on or before {PLAN_START.date()}.
   To step a target on a date, add a row; to change an existing row, set it with its own from_date.
 - decides, make or move, yes/no: whether the plan decides builds (must stay yes) and transfers Reno -> PDC.
