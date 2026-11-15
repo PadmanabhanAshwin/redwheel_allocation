@@ -461,6 +461,47 @@ words for events do not cover a run limit. A stock correction (200
 fewer RW-9324 at Reno) is tested the same way: 200 more built, all RW-9324, and no date moves,
 because that SKU has stock to spare.
 
+## Every tunable, in one list
+
+Everything a scenario can say is different is in one list, `redwheel/tunables.py`. A tunable is a
+planner's question with a form; filling the form gives either a change to one of the object's
+numbers or rows of the settings table. Nothing else is tunable, and nothing is defined twice.
+
+| Tunable | Changes | Where it sits in the model | Unit | Dated | Form fields | Default |
+|---|---|---|---|---|---|---|
+| Stock count | data | opening level of a SKU's stock at a site | bikes | no | SKU, site, correction | RW-9324 at Reno, −200 |
+| Line capacity | data | arrivals onto a line's capacity | % of normal (0 = down, 120 = overtime) | yes | line, from, weeks, % | **E1** |
+| Demand | data | arrivals onto orders (a SKU, a line or all; a channel or all) | % of forecast | yes | SKUs, channel, from, weeks, % | **E2** |
+| One-off order | data | arrivals onto one SKU's orders from one channel, one week | bikes | yes | SKU, channel, week, bikes | RW-4418, commercial, 300 |
+| Build limit | data | run limit of make tasks (parts late or short) | bikes a week, each SKU | yes | SKUs, from, weeks, at most | **E3** |
+| Transfer limit | data | run limit of move tasks, Reno to the PDC | bikes a week, each SKU | yes | SKUs, from, weeks, at most | all SKUs, 20 a week |
+| Build time | rules | delay on make edges | weeks | no | line, weeks | MTB carbon, 2 |
+| Transfer time | rules | delay on move edges | weeks | no | weeks | 2 |
+| Ship from | rules | which fulfil routes exist | site | no | channel, site | web from the PDC |
+| Plan transfers | rules | whether the plan decides moves | yes / no | no | yes or no | yes |
+| Target | rules | a group's weeks-of-supply target, from a date | weeks of supply | yes | group, weeks, from | MTB carbon 18 from 6 Sep 2027 |
+
+Every field has its choices, range and default (`TUNABLES[key].fields`). A date picks the plan
+week that contains it; "n weeks" is n whole plan weeks. The defaults of Line capacity, Demand and
+Build limit are E1, E2 and E3: filled with nothing changed, they plan exactly like those scenarios
+(tested). The rules tunables rebuild scenario B from A (tested).
+
+What the module gives, for any UI or an LLM:
+
+| Call | Does |
+|---|---|
+| `TUNABLES`, `table()` | the list; one row per tunable |
+| `make(key, **values)` | a filled form → an `Edit` (a `Change`, or settings rows); refuses a wrong field, naming it |
+| `apply(case, edits, **fields)` | the scenario with the edits (settings applied, changes added in order) |
+| `check(case, edits)` | every reason it cannot run, in words, without planning: the settings against the network, each change against the object, a limit on runs the plan does not decide, an edit that changes nothing |
+| `describe(edit or change)`, `name_hint(change)` | in words, e.g. "MTB carbon line capacity · weeks of 1 Mar to 15 Mar 2027 · down (none)" |
+| `now(key, case, **values)` | what the scenario has there now, e.g. "375 a week", "no limit" |
+| `differences(a, b)` | what b sets differently from a: settings and changes, as Tunable · What · From · To · Why |
+| `change_rows(changes, report)` | a run's changes with the numbers each changed (from `R["change_report"]`) |
+
+The planner (`planner2/`) still uses its own words for events (`planner2/events.py`); they cover
+the first four data tunables. E3 joins its built-in list when its words come from this module.
+
 ## What is general and what is Redwheel
 
 | Layer | What | Changes for another company |
@@ -497,7 +538,7 @@ object and the tests follow it.
 
 ## Tests
 
-296 tests, all passing (`pytest`), plus 5 that call the LLM (`RUN_LLM_TESTS=1 pytest tests/test_llm_live.py`).
+359 tests, all passing (`pytest`), plus 5 that call the LLM (`RUN_LLM_TESTS=1 pytest tests/test_llm_live.py`).
 
 | File | What it checks |
 |---|---|
@@ -515,6 +556,7 @@ object and the tests follow it.
 | `test_report.py`, `test_demand.py` | Report figures; demand sources |
 | `test_llm.py`, `test_llm_live.py` | The propose, check, retry loop with a fake model; five live requests with known answers |
 | `test_app.py`, `test_planner.py`, `test_planner2.py` | Every page of the three UIs, and each flow a planner takes |
+| `test_tunables.py` | The one list: every form's defaults valid; the forms make exactly E1, E2, E3 and the stock correction, and the rules forms rebuild B from A; wrong fields refused with the reason; checks in words; every tunable in words; what is there now; differences between scenarios; every data tunable run through the solver with every plan check passing (a one-off order of 300: exactly 300 more of that SKU built) |
 | `test_events_ui.py` | Events in the planner: plan weeks and dates; the forms make exactly events E1 and E2 (same numbers changed); events in words; what differs between two lists of events; the Events tab's charts (window, shading, the lowest SKU, capacity); the What-if card (invalid events refused with the reason, events checked together, added, removed, saved, run); Home, Compare, Settings and the facts for Ask |
 
 The object tests were checked by breaking the object on purpose, seven ways: transit stock released on
