@@ -79,9 +79,11 @@ cell for cell. A ranked step arrives as one step per position, so the solver onl
 `Plan.steps` records each step's worst and total at its optimum; `Plan.objective` stays the score on the even rule,
 so every plan is comparable on one yardstick. Not a single solve with shrinking weights: that differs from the exact
 walk at some weights (RANKED_WALK.md §5). The plan check "Walk: a later step is served only when every earlier step
-on the line was met or held back" (`scenarios.walk_served_out_of_order`) counts, on the LP's own runs, the (position,
-week) pairs where a position ran while another on its line was below the floor of a step and not held back by a run
-limit (lead time included), and the position that ran was not itself below the floor of that step or an earlier one. The walk reaches the solver through `Case.walk` and
+on the line was met or held back" (`scenarios.walk_served_out_of_order`) counts, on the LP's own runs, the (make task,
+week) pairs where a task used a line's capacity while a position fed from that capacity was below the floor of a step
+and not held back by a run limit (lead time included), and the task served no position of that step or an earlier one
+(a position it feeds that is at or below that floor in the week the run lands for it). On tasks, not positions: in B
+one make task feeds a bike's Reno and PDC positions, and a build at Reno may be how the PDC is served. The walk reaches the solver through `Case.walk` and
 `redwheel.walk.solver_input(case, obj, positions, target_units) -> (floors, steps)` (the object session's module);
 `run_case` carries it as `R["walk"]`.
 

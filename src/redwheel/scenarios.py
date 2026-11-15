@@ -16,6 +16,7 @@ import pandas as pd
 
 from redwheel import aux_fns, engine, priors, rtn
 from redwheel import changes as ch
+from redwheel import walk as wk
 from redwheel.changes import Change
 from redwheel.config import LINES
 
@@ -32,6 +33,7 @@ class Case:
     summary: str = ""                # the scenario in one or two sentences
     parent: str = ""                 # the scenario this one was copied from
     changes: tuple = ()              # changes to the object's numbers, applied in order (see redwheel.changes)
+    walk: wk.Walk | None = None      # what comes first when a line is short (see redwheel.walk); None: the standing rule
 
     @property
     def is_base(self) -> bool:
@@ -90,6 +92,18 @@ CASE_E3 = Case("E3", "Scenario E3 · RW-4418 frames late eight weeks", CASE_A.pr
                                "frames for RW-4418 late: none for the weeks of 25 Oct to 13 Dec 2027"),))
 EVENTS = {c.key: c for c in (CASE_E1, CASE_E2)}
 # E3 is kept out of EVENTS (which planner2 lists as built-in) until the planner can show a run limit in words.
+
+# A priority order: scenario A's data and settings, with what comes first stated as a walk (see redwheel.walk).
+CASE_P1 = Case("P1", "Scenario P1 · MTB carbon in priority order", CASE_A.priors,
+               summary="Scenario A, with a priority order. Orders past their date come first, then every open order, "
+                       "then the target. The MTB carbon bikes reach their target one at a time: RW-9304, then "
+                       "RW-4418, then RW-6416. An order with no date is due seven days after it was placed.",
+               parent="A",
+               walk=wk.Walk((wk.Step("due"), wk.Step("owed"),
+                             wk.Step("target", {"line_id": "mtb-carbon"}, "ranked", ("RW-9304", "RW-4418", "RW-6416")),
+                             wk.Step("target", {"line_id": ["road-base", "road-carbon", "mtb-base"]})), 7))
+PRIORITY = {c.key: c for c in (CASE_P1,)}
+# Kept out of EVENTS, like E3, until the planner shows a walk.
 
 
 # ---------- pools: which stock faces which demand, read from the routing rule ----------
@@ -223,10 +237,7 @@ def run_case(case: Case) -> dict:
         raise ValueError(f"scenario {case.key}: a run limit on tasks the plan does not decide would change nothing: "
                          + ", ".join(inert))
     grp = pd.Series({k: sku.at[k[0], "line_id"] for k in keys})
-    floors, steps = None, None
-    if getattr(case, "walk", None):                 # a ranked walk (docs/RANKED_WALK.md): the object session's module
-        from redwheel import walk as wk             # turns the scenario's walk into floors and steps for the solver
-        floors, steps = wk.solver_input(case, obj, pos, tu)
+    floors, steps = wk.solver_input(case, obj, pos, tu)      # the scenario's walk, as floors and steps; None without one
     if steps:
         lp = engine.decide_walk(obj, free, tu.loc[keys], wd.loc[keys], grp, floors, steps, positions=pos, w_run=1e-6)
     else:
@@ -334,40 +345,58 @@ def _feeds(R: dict, key) -> list:
 def walk_served_out_of_order(R: dict) -> int:
     """How often the plan served a later step while an earlier one could still have used the line.
 
-    On the LP's own runs and levels. For each step i, line and week t: if a position in step i is below the step's
-    floor at t, and the tasks that feed it were not at their run limit in week t - lead, then every position on that
-    line given a run in week t - lead must itself be below the floor of step i or of an earlier step it is in
-    (its run served that step, not a later one). Counts (position, week) pairs that break this."""
+    On the LP's own runs and levels. For each step i, a position s in it below the step's floor in week t, whose
+    feeding tasks were not at their run limit in week u = t - lead: every make task that ran in week u on the same
+    capacity must have served a position of step i or earlier, i.e. a position it feeds that is at or below that
+    step's floor in the week the run lands for it. Counts (task, week) pairs that served no such position. A task
+    may feed several positions (in B a bike built at Reno is moved to the PDC), so the test is on what the capacity
+    was used for, not on which position the task is named after."""
     walk = R["walk"]
     if not walk:
         return 0
-    lp, pos = R["lp"], R["positions"]
+    lp, pos, obj = R["lp"], R["positions"], R["obj"]
     weeks = list(R["target_units"].columns)
     net = position_levels(lp.levels, pos)[weeks]
-    limit = rtn.run_limits(R["obj"]).reindex(index=lp.runs.index, columns=weeks)
+    limit = rtn.run_limits(obj).reindex(index=lp.runs.index, columns=weeks)
     at_limit = (lp.runs[weeks] >= limit - 1e-6) & limit.notna()
-    ran = lp.runs[weeks] > 1e-6
-    lead = {k: lead_weeks(R["case"], R["pools"][k[1]], R["line"][k]) for k in pos}
-    feeds = {k: _feeds(R, k) for k in pos}
+    ran = lp.runs[weeks] > 0.01               # a hundredth of a bike, like the gap below: a held step's slack lets
+    lead = {k: lead_weeks(R["case"], R["pools"][k[1]], R["line"][k]) for k in pos}     # the solver leave runs of
+    feeds = {k: _feeds(R, k) for k in pos}                                              # a few millionths of a bike
+    fed_by = {}                                                           # make task -> positions it feeds
+    for k, tasks in feeds.items():
+        for task in tasks:
+            if task.startswith("make|"):
+                fed_by.setdefault(task, []).append(k)
+    a = obj.arrows[obj.arrows["resource_id"].str.startswith("capacity|") & obj.arrows["task_id"].isin(lp.runs.index)]
+    cap_of = a.set_index("task_id")["resource_id"]
     steps = walk["steps"]
-    below, at_floor = {}, {}                  # step index -> {position: weeks below its floor / not above it by a bike}
+    gap = {}                                                              # (step, position) -> net - floor, by week
     for i, (f_i, members) in enumerate(steps):
         floor = walk["floors"][f_i]
-        gap = {s: net.loc[[s]].iloc[0] - floor.loc[[s], weeks].iloc[0] for s in members}
-        below[i] = {s: set(g.index[g < -0.01]) for s, g in gap.items()}    # a hundredth of a bike: the held step's slack
-        at_floor[i] = {s: set(g.index[g < 0.5]) for s, g in gap.items()}   # at the floor: the step keeps it there
+        for s in members:
+            gap[(i, s)] = net.loc[[s]].iloc[0] - floor.loc[[s], weeks].iloc[0]
+
+    def served(task, u, i):
+        """Did this run in week u serve a position of step i or earlier?"""
+        for p in fed_by[task]:
+            t_p = u + lead[p]
+            if t_p in weeks and any((i2, p) in gap and gap[(i2, p)][t_p] < 0.5 for i2 in range(i + 1)):
+                return True
+        return False
+
     bad = set()
-    for i in below:
-        for s, wks in below[i].items():
-            for t in wks:
-                u = t - lead[s]
-                if u < 1 or at_limit.loc[feeds[s], u].any():
-                    continue                                              # could not have been helped that week
-                for s2 in pos:
-                    if R["line"][s2] != R["line"][s] or s2 == s or not ran.loc[feeds[s2], u].any():
-                        continue
-                    if not any(t in at_floor[i2].get(s2, ()) for i2 in range(i + 1)):
-                        bad.add((s2, u))                                  # ran, yet above every floor up to this step
+    for (i, s), g in gap.items():
+        makes = [k for k in feeds[s] if k.startswith("make|")]
+        if not makes:
+            continue
+        rivals = [k for k in cap_of.index if cap_of[k] == cap_of[makes[0]] and k not in makes]
+        for t in g.index[g < -0.01]:                                      # a hundredth of a bike: the held step's slack
+            u = t - lead[s]
+            if u < 1 or at_limit.loc[feeds[s], u].any():
+                continue                                                  # could not have been helped that week
+            for k in rivals:
+                if ran.at[k, u] and not served(k, u, i):
+                    bad.add((k, u))
     return len(bad)
 
 

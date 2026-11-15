@@ -65,9 +65,13 @@ default); `run_plan` never has one. `scenarios.round_moves` and `engine.round_ru
 
 **8. The plan check.** Agreed, in `scenarios.checks`, but per step, not per bike, and with the lead time:
 
-> For each line, week t and step i: if a position in step i is below its floor at t, and its feeding tasks were not
-> at their run limit in week t − lead, then every position on that line given a run in week t − lead is itself below
-> the floor of step i or of an earlier step it is in: its run served that step, not a later one.
+> For each step i, a position s in it below its floor at t, whose feeding tasks were not at their run limit in week
+> u = t − lead: every make task that ran in week u on the same capacity must have served a position of step i or
+> earlier, i.e. a position it feeds that is at or below that step's floor in the week the run lands for it.
+
+(Second correction, on B: the test is on what the capacity was used for, not on which position a task is named after.
+In B one make task feeds a bike's Reno and PDC positions, and building at Reno in week 1 is how the PDC's owed
+bikes are served in week 3. With that, "PDC pool first" on B passes 10 of 10.)
 
 (Corrected while building: my first wording, "no position in a later step ran", flagged 98 pairs on the correct walk,
 because a position in the owed step is also in a later cover step; a run on it in a week it is owed serves the owed

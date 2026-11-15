@@ -60,3 +60,30 @@ the open orders as well, RW-9304's are cleared 5 Oct 2026, RW-4418's 9 Nov, RW-6
 - that the plan is "better": it is a different choice, made by the planner, not by the solver;
 - that it is in the app (it is in the solver and its tests; the form is being built);
 - "fairness term", "LP objective", "ranked walk" on the slide: use "today's rule" and "priority order".
+
+## 6. The forms a priority order can take, and what each answers (all measured, 15 Nov)
+
+Every form below is the same mechanism: steps over floors, in order. A floor is any level net inventory should not
+fall below, per bike and week; the solver treats the names as labels. Every row was run on the real solver with the
+plan checks; "same" means identical to today's plan, cell for cell.
+
+| Form | Question it answers | Scenario A, MTB carbon (order RW-9304, RW-4418, RW-6416) |
+|---|---|---|
+| **Rank bikes within a line** | "RW-9304 first: when does each bike reach target, and does anyone wait longer?" | at target 22 Feb / 26 Jul / 6 Sep 2027 (today: all 6 Sep); every order cleared 14 Dec 2026 as today; fill 96.4% as today |
+| **Rank the open orders too** | "And clear RW-9304's customers first?" | orders cleared 5 Oct / 9 Nov / 14 Dec 2026; fill 97.4%; targets as the row above |
+| **A ladder: a floor for everyone before anyone's full target** | "Nobody below half their target before any bike gets full cover." | 12 Jul / 16 Aug / 6 Sep 2027: the ranking, softened |
+| **A cap: no bike more than N weeks short** | "Protect every bike to within 4 weeks of target first." | floor = target − 4 weeks of demand: 9 Aug / 30 Aug / 6 Sep 2027 |
+| **Open orders before cover, shared evenly** | "Serve waiting customers before building stock." | **same as today**: today's rule already does this |
+| **Overdue customers first** (the "due" floor) | "Serve orders past their date before the rest." | 35 cells move; position-weeks with a customer past their date 66 → 67; no date, total or fill moves. On Redwheel's data the 1,467 bikes not yet due are all due by week 9, when every line is far behind anyway, so this order has nothing to work with |
+| **A line before other lines** | "MTB carbon before road." | **same as today**: lines share no capacity, so ranking across lines changes nothing |
+
+Scenario B (web orders from the PDC, dealers and commercial from Reno), the one form that is new there:
+
+| Form | Question | Result |
+|---|---|---|
+| **One pool before the other** | "Web customers first: what does it cost the dealers?" | PDC first: RW-4418 at the PDC at target 24 May 2027 (was 27 Sep), its orders cleared 19 Oct 2026 (was 4 Jan 2027); Reno's RW-4418 unchanged (27 Sep, 4 Jan); every target still held from 27 Sep 2027; fill 96.5% (was 95.3%); same 33,570 bikes transferred; 10 of 10 checks |
+
+What the mechanism cannot express, so do not promise it: a priority that changes on a date; channel priority in
+scenario A (one pool of stock serves every channel); batch sizes; a surprise (the plan knows the order from week 1).
+
+For the slide, rows 1 and 3 together make the point: the planner states the order, and can state how hard it bites.
