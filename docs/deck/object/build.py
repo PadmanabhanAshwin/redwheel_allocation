@@ -301,30 +301,37 @@ def staircase():
 SUMV = lambda sub: f'Σ{v("", sub)} '
 NB = lambda sub: f'<tspan style="{MF};text-decoration:overline">N</tspan><tspan dy="7" dx="1" style="{MF};font-size:19px">{sub}</tspan><tspan dy="-7" style="font-size:10px"> </tspan>'
 DYN = f'{v("X", "t")}{E_("=")}C{v("X", "t−1")}{PL}<tspan fill="{A0c}">A{v("", "0")}{v("N", "t")}</tspan>{PL}<tspan fill="{A1c}">A{v("", "1")}{v("N", "t−1")}</tspan>{PL}{v("π", "t")}'
+A_ = lambda n: f'A{v("", n, 13)}'
 LPROWS = [("minimise", f'{SUMV("t")}{SUMV("g")}max{v("", "k∈g")} {v("u", "k,t")}{PL}0.1 {SUMV("t")}{SUMV("k")}{v("u", "k,t")}',
-           "Objective, set by the planner.", f'Largest shortfall on each production line {it_("g")}, then the total.'),
-          ("subject to", DYN, "Dynamics, from the network.", "Levels carried, runs of this week, runs landing, arrivals π."),
+           [f'Summed over weeks {it_("t")} and production lines {it_("g")}: the largest shortfall {it_("u")} among the',
+            f'SKUs {it_("k")} built on {it_("g")}. Second term: 0.1 × the sum of all shortfalls.']),
+          ("subject to", DYN,
+           [f'State equation. {it_("X")}: resource levels. {it_("N")}: task runs. C: diagonal carry matrix.',
+            f'{A_("0")}, {A_("1")}: edge amounts by delay. π: exogenous arrivals.']),
           ("", f'{v("X", "t")}{E_("≥")}0, 0{E_("≤")}{v("N", "t")}{E_("≤")}{NB("t")}',
-           "Feasibility.", "Capacity not exceeded (C = 0), stock not negative (C = 1); run limits."),
+           [f'{it_("X")} ≥ 0 bounds capacity use (C = 0) and keeps stock non-negative (C = 1).',
+            f'<tspan style="{MF};text-decoration:overline">N</tspan>: run limit per task and week.']),
           ("where", f'{v("u", "k,t")}{E_("=")}max(0, {v("target", "k,t")} − {v("net", "k,t")}){E_("/")}{v("d", "k,t")}',
-           f'Shortfall of SKU {it_("k")}, in weeks of demand.', f'net = stock − open orders, rows of {it_("X")}; {it_("d")} = weekly demand over the target window.')]
+           [f'Shortfall of SKU {it_("k")} below target in week {it_("t")}, in weeks of demand. net: stock minus',
+            f'open orders, linear in {it_("X")}. {it_("d")}: mean weekly forecast over the target window.'])]
 def dynamics():
-    g = rule(556)
-    for i, (kw, m, a, b) in enumerate(LPROWS):
-        y = 608 + 50 * i
-        g += meq(110, y, kw, 25, "start", GREY) + meq(250, y, m, 28) + txt(1010, y - 10, a, 17, INK, 700) + txt(1010, y + 12, b, 17, GREY)
+    g = rule(556) + txt(110, 604, B_("Formulation"), 23)
+    for i, (kw, m, d) in enumerate(LPROWS):
+        y = 660 + 92 * i
+        g += meq(110, y, kw, 23, "start", GREY) + meq(240, y, m, 27) + lines(240, y + 30, d, 16, GREY, 22)
     return g
-EDITS = [("E1", "Line outage, MTB carbon, 3 weeks", "π", "capacity 375 → 0; 3 entries"),
-         ("E4", "Commercial order, 300 RW-4418", "π", "orders +300; 1 entry"),
-         ("E3", "Frame supply interrupted, RW-4418, 8 weeks", NB("").replace('<tspan dy="7" dx="1" style="' + MF + ';font-size:19px"></tspan>', ""), "run limit of make = 0; 8 entries"),
-         ("B", "Build lead time 1 week; web orders served from Columbus", f'A{v("", "0", 13)}, A{v("", "1", 13)}', "make’s +1 moves to the later matrix; move becomes a decision"),
-         ("", "Bought component, 2-week lead time (small example)", f'A{v("", "0", 13)}, A{v("", "2", 13)}', "one row (frames), one column (buy)")]
+PBAR = f'<tspan style="{MF};text-decoration:overline">N</tspan>'
+EDITS = [("E1", "Line outage, MTB carbon, 3 weeks", "π", "capacity arrival 375 → 0 in 3 weeks"),
+         ("E4", "Commercial order, 300 RW-4418", "π", "order arrival +300 in 1 week"),
+         ("E3", "Frame supply interrupted, RW-4418, 8 weeks", PBAR, "run limit of make set to 0 in 8 weeks"),
+         ("B", "Build lead time 1 week; web orders served from Columbus", f'{A_("0")}, {A_("1")}', f'output entry of make moved from {A_("0")} to {A_("1")}; move added to the decisions'),
+         ("", "Purchased component, 2-week lead time (small example)", f'{A_("0")}, {A_("2")}', "one row (frames) and one column (buy) added")]
+SXX = 1040
 def edits():
-    g = rule(800) + txt(110, 842, B_("Scenarios are parameter edits") + f'<tspan style="fill:{GREY}"> the program above is unchanged</tspan>', 23)
-    g += "".join(txt(x, 876, h, 15, GREY, 700) for x, h in [(110, "scenario"), (860, "parameter"), (1010, "edit")])
+    g = vrule(990, 580, 1000) + txt(SXX, 604, B_("Scenarios as parameter changes") + f'<tspan style="fill:{GREY}"> formulation unchanged</tspan>', 23)
     for i, (c, a, p, b) in enumerate(EDITS):
-        y = 908 + 29 * i
-        g += txt(110, y, c, 18, GREY, 700) + txt(160, y, a, 18) + meq(860, y, p, 21) + txt(1010, y, b, 18)
+        y = 656 + 70 * i
+        g += txt(SXX, y, c, 17, GREY, 700) + txt(SXX + 44, y, a, 18) + meq(SXX + 44, y + 28, p, 20, "start", AMB) + txt(SXX + 124, y + 28, b, 16, GREY)
     return g
 p4 = page(4, "Linear program", "", network() + vrule(860, 232, 530) + matrices() + vrule(1520, 232, 530) + staircase() + dynamics() + edits())
 
