@@ -240,4 +240,43 @@ def test_what_the_model_sees_is_the_scenario_in_words_and_no_data(m):
         "Either site; plan transfers: no; build time: Road base same week, Road carbon same week, MTB base same week, "
         "MTB carbon same week; transfer time Reno to the PDC: 1 week; targets: Road 8 weeks, then 10 weeks from "
         "2028-01-03; MTB base 12 weeks; MTB carbon 15 weeks.\n"
-        "Changes already in this scenario: (1) MTB carbon line capacity · weeks of 1 Mar to 15 Mar 2027 · down (none).")
+        "Changes already in this scenario: (1) MTB carbon line capacity · weeks of 1 Mar to 15 Mar 2027 · down (none).\n"
+        "Priority order in this scenario: none (a line that is short keeps its bikes equally short; order dates are "
+        "not considered).")
+    assert llm.scenario_text(sc.CASE_P1).split("\n")[-1] == (
+        "Priority order in this scenario: 1. Orders past their date · every bike · shared evenly 2. All open orders · "
+        "every bike · shared evenly 3. Target · MTB carbon line · in order: RW-9304, then RW-4418, then RW-6416 "
+        "4. Target · MTB base, Road base and Road carbon lines · shared evenly An order with no date is due 7 days "
+        "after it was placed.")
+
+
+# ---------------- a priority order from a sentence ----------------
+
+PRIORITY = edit("priority", "RW-9304 first, then RW-4418, then RW-6416", line="mtb-carbon",
+                order="RW-9304, RW-4418, RW-6416", decides="target")
+
+
+def test_a_priority_request_becomes_the_built_in_scenario():
+    client = FakeClient(edits_answer([PRIORITY]))
+    p = llm.propose_edits("On the MTB carbon line build RW-9304 to target first, then RW-4418, then RW-6416.", sc.CASE_A, client)
+    assert p.ok and p.attempts == 1
+    assert p.words == ["Priority order · MTB carbon · RW-9304, then RW-4418, then RW-6416 (target)"]
+    assert p.scenario(key="X").walk == sc.CASE_P1.walk
+    assert "priority" in client.calls[0]["output_config"]["format"]["schema"]["properties"]["edits"]["items"][
+        "properties"]["tunable"]["enum"]
+    system = client.calls[0]["system"]
+    assert "- priority (Priority order; what comes first when a line is short: steps)" in system
+    assert "order: text. SKU ids of that line separated by commas" in system and "invent an order" in system
+
+
+def test_a_priority_answer_that_is_wrong_goes_back_with_the_reason():
+    wrong_line = edit("priority", line="mtb-carbon", order="RW-9835, RW-9304", decides="target")
+    client = FakeClient(edits_answer([wrong_line]), edits_answer([PRIORITY]))
+    p = llm.propose_edits("RW-9304 first on MTB carbon", sc.CASE_A, client)
+    assert p.ok and p.attempts == 2
+    assert "RW-9835 is not on the MTB carbon line" in client.calls[1]["messages"][-1]["content"]
+    missing = edit("priority", line="mtb-carbon", order="RW-9304")                # `decides` not given: no default
+    p = llm.propose_edits("RW-9304 first", sc.CASE_A, FakeClient(*[edits_answer([missing])] * llm.MAX_ATTEMPTS))
+    assert not p.ok and "missing field(s) ['decides']" in p.errors[0]
+    again = llm.propose_edits("the same order", sc.CASE_P1, FakeClient(*[edits_answer([PRIORITY])] * llm.MAX_ATTEMPTS))
+    assert not again.ok and "it would change nothing (that is already the priority order)" in again.errors[0]

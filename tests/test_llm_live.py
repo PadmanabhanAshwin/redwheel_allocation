@@ -57,7 +57,7 @@ def test_live_proposal(name, obj):
 
 # ---------------- any tunable: requests -> edits, graded on what they do to the scenario ----------------
 
-from redwheel import tunables as tu                                                          # noqa: E402
+from redwheel import tunables as tu, walk as wk                                              # noqa: E402
 from redwheel.changes import Change                                                          # noqa: E402
 
 
@@ -89,13 +89,28 @@ EDIT_CASES = {
              "transfers. Dealer and commercial orders ship straight from Reno. Building a bike now takes one week on "
              "every line.", "B"),
     "not expressible": ("B", "When the PDC runs short of a bike, let Reno ship that web order instead.", "unsupported"),
+    # the priority order: graded on the exact walk
+    "P1 in a sentence": (
+        "A", "On the MTB carbon line, get RW-9304 to its target first, then RW-4418, then RW-6416.", sc.CASE_P1.walk),
+    "whose customers come first": (
+        "A", "On the MTB carbon line, serve RW-6416's customers first, then RW-4418's, then RW-9304's, and build "
+             "their cover in the same order.",
+        wk.standard(tu._base(), "line_id", {"mtb-carbon": (("RW-6416", "RW-4418", "RW-9304"), True)})),
+    "one bike first": (
+        "A", "RW-9835 should be the first road base bike to reach its target.",
+        wk.standard(tu._base(), "line_id", {"road-base": (("RW-9835",), False)})),
+    "orders with no date": (
+        "P1", "Treat an order with no date as due two weeks after it was placed.",
+        wk.standard(tu._base(), "line_id", {"mtb-carbon": (("RW-9304", "RW-4418", "RW-6416"), False)}, 14)),
+    "a line over a line": ("A", "Prioritise the MTB carbon line over the road lines.", "unsupported"),
+    "which order?": ("A", "Put the MTB carbon bikes in a priority order.", "question"),
 }
 
 
 @pytest.mark.parametrize("name", EDIT_CASES)
 def test_live_edits(name):
     start, request, expected = EDIT_CASES[name]
-    case = {"A": sc.CASE_A, "B": sc.CASE_B}[start]
+    case = {"A": sc.CASE_A, "B": sc.CASE_B, "P1": sc.CASE_P1}[start]
     p = llm.propose_edits(request, case)
     print(f"\n{name}: attempts {p.attempts}, tokens {p.usage}, errors {p.errors}")
     for w, r, e in zip(p.words, p.reasons, p.edits):
@@ -108,5 +123,8 @@ def test_live_edits(name):
     new = p.scenario()
     if expected == "B":
         assert priors.diff(new.priors, sc.CASE_B.priors) == [] and new.changes == ()
+    elif isinstance(expected, wk.Walk):
+        print("   walk:", tu.walk_lines(new), "| days:", new.walk.no_date_days)
+        assert new.walk == expected and priors.diff(new.priors, case.priors) == [] and new.changes == case.changes
     else:
         assert priors.diff(new.priors, case.priors) == [] and same_edits(new.changes, expected)

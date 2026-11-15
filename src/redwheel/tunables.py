@@ -1,7 +1,7 @@
 """Every tunable of a Redwheel scenario, in one list, each with its form.
 
-A scenario is the data, its settings and its changes (`scenarios.Case`). A tunable is one thing a planner can say is
-different, in a planner's words, with where it sits in the model:
+A scenario is the data, its settings, its changes and its priority order (`scenarios.Case`). A tunable is one thing
+a planner can say is different, in a planner's words, with where it sits in the model:
 
     changes the data: one of the object's numbers (changes.py)
         Stock count        the opening level of a SKU's stock at a site
@@ -16,6 +16,9 @@ different, in a planner's words, with where it sits in the model:
         Ship from          which sites a channel's orders may ship from
         Plan transfers     whether the plan decides transfers to the PDC
         Target             a group's weeks-of-supply target, from a date
+    changes what comes first: the scenario's walk (walk.py)
+        Priority order     which of a line's bikes comes first when the line cannot build everything
+        Orders with no date   when an order that carries no date is due (orders past their date come first)
 
 Each has a form: the fields to fill in, with their choices, ranges and defaults. Where a built-in event exists, the
 defaults are that event (E1, E2, E3). `make` turns a filled form into an Edit; `apply` puts edits on a scenario;
@@ -36,7 +39,7 @@ from dataclasses import dataclass, replace
 import numpy as np
 import pandas as pd
 
-from redwheel import aux_fns, changes as ch, priors, rtn
+from redwheel import aux_fns, changes as ch, priors, rtn, walk as wk
 from redwheel.changes import Change
 from redwheel.config import LINES, PLAN_START
 
@@ -109,9 +112,9 @@ class Field:
 class Tunable:
     key: str
     name: str
-    changes: str                     # "data" (one of the object's numbers) or "rules" (a settings row)
-    number: str                      # where it sits: opening, arrival, run limit, delay, routing, decides, target
-    sits_on: str                     # resource, task, edge or setting
+    changes: str                     # "data" (one of the object's numbers), "rules" (a settings row) or "priorities"
+    number: str                      # where it sits: opening, arrival, run limit, delay, routing, decides, target, steps
+    sits_on: str                     # resource, task, edge, setting or walk
     question: str                    # what it answers, in a planner's words
     unit: str
     dated: bool
@@ -124,12 +127,14 @@ class Tunable:
 
 @dataclass(frozen=True)
 class Edit:
-    """A filled form: the values entered, and what they do to the scenario: a change to the object's numbers, or rows
-    of the settings table ({prior, applies_to, from_date, new}, as `priors.apply_changes` takes)."""
+    """A filled form: the values entered, and what they do to the scenario: a change to the object's numbers, rows
+    of the settings table ({prior, applies_to, from_date, new}, as `priors.apply_changes` takes), or edits to its
+    walk: ("rank", line, order, orders_too) or ("no_date_days", days)."""
     tunable: str
     values: dict
     change: Change | None = None
     settings: tuple = ()
+    walk: tuple = ()
 
 
 def _sku_choices():
@@ -224,6 +229,24 @@ def _tunables() -> dict:
                  Field("weeks", "Weeks of supply", "number", default=18.0, min=0.5, max=T - H,
                        help="At most the weeks of forecast known after the plan."),
                  _date("from", "From", 53, H, help="The plan's first week sets the target from the start."))),
+        Tunable("priority", "Priority order", "priorities", "steps", "walk",
+                "When a line cannot build everything, which of its bikes comes first?", "bikes in order", False,
+                (Field("line", "Line", "choice", line, default="mtb-carbon"),
+                 Field("order", "Bikes, first to last", "text", default="RW-9304, RW-4418, RW-6416",
+                       help="SKU ids of that line separated by commas, first served first; never empty. Bikes of the "
+                            "line left out follow, sharing evenly."),
+                 Field("decides", "The order decides", "choice",
+                       (("target", "who reaches the target first"),
+                        ("orders", "whose orders are cleared first, and who reaches the target first")),
+                       default="target",
+                       help="Either way orders past their date come first, then every open order, then the target. "
+                            "With target, a line's customers wait equally and only cover is built in order.")),
+                example="P1"),
+        Tunable("no_date", "Orders with no date", "priorities", "due week", "walk",
+                "When is an order that carries no date due? (Web orders carry none. Orders past their date come "
+                "first.)", "days", False,
+                (Field("days", "Due this many days after it was placed", "int", default=7, min=0, max=wk.MAX_DAYS,
+                       help="The plan is weekly: the order is due in the week that day falls in."),)),
     ]
     return {x.key: x for x in t}
 
@@ -311,7 +334,24 @@ def _build(key: str, v: dict):
     if key == "target":
         monday = week_start(week_of(v["from"]))                  # targets start on a Monday, like plan weeks
         return (row("target_weeks", v["group"], f"{float(v['weeks']):g}", monday.isoformat()),)
+    if key == "priority":
+        order = tuple(x.strip() for x in v["order"].replace(";", ",").split(",") if x.strip())
+        on_line = [x for x in skus().index if skus().at[x, "line_id"] == v["line"]]
+        label = TUNABLES["priority"].field("order").label
+        if not order:
+            raise ValueError(f"Priority order: {label}: at least one SKU is needed")
+        if len(set(order)) != len(order):
+            raise ValueError(f"Priority order: {label}: a SKU is listed twice")
+        off = [x for x in order if x not in on_line]
+        if off:
+            raise ValueError(f"Priority order: {label}: {_and(off)} {'is' if len(off) == 1 else 'are'} not on the "
+                             f"{LINE_NAME[v['line']]} line (its SKUs are {_and(on_line)})")
+        v["order"] = ", ".join(order)                            # one spelling of the same order
+        return {"walk": (("rank", v["line"], order, v["decides"] == "orders"),)}
+    if key == "no_date":
+        return {"walk": (("no_date_days", int(v["days"])),)}
     raise KeyError(key)
+
 
 
 def make(key: str, **values) -> Edit:
@@ -340,17 +380,40 @@ def make(key: str, **values) -> Edit:
     built = _build(key, filled)
     if isinstance(built, Change):
         return Edit(key, filled, change=built)
+    if isinstance(built, dict):
+        return Edit(key, filled, walk=built["walk"])
     return Edit(key, filled, settings=tuple(built))
 
 
 # ---------------- edits on a scenario ----------------
 
+LINE_COLUMN = "line_id"                        # the item column a priority order groups by
+
+
+def _walk_after(walk, edits):
+    """The scenario's walk after these walk edits: the usual walk (walk.standard), with each ranked line as edited."""
+    if not edits:
+        return walk
+    obj = _base()
+    ranked = wk.ranking(walk, obj, LINE_COLUMN) if walk else {}
+    if ranked is None:
+        raise ValueError("Priority order: this scenario's walk was not made with these forms, so they cannot edit it")
+    ranked, days = dict(ranked), walk.no_date_days if walk else wk.Walk().no_date_days
+    for e in edits:
+        if e[0] == "rank":
+            ranked[e[1]] = (tuple(e[2]), bool(e[3]))
+        else:
+            days = int(e[1])
+    return wk.standard(obj, LINE_COLUMN, ranked, days)
+
+
 def apply(case, edits, **fields):
     """The scenario with these edits: settings rows applied to its table, changes added after its own, in the order
-    given. `fields` may set key, name, summary or parent of the result."""
+    given, and its walk edited. `fields` may set key, name, summary or parent of the result."""
     rows = [r for e in edits for r in e.settings]
     table_ = priors.apply_changes(case.priors, rows) if rows else case.priors
-    return replace(case, priors=table_, changes=tuple(case.changes) + tuple(e.change for e in edits if e.change), **fields)
+    return replace(case, priors=table_, changes=tuple(case.changes) + tuple(e.change for e in edits if e.change),
+                   walk=_walk_after(case.walk, [x for e in edits for x in e.walk]), **fields)
 
 
 PLAIN = {"changes no number": "it would change nothing (the numbers it selects already have that value)"}
@@ -365,7 +428,15 @@ def check(case, edits=()) -> list[str]:
     for e in edits:                                           # a settings edit that leaves every row as it was
         if e.settings and not priors.diff(t0, priors.apply_changes(t0, list(e.settings))):
             errs.append(f"{describe(e)}: it would change nothing (that is already the setting)")
-    new = apply(case, edits)
+    try:
+        for e in edits:                                       # a walk edit that leaves the walk as it was
+            if e.walk and _walk_after(case.walk, e.walk) == case.walk:
+                errs.append(f"{describe(e)}: it would change nothing (that is already the priority order)")
+        new = apply(case, edits)
+    except ValueError as problem:                             # a walk these forms cannot edit
+        return errs + [str(problem)]
+    if new.walk:
+        errs += [f"Priority order: {x}" for x in wk.check(new.walk, _base())]
     p_errs = priors.validate(new.priors, _base())
     if p_errs:
         return errs + p_errs
@@ -494,11 +565,51 @@ def describe(x) -> str:
         monday = week_start(week_of(v["from"]))
         return (f"Target · {GROUP_NAME[v['group']]} · {float(v['weeks']):g} weeks"
                 + ("" if monday <= START else f" from {monday:%-d %b %Y}"))
+    if x.tunable == "priority":
+        return f"Priority order · {LINE_NAME[v['line']]} · {_rank_words((x.walk[0][2], x.walk[0][3]))}"
+    if x.tunable == "no_date":
+        return f"Orders with no date · due {_days(v['days'])} after they were placed"
     return f"{x.tunable} {x.values}"
 
 
-def name_hint(c: Change) -> str:
-    """A short name for a scenario made of this change."""
+def _days(n) -> str:
+    return f"{int(n)} day" + ("" if int(n) == 1 else "s")
+
+
+def _rank_words(r) -> str:
+    """A line's place in the priority order: 'shared evenly', or its bikes in order and what the order decides."""
+    if not r:
+        return "shared evenly"
+    return ", then ".join(r[0]) + (" (orders and target)" if r[1] else " (target)")
+
+
+def who(select: dict) -> str:
+    """A walk step's selection in Redwheel's words: 'every bike', 'MTB carbon line', 'RW-4418'."""
+    if not select:
+        return "every bike"
+    if list(select) == [LINE_COLUMN]:
+        names = [LINE_NAME.get(x, x) for x in _list(select[LINE_COLUMN])]
+        return f"{_and(names)} line" + ("s" if len(names) > 1 else "")
+    if list(select) == ["item"]:
+        return _and(_list(select["item"]))
+    return "; ".join(f"{c} {_and(_list(v))}" for c, v in select.items())
+
+
+def walk_lines(case) -> list:
+    """A scenario's priority order as numbered lines, first step first; with none, the standing rule as one line."""
+    return wk.lines(case.walk, who, _base())
+
+
+def name_hint(c) -> str:
+    """A short name for a scenario made of this change (or this edit)."""
+    if isinstance(c, Edit):
+        if c.change is not None:
+            return name_hint(c.change)
+        if c.tunable == "priority":
+            return f"{LINE_NAME[c.values['line']]} in priority order"
+        if c.tunable == "no_date":
+            return f"Orders with no date due in {_days(c.values['days'])}"
+        return describe(c)
     if tunable_of(c) == "line_capacity" and c.op == "set" and c.value == 0:
         return f"{subject(c).removesuffix(' capacity')} down from {week_start(c.from_t):%-d %b %Y}"
     if c.field == "run_max" and c.value == 0:
@@ -554,11 +665,39 @@ def differences(a, b) -> pd.DataFrame:
                 f" from {pd.Timestamp(x['from_date']):%-d %b %Y}"
             rows.append(("Target", GROUP_NAME.get(at, at) + when_, f"{float(o):g} weeks" if o else "—",
                          f"{float(n):g} weeks" if n else "removed", ""))
+    rows += _walk_differences(a.walk, b.walk)
     for what, c in moves(a.changes, b.changes):
         name = TUNABLES[tunable_of(c)].name if tunable_of(c) else "Change"
         rows.append((name, f"{subject(c)} · {when(c)}", effect(c) if what == "removed" else "as in the data",
                      "as in the data" if what == "removed" else effect(c), c.reason))
     return pd.DataFrame(rows, columns=["Tunable", "What", "From", "To", "Why"])
+
+
+def _comes_first(walk) -> str:
+    if not walk:
+        return "the target, shared evenly"
+    return ("orders past their date, then every open order, then the target (an order with no date is due "
+            f"{_days(walk.no_date_days)} after it was placed)")
+
+
+def _walk_differences(wa, wb) -> list:
+    """Rows of `differences` for two scenarios' walks: what comes first, each line whose order differs, and the days
+    an order with no date is given."""
+    if (wa or None) == (wb or None):
+        return []
+    obj = _base()
+    ra, rb = (wk.ranking(w, obj, LINE_COLUMN) if w else {} for w in (wa, wb))
+    if ra is None or rb is None:                              # a walk no form made: its steps, whole
+        return [("Priority order", "Steps", " / ".join(wk.lines(wa, who, obj)), " / ".join(wk.lines(wb, who, obj)), "")]
+    rows = []
+    if bool(wa) != bool(wb):
+        rows.append(("Priority order", "What comes first", _comes_first(wa), _comes_first(wb), ""))
+    elif wa.no_date_days != wb.no_date_days:
+        rows.append(("Orders with no date", "Due after it was placed", _days(wa.no_date_days), _days(wb.no_date_days), ""))
+    for ln in LINES:
+        if ra.get(ln) != rb.get(ln):
+            rows.append(("Priority order", f"{LINE_NAME[ln]} line", _rank_words(ra.get(ln)), _rank_words(rb.get(ln)), ""))
+    return rows
 
 
 def change_rows(changes, report: pd.DataFrame) -> pd.DataFrame:
@@ -582,6 +721,14 @@ def change_rows(changes, report: pd.DataFrame) -> pd.DataFrame:
 
 def now(key: str, case, **values) -> str:
     """What the scenario has now where a filled form would edit, in words (for showing next to the form)."""
+    if key == "no_date":
+        return f"{_days(case.walk.no_date_days)}" if case.walk else "dates are not considered (no priority order)"
+    if key == "priority":                                     # only the line matters: what is its order now?
+        line = values.get("line", TUNABLES[key].field("line").default)
+        if line not in LINES:
+            raise ValueError(f"Priority order: Line: {line!r} is not one of the choices")
+        ranked = wk.ranking(case.walk, _base(), LINE_COLUMN) if case.walk else {}
+        return "a walk no form made" if ranked is None else _rank_words(ranked.get(line))
     e = make(key, **values)
     if e.change is not None:
         st = case.settings

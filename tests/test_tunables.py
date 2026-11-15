@@ -1,6 +1,7 @@
-"""The one list of tunables (redwheel/tunables.py): each form makes exactly the change or settings it says; the
-forms rebuild the built-in scenarios (E1, E2, E3 from data tunables, B from rules tunables); checks say why in words;
-every data tunable runs through the solver with every plan check passing; differences and reports read right."""
+"""The one list of tunables (redwheel/tunables.py): each form makes exactly the change, settings or walk edit it
+says; the forms rebuild the built-in scenarios (E1, E2, E3 from data tunables, B from rules tunables, P1 from the
+priority order); checks say why in words; every data tunable runs through the solver with every plan check passing;
+differences and reports read right."""
 import datetime as dt
 from dataclasses import replace
 
@@ -8,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from redwheel import changes as ch, priors, rtn, scenarios as sc, tunables as tu
+from redwheel import changes as ch, priors, rtn, scenarios as sc, tunables as tu, walk as wk
 from redwheel.changes import Change
 
 D = dt.date
@@ -30,15 +31,20 @@ def by_sku(R):
 def test_the_list_has_every_tunable_once_with_where_it_sits():
     t = tu.table()
     assert t["key"].tolist() == ["stock", "line_capacity", "demand", "extra_order", "build_limit", "transfer_limit",
-                                 "build_time", "transfer_time", "ship_from", "plan_transfers", "target"]
+                                 "build_time", "transfer_time", "ship_from", "plan_transfers", "target",
+                                 "priority", "no_date"]
     assert t["Tunable"].is_unique and t["key"].is_unique
     assert dict(zip(t["key"], t["In the model"])) == {
         "stock": "opening", "line_capacity": "arrival", "demand": "arrival", "extra_order": "arrival",
         "build_limit": "run limit", "transfer_limit": "run limit", "build_time": "delay", "transfer_time": "delay",
-        "ship_from": "routing", "plan_transfers": "decides", "target": "target"}
+        "ship_from": "routing", "plan_transfers": "decides", "target": "target", "priority": "steps",
+        "no_date": "due week"}
     assert set(t.loc[t["Changes"] == "data", "key"]) == {"stock", "line_capacity", "demand", "extra_order",
                                                           "build_limit", "transfer_limit"}
-    assert dict(zip(t["key"], t["Example"]))["line_capacity"] == "E1" and dict(zip(t["key"], t["Example"]))["build_limit"] == "E3"
+    assert set(t.loc[t["Changes"] == "priorities", "key"]) == {"priority", "no_date"}
+    assert set(t["Changes"]) == {"data", "rules", "priorities"}
+    examples = dict(zip(t["key"], t["Example"]))
+    assert (examples["line_capacity"], examples["build_limit"], examples["priority"]) == ("E1", "E3", "P1")
 
 
 @pytest.mark.parametrize("key", list(tu.TUNABLES))
@@ -47,6 +53,8 @@ def test_every_form_has_valid_defaults_and_makes_one_kind_of_edit(key):
     t = tu.TUNABLES[key]
     assert set(e.values) == {f.key for f in t.fields}
     assert (e.change is not None) == (t.changes == "data") and bool(e.settings) == (t.changes == "rules")
+    assert bool(e.walk) == (t.changes == "priorities")
+    assert sum([e.change is not None, bool(e.settings), bool(e.walk)]) == 1                 # exactly one kind
     if e.change is not None:
         assert tu.tunable_of(e.change) == key                           # the change is recognised as this tunable
 
@@ -169,7 +177,9 @@ def test_every_tunable_in_words():
         "transfer_time": "Transfer time · Reno to the PDC · 2 weeks",
         "ship_from": "Ship from · Web orders · PDC",
         "plan_transfers": "Plan transfers · Reno to the PDC · yes",
-        "target": "Target · MTB carbon · 18 weeks from 6 Sep 2027"}
+        "target": "Target · MTB carbon · 18 weeks from 6 Sep 2027",
+        "priority": "Priority order · MTB carbon · RW-9304, then RW-4418, then RW-6416 (target)",
+        "no_date": "Orders with no date · due 7 days after they were placed"}
     assert tu.describe(E2) == words["demand"]                                                 # the `channel` spelling too
     assert tu.describe(tu.make("line_capacity", percent=50, first=D(2026, 12, 28))) == \
         "MTB carbon line capacity · weeks of 28 Dec 2026 to 11 Jan 2027 · 50% of normal"
@@ -190,6 +200,10 @@ def test_what_is_there_now():
     assert tu.now("build_limit", sc.CASE_A) == "no limit" and tu.now("build_limit", sc.CASE_E3) == "limits from 0 to 0 a week"
     assert tu.now("ship_from", sc.CASE_B, channel="WEB") == "PDC" and tu.now("plan_transfers", sc.CASE_A) == "no"
     assert tu.now("target", sc.CASE_A, group="road", **{"from": D(2028, 6, 5)}) == "10 weeks"
+    assert tu.now("priority", sc.CASE_A) == "shared evenly" and tu.now("priority", sc.CASE_P1, line="road-base") == "shared evenly"
+    assert tu.now("priority", sc.CASE_P1) == "RW-9304, then RW-4418, then RW-6416 (target)"
+    assert tu.now("no_date", sc.CASE_A) == "dates are not considered (no priority order)"
+    assert tu.now("no_date", sc.CASE_P1) == "7 days"
 
 
 # ---------------- what differs between two scenarios ----------------
@@ -271,3 +285,114 @@ def test_a_target_cannot_look_past_the_forecast():
     longest = tu.apply(sc.CASE_A, [tu.make("target", group="mtb_carbon", weeks=35, **{"from": D(2026, 9, 7)})], key="T")
     assert tu.check(longest) == []
     assert sc.checks(sc.run_case(longest))["pass"].all()
+
+
+# ---------------- the priority order ----------------
+
+MTB = ("RW-9304", "RW-4418", "RW-6416")
+
+
+def test_the_default_priority_form_is_the_built_in_scenario():
+    """Scenario A with the Priority order form as it opens is scenario P1."""
+    e = tu.make("priority")
+    assert e.values == {"line": "mtb-carbon", "order": "RW-9304, RW-4418, RW-6416", "decides": "target"}
+    made = tu.apply(sc.CASE_A, [e], key="X")
+    assert made.walk == sc.CASE_P1.walk and made.changes == () and made.priors is sc.CASE_A.priors
+    assert tu.check(sc.CASE_A, [e]) == []
+    assert tu.walk_lines(made) == [
+        "1. Orders past their date · every bike · shared evenly",
+        "2. All open orders · every bike · shared evenly",
+        "3. Target · MTB carbon line · in order: RW-9304, then RW-4418, then RW-6416",
+        "4. Target · MTB base, Road base and Road carbon lines · shared evenly"]
+    assert tu.walk_lines(sc.CASE_A) == ["1. Target · every bike · shared evenly"]
+    assert tu.name_hint(e) == "MTB carbon in priority order" and tu.name_hint(tu.make("line_capacity")) == \
+        "MTB carbon line down from 1 Mar 2027"
+
+
+def test_a_priority_order_is_spelled_one_way_and_may_name_part_of_a_line():
+    a = tu.make("priority", order=" RW-6416 ;RW-9304,")
+    assert a.values["order"] == "RW-6416, RW-9304" and a.walk == (("rank", "mtb-carbon", ("RW-6416", "RW-9304"), False),)
+    made = tu.apply(sc.CASE_A, [a])
+    assert tu.walk_lines(made)[2] == "3. Target · MTB carbon line · in order: RW-6416, then RW-9304, then the others evenly"
+    assert wk.check(made.walk, tu._base()) == []
+
+
+def test_priority_edits_add_up_line_by_line():
+    """A second line is added beside the first; the same line again replaces its order; the days are kept."""
+    road = tu.make("priority", line="road-base", order="RW-9835", decides="orders")
+    days = tu.make("no_date", days=14)
+    c = tu.apply(sc.CASE_P1, [road, days])
+    assert wk.ranking(c.walk, tu._base(), "line_id") == {"mtb-carbon": (MTB, False), "road-base": (("RW-9835",), True)}
+    assert c.walk.no_date_days == 14 and wk.check(c.walk, tu._base()) == []
+    again = tu.apply(c, [tu.make("priority", order="RW-6416, RW-4418, RW-9304")])
+    assert wk.ranking(again.walk, tu._base(), "line_id") == {"mtb-carbon": (("RW-6416", "RW-4418", "RW-9304"), False),
+                                                             "road-base": (("RW-9835",), True)}
+    assert again.walk.no_date_days == 14
+    only_days = tu.apply(sc.CASE_A, [days])                    # no order given: dates first, everything shared evenly
+    assert only_days.walk == wk.standard(tu._base(), no_date_days=14)
+
+
+@pytest.mark.parametrize("values, message", [
+    (dict(order=""), "Bikes, first to last: at least one SKU is needed"),
+    (dict(order="RW-9304, RW-9304"), "a SKU is listed twice"),
+    (dict(order="RW-9835"), "RW-9835 is not on the MTB carbon line (its SKUs are RW-4418, RW-6416 and RW-9304)"),
+    (dict(order="the red one"), "the red one is not on the MTB carbon line"),
+    (dict(line="tandem"), "Line: 'tandem' is not one of the choices"),
+    (dict(decides="everything"), "The order decides: 'everything' is not one of the choices"),
+    (dict(order=7), "Bikes, first to last: text is needed"),
+])
+def test_a_priority_form_filled_wrong_is_refused_with_the_reason(values, message):
+    with pytest.raises(ValueError) as e:
+        tu.make("priority", **values)
+    assert message in str(e.value)
+    for days in (-1, 366, 2.5):
+        with pytest.raises(ValueError, match="Due this many days"):
+            tu.make("no_date", days=days)
+
+
+def test_check_says_why_a_priority_edit_cannot_be_made():
+    same = tu.check(sc.CASE_P1, [tu.make("priority")])
+    assert same == ["Priority order · MTB carbon · RW-9304, then RW-4418, then RW-6416 (target): it would change "
+                    "nothing (that is already the priority order)"]
+    assert tu.check(sc.CASE_P1, [tu.make("no_date")]) == [
+        "Orders with no date · due 7 days after they were placed: it would change nothing (that is already the "
+        "priority order)"]
+    assert tu.check(sc.CASE_A, [tu.make("no_date")]) == []     # on A it turns dates on: that is a change
+    by_hand = replace(sc.CASE_A, walk=wk.Walk((wk.Step("target"),)))                         # a walk no form made
+    assert tu.check(by_hand, [tu.make("priority")]) == [
+        "Priority order: this scenario's walk was not made with these forms, so they cannot edit it"]
+    with pytest.raises(ValueError, match="not made with these forms"):
+        tu.apply(by_hand, [tu.make("priority")])
+    assert tu.check(by_hand) == [] and tu.check(sc.CASE_P1) == []
+    broken = replace(sc.CASE_A, walk=wk.Walk((wk.Step("target", {}, "ranked", MTB),)))       # the trap, saved by hand
+    assert any("needs an owed step" in x for x in tu.check(broken))
+
+
+def test_differences_show_a_priority_order():
+    d = tu.differences(sc.CASE_A, sc.CASE_P1)
+    assert d.values.tolist() == [
+        ["Priority order", "What comes first", "the target, shared evenly",
+         "orders past their date, then every open order, then the target (an order with no date is due 7 days after "
+         "it was placed)", ""],
+        ["Priority order", "MTB carbon line", "shared evenly", "RW-9304, then RW-4418, then RW-6416 (target)", ""]]
+    assert tu.differences(sc.CASE_P1, sc.CASE_P1).empty
+    c = tu.apply(sc.CASE_P1, [tu.make("priority", line="road-base", order="RW-9835", decides="orders"),
+                              tu.make("no_date", days=14)])
+    assert tu.differences(sc.CASE_P1, c).values.tolist() == [
+        ["Orders with no date", "Due after it was placed", "7 days", "14 days", ""],
+        ["Priority order", "Road base line", "shared evenly", "RW-9835 (orders and target)", ""]]
+    back = tu.differences(c, sc.CASE_A)
+    assert back["What"].tolist() == ["What comes first", "Road base line", "MTB carbon line"]
+    assert back["To"].tolist() == ["the target, shared evenly", "shared evenly", "shared evenly"]
+    by_hand = replace(sc.CASE_A, walk=wk.Walk((wk.Step("target"),)))
+    assert tu.differences(sc.CASE_A, by_hand).values.tolist() == [
+        ["Priority order", "Steps", "1. Target · every bike · shared evenly", "1. Target · every bike · shared evenly", ""]]
+    both = tu.apply(sc.CASE_E1, [tu.make("priority")])                                       # a walk beside an event
+    assert tu.differences(sc.CASE_A, both)["Tunable"].tolist() == ["Priority order", "Priority order", "Line capacity"]
+
+
+def test_a_priority_order_made_with_the_form_plans_like_the_built_in_scenario():
+    made = sc.run_case(tu.apply(sc.CASE_A, [tu.make("priority")], key="X"))
+    builtin = sc.run_case(sc.CASE_P1)
+    assert (made["builds"].values == builtin["builds"].values).all()
+    assert sc.checks(made)["pass"].all() and len(sc.checks(made)) == 10

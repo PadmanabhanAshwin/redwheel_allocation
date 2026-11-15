@@ -220,14 +220,15 @@ def _field_text(f: tu.Field) -> str:
         what = f"{'a whole number' if f.kind == 'int' else 'a number'} from {f.min:g} to {f.max:g}" + \
                (f", not {', '.join(f'{x:g}' for x in f.exclude)}" if f.exclude else "")
     else:
-        what = "text, may be empty"
+        what = "text, may be empty" if f.key == "why" else "text"
     return f"    {f.key}: {what}.{help_}"
 
 
 def _tunables_text() -> str:
     out = []
     for t in tu.TUNABLES.values():
-        where = "a number in the data" if t.changes == "data" else "a setting of the plan's rules"
+        where = {"data": "a number in the data", "rules": "a setting of the plan's rules",
+                 "priorities": "what comes first when a line is short"}[t.changes]
         out.append(f"- {t.key} ({t.name}; {where}: {t.number}). {t.question} Unit: {t.unit}.\n"
                    + "\n".join(_field_text(f) for f in t.fields))
     return "\n".join(out)
@@ -269,8 +270,9 @@ def _edit_of(item: dict):
 
 
 EDITS_SYSTEM = f"""You turn a supply planner's request into edits to a scenario. A scenario is the data (stock, line
-capacity, demand, limits on builds and transfers) and the plan's rules (lead times, which site serves which channel,
-targets, whether the plan decides transfers). A linear programme then plans weekly builds from it. You do not plan,
+capacity, demand, limits on builds and transfers), the plan's rules (lead times, which site serves which channel,
+targets, whether the plan decides transfers) and its priority order (what comes first when a line cannot build
+everything). A linear programme then plans weekly builds from it. You do not plan,
 solve or estimate results. You only fill forms, one per edit, which are checked and which a person reviews.
 
 THE NETWORK (fixed; you cannot change it)
@@ -297,6 +299,11 @@ HOW TO ANSWER
 - Line capacity is a percentage of normal: 0 when a line is down, 50 at half speed, above 100 for overtime.
   Demand is a change in percent (+30 = 30% more than forecast). A build or transfer limit of 0 means none.
 - Data edits are added to the scenario's existing changes, after them. Rules edits set a value.
+- Priority order: without one, a line that is short keeps its bikes equally short. With one, orders past their date
+  come first, then every open order, then the target, and the bikes of the line named are served in the order
+  given. List the bikes in the order the request gives and no others (bikes left out follow, sharing evenly); never
+  invent an order. `decides` is "target" unless the request says whose customers or orders are served first, which
+  is "orders". Prioritising a line over another line cannot be expressed (lines share no capacity): unsupported.
 - If the request does not say which line, SKU, channel, site or weeks it means, and the scenario does not make it
   clear, ask one question and propose no edits. Do not guess.
 - If part of the request cannot be expressed with these tunables (for example costs, a new site or line, removing a
@@ -323,7 +330,11 @@ def scenario_text(case) -> str:
              + f"; transfer time Reno to the PDC: {tu.now('transfer_time', case)}"
              + "; targets: " + "; ".join(targets) + ".",
              "Changes already in this scenario: " + ("; ".join(f"({i}) {tu.describe(c)}" for i, c in
-                                                             enumerate(case.changes, 1)) or "none") + "."]
+                                                             enumerate(case.changes, 1)) or "none") + ".",
+             "Priority order in this scenario: " + (
+                 " ".join(tu.walk_lines(case)) + f" An order with no date is due {case.walk.no_date_days} days after "
+                 "it was placed." if case.walk else "none (a line that is short keeps its bikes equally short; "
+                                                    "order dates are not considered).")]
     return "\n".join(lines)
 
 

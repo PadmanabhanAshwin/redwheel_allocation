@@ -203,6 +203,20 @@ def build_opening(m: dict, resources: pd.DataFrame) -> pd.Series:
     return _on_resources(resources, ids, qty, "opening").rename("opening")
 
 
+def build_due(m: dict, weeks: pd.DataFrame) -> pd.DataFrame:
+    """When the opening orders are due, as the order files say it (rtn.DUE_COLUMNS). A dealer or commercial order
+    carries a date (requested ship date, need-by): its week. A web order carries none: only when it was placed is
+    known. What an order with no date means for the plan is a rule of the scenario, not decided here."""
+    cust = m["dim_location"].dropna(subset=["channel"]).set_index("channel")["location_id"]
+    start = weeks["week_start"].iloc[0]
+    o = m["fact_orders"][m["fact_orders"]["open_at_snapshot"]]
+    d = pd.DataFrame({"resource_id": "order|" + o["sku"] + "|" + o["channel"].map(cust), "qty": o["qty"].astype(float),
+                      "due": (pd.to_datetime(o["need_by_date"]) - start).dt.days // 7 + 1,
+                      "placed": (pd.to_datetime(o["order_date"]) - start).dt.days / 7})
+    d = d.groupby(["resource_id", "due", "placed"], dropna=False, as_index=False)["qty"].sum()
+    return d[rtn.DUE_COLUMNS].sort_values(["resource_id", "due", "placed"], ignore_index=True)
+
+
 def build_arrivals(m: dict, resources: pd.DataFrame, weeks: pd.DataFrame) -> pd.DataFrame:
     """What comes from outside each week: forecast onto orders, capacity onto lines."""
     loc = m["dim_location"]
@@ -418,7 +432,8 @@ def build_object(m: dict, build_weeks: int | dict = BUILD_WEEKS, transfer_weeks:
                   resources=resources, tasks=tasks, arrows=arrows,
                   opening=build_opening(m, resources),
                   arrivals=build_arrivals(m, resources, weeks),
-                  outlook=build_outlook(m, resources, weeks))
+                  outlook=build_outlook(m, resources, weeks),
+                  due=build_due(m, weeks))
     rtn.validate(obj)
     return obj
 

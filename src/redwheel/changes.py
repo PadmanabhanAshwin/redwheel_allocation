@@ -33,6 +33,8 @@ Rules. `check` returns every rule a list of changes breaks; `apply` refuses a li
     6. No number goes below zero.
     7. A change that alters no number is refused (it is almost always a wrong week or a wrong selection).
     8. Changes apply in the order listed: a later change sees the result of an earlier one.
+    9. opening of orders: not below the orders the object's due table lists there (it says when each is due; which
+       ones a cut removed would be unknown). Orders added are due at once.
 
 Whole units. With whole=True (the default) the object counts whole units: a set or add value must be a whole
 number, and a scaled number is rounded to the nearest whole unit, halves up. With whole=False nothing is rounded.
@@ -215,8 +217,13 @@ def _run(obj: rtn.RTN, changes: list, whole: bool):
             if whole and c.op == "scale":
                 new = np.floor(new + 0.5 + 1e-9)      # halves up; the 1e-9 keeps 84.5 from landing at 84.4999...
             same = (new == old) | (np.isnan(new) & np.isnan(old))       # no limit stays no limit
+            dated = (obj.due.groupby("resource_id")["qty"].sum().reindex(ids).fillna(0).to_numpy()
+                     if c.field == "opening" and kind == "order" and obj.due is not None else None)
             if (new < 0).any():
                 errs.append(f"{int((new < 0).sum())} number(s) would go below zero (lowest {new.min():g})")
+            elif dated is not None and (new < dated - 1e-9).any():
+                errs.append(f"{int((new < dated - 1e-9).sum())} order level(s) would go below the orders whose dates "
+                            "the object knows")
             elif same.all():
                 errs.append("changes no number")
             else:

@@ -19,6 +19,11 @@ looks ahead from late in the plan reads them.
 The numbers on the object, six in all: on a resource its opening level, its arrivals and its carry; on an arrow its
 amount and its delay; on a task its run limit, the most it can run in a week (e.g. none of a bike while its parts are
 missing). Carry is fixed by the resource's kind; the others are data.
+
+One more fact, which the equation does not use: when the opening orders are due (`due`). It splits an order
+resource's opening level by date, as far as the data knows: the week each order is due, or, for an order that
+carries no date, when it was placed. It changes no level. A plan that serves overdue orders first reads it
+(`redwheel.walk`).
 """
 from __future__ import annotations
 
@@ -56,6 +61,14 @@ class RTN:
     arrivals: pd.DataFrame    # resource_id x t (1..H): what comes from outside
     outlook: pd.DataFrame | None = None   # resource_id x t (H+1..T): arrivals known after the plan (orders only)
     run_max: pd.DataFrame | None = None   # task_id x t (1..H): the most a task can run that week; NaN = no limit
+    due: pd.DataFrame | None = None       # when the opening orders are due: resource_id, qty, due, placed (DUE_COLUMNS)
+
+# `due`: one row per group of opening orders on an order resource.
+#   qty     how many
+#   due     the plan week the order is due; 0 or less = before the plan (already due); blank = it carries no date
+#   placed  when it was placed, in weeks from the start of week 1 (so never above 0; -1.5 = ten and a half days before)
+# Orders in the opening level that the table does not list are due at once. None = no dates known: all are.
+DUE_COLUMNS = ["resource_id", "qty", "due", "placed"]
 
 
 def resource_id(kind: str, item: str | None, location: str) -> str:
@@ -184,6 +197,18 @@ def validate(obj: RTN) -> None:
         need(list(lim.columns) == weeks, "run limit columns must be weeks 1..H")
         v = lim.to_numpy(float)
         need((np.isnan(v) | (v >= 0)).all(), "negative run limit")
+    if obj.due is not None:
+        d = obj.due
+        need(list(d.columns) == DUE_COLUMNS, f"the due table's columns must be {DUE_COLUMNS}")
+        orders = set(res.loc[res["kind"] == "order", "resource_id"])
+        need(set(d["resource_id"]) <= orders, "the due table lists a resource that is not an order")
+        qty, due, placed = (d[c].to_numpy(float) for c in ("qty", "due", "placed"))
+        need((qty > 0).all(), "the due table has a row with no quantity")
+        need((np.isnan(due) | (due % 1 == 0)).all(), "a due week must be a whole week, or blank")
+        need((np.isfinite(placed) & (placed <= 0)).all(), "an opening order must have been placed before the plan starts")
+        over = d.groupby("resource_id")["qty"].sum() - obj.opening
+        over = over[over > 1e-9]
+        need(over.empty, "the due table lists more orders than the opening level on " + ", ".join(over.index[:3]))
 
 
 # ---------- the equation ----------

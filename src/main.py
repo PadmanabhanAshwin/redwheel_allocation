@@ -110,7 +110,8 @@ obj = rtn.RTN(items=items, locations=dim_location, weeks=weeks,
               resources=resources, tasks=tasks, arrows=arrows,
               opening=aux_fns.build_opening(m, resources),
               arrivals=aux_fns.build_arrivals(m, resources, weeks),
-              outlook=aux_fns.build_outlook(m | {"dim_week": dim_week}, resources, weeks))   # forecast after the plan
+              outlook=aux_fns.build_outlook(m | {"dim_week": dim_week}, resources, weeks),   # forecast after the plan
+              due=aux_fns.build_due(m, weeks))                    # when the opening orders are due (in no equation)
 rtn.validate(obj)
 kind_loc = resources.set_index("resource_id")[["kind", "location"]]
 print("arrivals: forecast", int(obj.arrivals[kind_loc.kind == "order"].values.sum()),
@@ -176,3 +177,22 @@ print(event["change_report"][["field", "op", "value", "resources", "cells", "bef
 held = pd.DataFrame({"A": sc.held_by_line(base).max(axis=1), "E1": sc.held_by_line(event).max(axis=1)})
 print("bikes built: A", int(base["builds"].values.sum()), "| E1", int(event["builds"].values.sum()))
 held                                                   # the week each line holds its targets from
+
+
+# %% 4.2 a priority order: a scenario says what comes first when a line is short
+from redwheel import tunables as tu, walk as wk
+due = obj.due                                          # the facts: when the opening orders are due
+print("open orders:", int(due.qty.sum()), "| past their date", int(due[due.due <= 0].qty.sum()),
+      "| not yet due", int(due[due.due >= 1].qty.sum()), "| no date (web)", int(due[due.due.isna()].qty.sum()))
+print("not yet due at the end of weeks 1, 4, 8, 9:", wk.not_due(obj, 7)[[1, 4, 8, 9]].sum().astype(int).tolist())
+print("\n".join(tu.walk_lines(sc.CASE_P1)))            # the scenario's walk, in words
+p1 = sc.run_case(sc.CASE_P1)
+wks, monday = list(obj.weeks.t), obj.weeks.set_index("t").week_start
+mtb = [("RW-9304", "CMH+RENO"), ("RW-4418", "CMH+RENO"), ("RW-6416", "CMH+RENO")]
+when = lambda ok: sc.held_from(ok[wks]).loc[mtb].map(lambda t: monday[int(t)].date())
+print("checks:", int(sc.checks(p1)["pass"].sum()), "of", len(sc.checks(p1)),
+      "| bikes built: A", int(base["builds"].values.sum()), "| P1", int(p1["builds"].values.sum()))
+pd.DataFrame({"orders cleared, A": when(base["flows"]["open_orders"] < 0.5),
+              "orders cleared, P1": when(p1["flows"]["open_orders"] < 0.5),
+              "at target, A": when(base["at_target"]), "at target, P1": when(p1["at_target"])})
+
