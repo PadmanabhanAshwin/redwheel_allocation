@@ -259,62 +259,65 @@ def fulfilment():
 p3 = page(3, "Network structures", "", alone() + rule(520) + kitting() + vrule(980, 560, 930) + fulfilment())
 
 # ================================================================ 5 · linear program
+# Every number: scenario A's LP as engine._build makes it (10 make tasks, 74 resources, 10 positions, 4 lines, 121 weeks;
+# 13,068 variables, 8,954 equation rows, 3,630 inequality rows; weights 1, 0.1, 0.001, 1e-6; no run limits in A).
+# Target weeks n: 15 MTB carbon, 12 MTB base, 8 then 10 road.
 SH = ["9304", "4418", "6416"]; OPEN_STOCK = {"9304": 10, "4418": 25, "6416": 15}
-def Ns(n): return f'<tspan>N</tspan><tspan dy="6" style="font-size:68%">{n}</tspan><tspan dy="-6"> </tspan>'
-def frag(y0=330):
-    C = [y0, y0 + 90, y0 + 180]; cy = C[1]
-    g = f'<rect class="res" x="110" y="{cy-40}" width="150" height="80" rx="14"/>' + txt(124, cy - 8, "line capacity", 17, INK, 600) + txt(124, cy + 22, "375", 23, INK, 700)
-    for c, n in zip(C, SH):
-        g += f'<path class="wire" style="stroke-width:2" marker-end="url(#a)" d="M260 {cy+(c-cy)/8} C292 {cy+(c-cy)/8} 282 {c} 312 {c}"/>'
-        g += f'<rect class="task" x="316" y="{c-24}" width="140" height="48" rx="6"/>' + txt(386, c + 6, f"make {n}", 17, "#fff", 400, "middle")
-        g += f'<path class="wire" style="stroke-width:2" marker-end="url(#a)" d="M456 {c} L492 {c}"/>'
-        g += f'<rect class="res" x="496" y="{c-24}" width="146" height="48" rx="12" style="stroke-width:2"/>' + txt(508, c + 6, f"stock {n}", 16, INK, 600) + txt(632, c + 7, OPEN_STOCK[n], 19, INK, 700, "end")
-    return g + txt(290, y0 - 12, "−1", 18, AMB, 700, "middle") + txt(474, y0 - 10, "+1", 18, AMB, 700, "middle")
-def edgetable(y0=296):
-    g = "".join(f'<text x="{x}" y="{y0}" class="colh" style="font-size:17px" text-anchor="{a}">{h}</text>' for x, h, a in [(730, "task", "start"), (880, "resource", "start"), (1090, "μ", "end"), (1160, "θ", "end")])
+E_ = lambda op: f" {op} "; PL = " + "; MI = " − "; SL = " / "
+def vn(x, c, kind, name, val, w, h=56):
+    return (f'<rect class="res" x="{x}" y="{c-h/2}" width="{w}" height="{h}" rx="12"/>' + txt(x + 13, c - 7, kind, 15, GREY)
+            + txt(x + 13, c + 18, name, 18, INK, 700) + txt(x + w - 14, c + 18, val, 20, INK, 700, "end"))
+G4 = 384; R4 = [G4 - 74, G4, G4 + 74]
+def frag():
+    g = vn(110, G4, "capacity", "MTB carbon", "375", 186)
+    for c, n in zip(R4, SH):
+        g += sar(296, G4 + (c - G4) / 8, 356, c, curve=c != G4) + stk(356, c, f"make {n}", 120, 46, 18)
+        g += sar(476, c, 514, c) + vn(514, c, "inventory", f"RW-{n}, Reno", OPEN_STOCK[n], 212)
+    return g + txt(320, R4[0] - 10, "−1", 19, AMB, 700, "middle") + txt(495, R4[0] - 12, "+1", 19, AMB, 700, "middle")
+ET = [806, 916, 1098, 1136]
+def edgetable(y0=314):
+    g = "".join(txt(x, y0, h, 16, GREY, 700, a) for x, h, a in zip(ET, ["task", "resource", "μ", "θ"], ["start", "start", "end", "end"]))
     y = y0 + 34
     for n in SH:
-        for rname, amt in [("line capacity", "−1"), (f"stock {n}", "+1")]:
-            g += (f'<text x="730" y="{y}" class="cell" style="font-size:19px">make {n}</text><text x="880" y="{y}" class="cell" style="font-size:19px">{rname}</text>'
-                  f'<text x="1090" y="{y}" class="cell" style="font-size:19px;font-weight:700;fill:{AMB}" text-anchor="end">{amt}</text><text x="1160" y="{y}" class="cell" style="font-size:19px" text-anchor="end">0</text>')
-            y += 38
+        for rname, amt in [("MTB carbon", "−1"), (f"RW-{n}, Reno", "+1")]:
+            g += txt(ET[0], y, f"make {n}", 19) + txt(ET[1], y, rname, 19) + txt(ET[2], y, amt, 19, AMB, 700, "end") + txt(ET[3], y, "0", 19, INK, 400, "end")
+            y += 30
     return g
-def grid(x, y):
-    cols = [x + 300, x + 372, x + 444]; x0 = x + 210
-    g = f'<text x="{x0}" y="{y-14}" text-anchor="end" class="colh" style="font-size:16px">start</text><text x="{x+520}" y="{y-14}" class="colh" style="font-size:16px">level</text>'
-    g += "".join(f'<text x="{c}" y="{y-14}" text-anchor="middle" class="colh" style="font-size:18px;fill:{AMB}">{Ns(n)}</text>' for c, n in zip(cols, SH))
-    rows = [("line capacity", "375", ["−1", "−1", "−1"]), ("stock 9304", "10", ["+1", "", ""]), ("stock 4418", "25", ["", "+1", ""]), ("stock 6416", "15", ["", "", "+1"])]
-    g += f'<path d="M{cols[0]-34} {y} h-8 v{46*4} h8 M{cols[2]+34} {y} h8 v{46*4} h-8" fill="none" stroke="{INK}" stroke-width="2"/>'
+MX = 1250
+def grid(y0=314):
+    x0, cols, xg = MX + 222, [MX + 296, MX + 374, MX + 452], MX + 518
+    g = meq(x0, y0, f'{v("c", "r")}{v("X", "r,0")}{PL}{v("π", "r,1")}', 20, "end", GREY)
+    g += "".join(meq(c, y0, v("N", n, 15), 22, "middle", AMB) for c, n in zip(cols, SH)) + txt(xg, y0, "level", 16, GREY, 700)
+    rows = [("MTB carbon", "375", ["−1", "−1", "−1"])] + [(f"RW-{n}, Reno", str(OPEN_STOCK[n]), ["+1" if j == i else "" for j in range(3)]) for i, n in enumerate(SH)]
+    top = y0 + 14
+    g += f'<path d="M{cols[0]-36} {top} h-8 v{44*4} h8 M{cols[2]+36} {top} h8 v{44*4} h-8" fill="none" stroke="{INK}" stroke-width="2"/>'
     for i, (lab, st, ent) in enumerate(rows):
-        yy = y + 46 * i + 31
-        g += txt(x, yy, lab, 19, INK, 600) + f'<text x="{x0}" y="{yy}" text-anchor="end" class="cell" style="font-size:22px">{st}</text>'
-        g += "".join(f'<text x="{c}" y="{yy}" text-anchor="middle" class="cell" style="font-size:22px;font-weight:700">{e}</text>' for c, e in zip(cols, ent))
-        g += f'<text x="{x+520}" y="{yy}" class="cell" style="font-size:22px">≥ 0</text>'
+        yy = top + 44 * i + 30
+        g += txt(MX, yy, lab, 19, INK, 700) + txt(x0, yy, st, 21, INK, 400, "end")
+        g += "".join(txt(c, yy, e, 21, AMB, 700, "middle") for c, e in zip(cols, ent)) + txt(xg, yy, "≥ 0", 21)
     return g
-def head_bar(x, y, w, col, s): return f'<rect x="{x}" y="{y}" width="{w}" height="44" rx="12" fill="{col}"/><rect x="{x}" y="{y+30}" width="{w}" height="14" fill="{col}"/>' + txt(x + 22, y + 30, s, 18, "#fff", 700)
-SHORT = f'({v("target", "k,t")} − {v("net", "k,t")}){PLUS}÷ {v("d", "k,t")}'
-STEP = f'({v("f", "j,k,t")} − {v("net", "k,t")}){PLUS}÷ {v("d", "k,t")}'
-def lp_panel():
-    g = f'<rect x="110" y="640" width="980" height="300" rx="12" fill="#fff" stroke="{INK}" stroke-width="2.5"/>' + head_bar(110, 640, 980, INK, "Constraints: generated from the object")
-    rows = [(738, "Variables", f'{v("N", "k,t")} ≥ 0', "runs of make task k in week t"),
-            (812, "Balance", f'{v("X", "line,t")} = 375 − Σ{v("", "k")} {v("N", "k,t")} ≥ 0', "line capacity"),
-            (872, "", f'{v("X", "k,t")} = {v("X", "k,t−1")} + {v("N", "k,t")} ≥ 0', "stock")]
-    for y, lab, eq, mean in rows:
-        g += txt(132, y, lab, 22, INK, 700) + meq(280, y, eq, 29) + txt(760, y, mean, 20, GREY)
-    g += rule(764, 132, 1068) + txt(132, 918, "One variable per task node; one row per resource node. Coefficients μ from the edge table.", 17, GREY)
-    g += f'<rect x="1120" y="640" width="690" height="300" rx="12" fill="#fff" stroke="{AMB}" stroke-width="2.5"/>' + head_bar(1120, 640, 690, AMB, "Objective: set by the scenario")
-    g += txt(1142, 726, "A · today", 19, INK, 700) + meq(1260, 726, f'min  Σ{v("", "t")} max{v("", "k")} {SHORT}', 25)
-    g += txt(1142, 790, "B · priority order", 19, INK, 700) + txt(1142, 818, "for j = 1 … J:", 17, GREY)
-    g += meq(1290, 818, f'min  Σ{v("", "t")} max{v("", "k∈Sⱼ")} {STEP}', 25)
-    g += txt(1290, 848, "subject to steps 1 … j−1 at their optimum", 17, GREY)
-    g += lines(1142, 890, ["net: stock − open orders · d: weekly demand over the target window", "f: −(orders not yet due), 0 or target · A = B with one step"], 15, GREY, 22)
-    return g
-p4 = page(4, "Linear program", "MTB carbon line and its three SKUs, week of 7 Sep 2026.",
-          tag(110, 250, "Graph") + frag() + arrow_big(662, 420)
-          + tag(730, 250, "Edge table") + edgetable() + arrow_big(1184, 420)
-          + tag(1250, 250, "Balance rows") + grid(1250, 330)
-          + txt(1250, 556, f'Row 1: 375 − {Ns("9304")}− {Ns("4418")}− {Ns("6416")}≥ 0.', 19, GREY) + txt(1250, 584, "Each ±1 is one row of the edge table.", 19, GREY)
-          + lp_panel())
+# the LP: (keyword, formula, what it is, size in A as (product, count))
+SUMV = lambda sub: f'Σ{v("", sub)} '
+it = lambda s: f'<tspan style="{MF}">{s}</tspan>'
+LP = [("min", f'{SUMV("g,t")}{v("w", "g,t")}{PL}0.1 {SUMV("k,t")}{v("s", "k,t")}{SL}{v("d", "k,t")}{PL}0.001 {SUMV("k,t")}{v("e", "k,t")}{SL}{v("d", "k,t")}{PL}10⁻⁶ {SUMV("i,t")}{v("N", "i,t")}', "", None),
+      ("s.t.", f'{v("X", "r,t")}{E_("=")}{v("c", "r")}{v("X", "r,t−1")}{PL}{SUMV("i")}{v("μ", "ir")}{v("N", "i,t−θ")}{PL}{v("π", "r,t")}', "balance", ("74 × 121", "8,954")),
+      ("", f'{v("s", "k,t")}{E_("≥")}{v("target", "k,t")}{MI}{v("net", "k,t")}', "below target", ("10 × 121", "1,210")),
+      ("", f'{v("e", "k,t")}{E_("≥")}{v("net", "k,t")}{MI}{v("target", "k,t")}', "above target", ("10 × 121", "1,210")),
+      ("", f'{v("w", "g,t")}{E_("≥")}{v("s", "k,t")}{SL}{v("d", "k,t")}, {it("k")} on line {it("g")}', "worst on each line", ("10 × 121", "1,210")),
+      ("", f'0{E_("≤")}{v("N", "i,t")}{E_("≤")}{v("N̄", "i,t")}, {it("X, s, e, w")}{E_("≥")}0', "variables", ("", "13,068")),
+      ("where", f'{v("net", "k,t")}{E_("=")}{v("stock", "k,t")}{MI}{v("open orders", "k,t")}, {v("target", "k,t")}{E_("=")}forecast of weeks {it("t")}{PL}1 … {it("t")}{PL}{v("n", "k,t")}, {v("d", "k,t")}{E_("=")}{v("target", "k,t")}{SL}{v("n", "k,t")}', "", None)]
+LY = [628, 682, 732, 782, 832, 882, 938]
+NX, PX, CX = 1400, 1700, 1810
+def lp_block():
+    g = txt(110, 568, "Scenario A: 4 lines, 10 SKUs, 121 weeks", 18, GREY, 700)
+    for y, (kw, f, what, size) in zip(LY, LP):
+        g += meq(110, y, kw, 30) + meq(210, y, f, 30)
+        if what: g += txt(NX, y, what, 20, GREY)
+        if size: g += txt(PX, y, size[0], 20, GREY, 400, "end") + txt(CX, y, size[1], 22, INK, 700, "end")
+    return g + rule(968) + txt(110, 1010, "HiGHS solves it in under 0.2 s; the duals prove the plan optimal.", 22)
+p4 = page(4, "Linear program", "",
+          txt(110, 250, "MTB carbon line, week of 7 Sep 2026", 18, GREY, 700) + frag() + arrow_big(746, G4)
+          + edgetable() + arrow_big(1168, G4) + grid() + rule(524) + lp_block())
 
 # ================================================================ 6 · priority orders
 def stepline(x, y, n, s, col=AMB):
