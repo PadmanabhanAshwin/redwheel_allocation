@@ -477,7 +477,7 @@ def line_panel(x0, y0, w, h, ln, sc="R+", shade=None):
     top = max(max(cap), max(opn), max(fore)) * 1.08
     gw = w / NM; Y = lambda q: y0 + h - q * h / top
     held = D_(DN[sc]["held_by_line"][ln])
-    g = txt(x0, y0 - 16, f'{B_(LNAME[ln])}<tspan style="fill:{GREY};font-size:15px"> build time {bw(sc, ln)} · target held {fd(held)}</tspan>', 19)
+    g = txt(x0, y0 - 16, f'{B_(LNAME[ln])}<tspan style="fill:{GREY};font-size:15px"> build time {bw(sc, ln)} · target held {fd(held)}' + ("\u2003·\u2003RW-9324 (M) is 631 of 11,053 bikes" if ln == "mtb-base" else "") + '</tspan>', 19)
     if shade:
         js = [j for j, (m_, wk) in enumerate(ms) if any(shade[0] <= t <= shade[1] for t in wk)]
         g += f'<rect x="{x0 + gw * js[0]}" y="{y0}" width="{gw * len(js)}" height="{h}" fill="{tint(RED, .12)}"/>'
@@ -516,10 +516,10 @@ LEGEND = lambda: ("".join(f'<rect x="{730 + 100 * i}" y="390" width="16" height=
                   + poly([(1040, 398), (1074, 398)], FORE_C, 2.2) + txt(1082, 404, "forecast", 15, INK) + poly([(1170, 398), (1204, 398)], CAP_C, 1.6, True) + txt(1212, 404, "capacity", 15, INK)
                   + f'<path d="M1306 391 l7 7 l-7 7 l-7 -7 z" fill="{OPEN_C}"/>' + txt(1320, 404, "open orders, month end", 15, INK)
                   + f'<line x1="1510" y1="390" x2="1510" y2="408" stroke="{INK}" stroke-width="1.4" stroke-dasharray="3 4"/>' + txt(1520, 404, "target held", 15, INK) + txt(1810, 404, "bikes per month", 14, GREY, 400, "end"))
-def scenario_slide(n, sc, parent, title, sub, sections, shade=None, last=""):
+def scenario_slide(n, sc, parent, title, sub, sections, shade=None, last="", shade_label="closed"):
     assert DN[sc]["checks"]["passed"] == DN[sc]["checks"]["of"]
     g = vs_strip(sc, parent) + text_col(110, 396, sections, width=56, size=17, dy=24, gap=5, after=14) + vrule(680, 376, 990) + LEGEND()
-    if shade: g += f'<rect x="1600" y="390" width="16" height="16" fill="{tint(RED, .12)}"/>' + txt(1622, 404, "closed", 15, INK)
+    if shade: g += f'<rect x="1600" y="390" width="16" height="16" fill="{tint(RED, .12)}"/>' + txt(1622, 404, shade_label, 15, INK)
     for i, ln in enumerate(LORDER):
         x0, y0 = 790 + (i % 2) * 540, 476 + (i // 2) * 270
         g += line_panel(x0, y0, 480, 160, ln, sc, shade)
@@ -538,33 +538,41 @@ p7 = scenario_slide(7, "R+", "R", "Scenario R+", "The build plan: weekly builds 
                         "The only optimal plan, to within 2 bikes.",
                         "No plan delivers more by any date, on any line.",
                         "Consistent: 14 rules between the scenarios hold."])])
-p9 = scenario_slide(9, "R+C26", "R+", "Scenario R+ · closed for Christmas 2026", "Supply lost while customers wait.", [
-    ("Scenario context", ["Every line closed for the weeks of 21 and 28 Dec 2026, while the lines are still clearing the open orders."]),
-    ("Change to the model", ["Capacity arrival set to 0 on every line for two weeks: one edit, eight entries."]),
-    ("Result notes", ["Three lines are at capacity and cannot build ahead. Road base, with spare capacity, builds ahead exactly the two closed weeks’ output.",
-                      "Only MTB carbon customers wait, 4 Jan to 1 Feb 2027: up to 724 bikes.",
-                      "December deliveries are not hit: with two weeks to build, those bikes were on the line before the closure. The closure costs January.",
-                      "Same 94,429 bikes; every target three weeks later."])], shade=(16, 17))
-p10 = scenario_slide(10, "R+E4", "R+", "Scenario R+ · a fleet order lands", "Demand added on a line at capacity.", [
-    ("Scenario context", ["A commercial order for 300 RW-4418 (MTB carbon, size M) arrives in the week of 9 Nov 2026, on top of the forecast."]),
-    ("Change to the model", ["Order arrival +300 on RW-4418 commercial, one week: one entry."]),
-    ("Result notes", ["MTB carbon is at capacity, so the 300 are built when capacity rises in Sep 2027; those customers wait.",
-                      "MTB carbon reaches target one week later.",
-                      "The other three lines are unchanged, cell for cell."])], shade=(10, 10))
-p11 = scenario_slide(11, "R+E5", "R+", "Scenario R+ · RW-9304 built in lots of 50", "A production rule.", [
-    ("Scenario context", ["RW-9304 (MTB carbon, size S) is built in whole lots of 50, a fixed order quantity."]),
-    ("Change to the model", ["Lot size of RW-9304’s make task set to 50. The solver plans the flow; the build plan is cut into lots."]),
-    ("Result notes", ["Every build of RW-9304 is a whole lot; its total rounds up from 16,267 to 16,300 (+33).",
-                      "No target date moves; the line is at capacity in every week R+ ran it at capacity.",
-                      "The cost: 3 RW-9304 bikes a week late on 11 Jan 2027, and stock carried above target.",
-                      "Deliveries within 3 bikes of the maximum any plan achieves: the cost of lots."])])
-p12 = scenario_slide(12, "R+P1", "R+", "Scenario R+ · MTB carbon in priority order", "A change to what the plan values.", [
-    ("Scenario context", ["A priority order on the MTB carbon line: orders past their date first, then every open order, then the target for RW-9304, RW-4418 and RW-6416 in turn."]),
-    ("Change to the model", ["Objective only: the single step becomes six ordered steps. Network and data unchanged."]),
-    ("Result notes", ["The same bikes, every line’s date and the fill stay as in R+.",
-                      "Only the order in which bikes reach target changes: RW-9304 on 31 May 2027, RW-4418 on 13 Sep, RW-6416 on 4 Oct.",
-                      "Step 1 applies to every line, so road carbon’s mix changes in a few early weeks."])])
-
+def pair_page(n, sc, title, sub, line, left_notes, right_notes, shade=None, shade_label="", close=""):
+    assert DN[sc]["checks"]["passed"] == DN[sc]["checks"]["of"]
+    g = vs_strip(sc, "R+")
+    for k, x0, notes in [("R+", 110, left_notes), (sc, 980, right_notes)]:
+        g += txt(x0, 384, k, 22, INK, 700) + txt(x0 + 24 + 15 * len(k), 384, LNAME[line] + ", bikes per month", 16, GREY)
+        g += line_panel(x0, 430, 760, 220, line, k, shade if k == sc else None)
+        b, y = bullets(x0, 740, notes, 72, 17, 24, 5); g += b
+    g += vrule(940, 370, 940)
+    lg = "".join(f'<rect x="{110 + 90 * i}" y="344" width="14" height="14" fill="{SIZE_C[c]}"/>' + txt(130 + 90 * i, 356, lab, 14, INK) for i, (c, lab) in enumerate([("S", "size S"), ("M", "size M"), ("L", "size L")]))
+    lg += poly([(390, 351), (420, 351)], FORE_C, 2.2) + txt(428, 356, "forecast", 14, INK) + poly([(510, 351), (540, 351)], CAP_C, 1.6, True) + txt(548, 356, "capacity", 14, INK)
+    lg += f'<path d="M636 344 l7 7 l-7 7 l-7 -7 z" fill="{OPEN_C}"/>' + txt(650, 356, "open orders, month end", 14, INK) + f'<line x1="822" y1="344" x2="822" y2="358" stroke="{INK}" stroke-width="1.4" stroke-dasharray="3 4"/>' + txt(832, 356, "target held", 14, INK)
+    if shade: lg += f'<rect x="930" y="344" width="14" height="14" fill="{tint(RED, .12)}"/>' + txt(950, 356, shade_label, 14, INK)
+    g += lg
+    return page(n, title, sub, g + (rule(968) + txt(110, 1012, close, 20) if close else ""))
+p9 = pair_page(9, "R+C26", "Closed for Christmas 2026", "Supply lost while customers wait. Every line closed for the weeks of 21 and 28 Dec 2026.", "mtb-carbon",
+    ["R+: MTB carbon at capacity through December; its open orders are cleared in January.", "Two weeks to build, so bikes due in December are on the line before the closure."],
+    ["Capacity arrival set to 0 on every line for two weeks: one edit, eight entries.", "MTB carbon customers wait from 4 Jan to 1 Feb 2027, up to 724 bikes; December deliveries are not hit.",
+     "Three lines are at capacity and cannot build ahead. Road base, with spare capacity, builds ahead exactly the two closed weeks’ output.", "Same 94,429 bikes; every target three weeks later."],
+    shade=(16, 17), shade_label="closed", close="Other lines: road carbon and MTB base hold their targets 4 and 6 weeks later; road base is unchanged.")
+p10 = pair_page(10, "R+E4", "A fleet order lands", "Demand added on a line at capacity. A commercial order for 300 RW-4418 in the week of 9 Nov 2026.", "mtb-carbon",
+    ["R+: the line is at capacity until it holds its target on 4 Oct 2027.", "Every bike on the line is equally short in weeks until then."],
+    ["Order arrival +300 on RW-4418 commercial, one week: one entry.", "The line is at capacity, so the 300 are built when capacity rises in Sep 2027; those customers wait.",
+     "MTB carbon holds its target one week later. The other three lines are unchanged, cell for cell."],
+    shade=(10, 10), shade_label="order arrives", close="Exactly 300 more bikes, all RW-4418, in the weeks after capacity rises.")
+p11 = pair_page(11, "R+E5", "RW-9304 built in lots of 50", "A production rule: a fixed order quantity on one bike.", "mtb-carbon",
+    ["R+: RW-9304 built in any whole number each week.", "Its total over the plan: 16,267 bikes."],
+    ["Lot size of RW-9304’s make task set to 50. The solver plans the flow; the build plan is cut into lots.", "Every build of RW-9304 is a whole lot; its total rounds up to 16,300 (+33).",
+     "No target date moves; the line is at capacity in every week R+ ran it at capacity.", "The cost: 3 RW-9304 bikes a week late on 11 Jan 2027, and stock carried above target."],
+    close="Deliveries within 3 bikes of the maximum any plan achieves: the cost of lots.")
+p12 = pair_page(12, "R+P1", "MTB carbon in priority order", "A change to what the plan values. Orders past their date first, then every open order, then the target for RW-9304, RW-4418 and RW-6416 in turn.", "mtb-carbon",
+    ["R+: the even rule. The three bikes reach their target together on 4 Oct 2027.", "Size S, M and L bars stay in the same proportion all year."],
+    ["Objective only: the single step becomes six ordered steps. Network and data unchanged.", "Same bikes, same line date, same fill as R+.",
+     "RW-9304 (size S) reaches target on 31 May 2027, RW-4418 (M) on 13 Sep, RW-6416 (L) on 4 Oct: the S bars grow first, then M, then L.",
+     "Step 1 applies to every line, so road carbon’s mix changes in a few early weeks."],
+    close="A priority order changes the order in which bikes reach target, and nothing else.")
 # ================================================================ 5b · priority order
 # Planning priors: scenarios.CASE_RP.priors (settings a planner writes; not in the data). Floors for RW-4418, week 1:
 # NOTE_TO_DECK_BOT.md §2 (net -1,285; due -123; owed 0; target 857). Two bikes: tests/test_engine.py
@@ -635,13 +643,12 @@ def priority_page():
     return g
 p5 = page(5, "Priority order", "The third part of a scenario: what the plan protects first, written as ordered steps.", priority_page())
 
-
 # ================================================================ 0 · cover, divider, close
 def cover():
     g = txt(110, 420, "Redwheel build plan", 72, INK, 700) + txt(110, 476, "A resource–task network, a linear program, and the plan they produce.", 28, GREY)
     arc = [("1", "Planning system", "data → object → scenario → solver → plan"), ("2–3", "The object", "Redwheel as a network; how its parts interact"),
            ("4", "Linear program", "how the network becomes the program"), ("5", "Priority order", "what the plan protects first"),
-           ("6–7", "The plan", "build time, and scenario R+"), ("8–12", "Live", "four changes on R+")]
+           ("6–7", "The plan", "build time, and scenario R+"), ("8–12", "Scenarios", "the full set; R+ against each change")]
     for i, (n, h, d) in enumerate(arc):
         x = 110 + i * 285
         g += f'<rect x="{x}" y="600" width="262" height="150" rx="12" fill="{tint(AMB, .07)}"/>' + txt(x + 20, 640, n, 16, AMB, 700) + txt(x + 20, 672, h, 21, INK, 700) + lines(x + 20, 702, textwrap.wrap(d, 26), 16, GREY, 22)
@@ -649,21 +656,24 @@ def cover():
     g += txt(110, 928, "16 November 2026.", 17, GREY)
     return f'<svg width="1920" height="1080" viewBox="0 0 1920 1080">{DEFS}{g}</svg>'
 def divider():
-    rows = [("9", "Closed for Christmas 2026", "supply lost while customers wait"), ("10", "A fleet order lands", "demand added on a line at capacity"),
-            ("11", "RW-9304 built in lots of 50", "a production rule"), ("12", "MTB carbon in priority order", "a change to what the plan values")]
-    g = txt(110, 250, "Four changes to scenario R+, one per mechanism. Each is a parameter edit; the program does not change.", 22)
-    keys = ["R+", "R+C26", "R+E4", "R+E5", "R+P1"]; S = {k: DN[k]["scorecard"] for k in keys}
+    keys = ["A", "R", "R+", "R+C26", "R+E4", "R+E5", "R+P1"]; S = {k: DN[k]["scorecard"] for k in keys}
+    what = {"A": ("a bike ships the week it is built", "—", "6"), "R": ("one week to build, every line", "A", "6"), "R+": ("two weeks on carbon lines, one on base; the plan", "R", "6–7"),
+            "R+C26": ("every line closed, weeks of 21 and 28 Dec 2026", "R+", "9"), "R+E4": ("commercial order, 300 RW-4418, week of 9 Nov 2026", "R+", "10"),
+            "R+E5": ("RW-9304 built in lots of 50", "R+", "11"), "R+P1": ("priority order on the MTB carbon line", "R+", "12")}
     cols = [("Bikes built", lambda k: f'{S[k]["Bikes built"]:,}'), ("Position-weeks below target", lambda k: f'{S[k]["Position-weeks below target"]:,}'),
             ("All targets held from", lambda k: fd(D_(S[k]["All targets held from"]))), ("On-time fill", lambda k: f'{100*S[k]["On-time fill rate"]:.1f}%')]
-    xs = [1010, 1290, 1570, 1790]
-    g += "".join(txt(x, 330, h, 14, GREY, 700, "end") for x, (h, _) in zip(xs, cols))
-    g += txt(110, 364, "R+", 18, GREY, 700) + "".join(txt(x, 364, f(("R+")), 18, GREY, 400, "end") for x, (_, f) in zip(xs, cols))
-    for i, ((n, h, d), k) in enumerate(zip(rows, keys[1:])):
-        y = 440 + 116 * i
-        g += txt(110, y, n, 20, AMB, 700) + txt(180, y, h, 26, INK, 700) + txt(180, y + 32, d, 18, GREY)
-        g += "".join(txt(x, y, f(k), 18, INK, 700, "end") for x, (_, f) in zip(xs, cols))
-    g += rule(900) + txt(110, 944, "Read each page as: what changed, what moved, what did not.", 20, GREY)
-    return page(8, "Live: something changes", "", g)
+    xs = [1180, 1400, 1620, 1790]
+    g = txt(110, 262, "scenario", 14, GREY, 700) + txt(820, 262, "parent", 14, GREY, 700, "end") + txt(900, 262, "page", 14, GREY, 700, "end")
+    g += "".join(txt(x, 262, h, 14, GREY, 700, "end") for x, (h, _) in zip(xs, cols))
+    for i, k in enumerate(keys):
+        y = 312 + 78 * i; hero = k == "R+"
+        if hero: g += f'<rect x="96" y="{y - 28}" width="1728" height="70" rx="8" fill="{tint(AMB, .08)}"/>'
+        g += txt(110, y, k, 22, INK, 700) + txt(110, y + 26, what[k][0], 17, GREY)
+        g += txt(820, y, what[k][1], 17, GREY, 400, "end") + txt(900, y, what[k][2], 17, GREY, 400, "end")
+        g += "".join(txt(x, y, f(k), 18, INK, 700 if hero else 400, "end") for x, (_, f) in zip(xs, cols))
+        if i == 2: g += rule(y + 44)
+    g += txt(110, 920, "A, R and R+ differ in build time only. The four below R+ each change one thing: capacity, an order, a production rule, the objective.", 18, GREY)
+    return page(8, "The scenarios", "Seven runs of one network and one solver. Every number from the same file.", g)
 def closing():
     left = ["Build times: 2 weeks on carbon lines, 1 on base lines; the data has no lead times.", "Routes: stock at Reno and the PDC serves every order; the order files record no ship-from site.",
             "An order with no date is due 7 days after it was placed.", "Forecast demand is taken as exact, and every change is known from week 1."]
