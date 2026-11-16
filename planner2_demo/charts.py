@@ -27,14 +27,15 @@ HALF_MONTH = pd.Timedelta(days=15)
 
 
 def _grid(titles) -> go.Figure:
-    return make_subplots(rows=2, cols=2, subplot_titles=titles, shared_xaxes=True, vertical_spacing=0.14,
+    return make_subplots(rows=2, cols=2, subplot_titles=titles, shared_xaxes=True, vertical_spacing=0.17,
                          horizontal_spacing=0.07)
 
 
 def _titles(V) -> list:
+    """Each panel: the line's name, and under it, smaller, its build time and the date it holds target from."""
     held, bw = plan_reading(V)["lines"], V["case"].build_weeks
-    return [f"<b>{LINE_WORDS[ln]}</b>   build time {bw[ln]:g} wk · target held {fdate(held[ln]['held_from'])}"
-            for ln in LINES]
+    return [f"<b>{LINE_WORDS[ln]}</b><br><span style='font-size:11.5px;color:#6b6a66'>build time {bw[ln]:g} wk · "
+            f"target held {fdate(held[ln]['held_from'])}</span>" for ln in LINES]
 
 
 def months_shown(V) -> int:
@@ -92,8 +93,10 @@ def plan_figure(V, V0=None) -> go.Figure:
     fig.update_yaxes(rangemode="tozero")
     fig.update_xaxes(tickvals=x, ticktext=TICKS[:n], tickfont=dict(size=10), tickangle=0)
     fig.update_layout(barmode="stack")
-    style(fig, 560)
-    fig.update_annotations(font=dict(size=13))
+    style(fig, 660)
+    fig.update_yaxes(title_text="bikes per month", title_font=dict(size=11), col=1)
+    fig.update_layout(margin=dict(t=96), legend=dict(y=1.08, yanchor="bottom", font=dict(size=11.5)))
+    fig.update_annotations(font=dict(size=16), yshift=4)
     return fig
 
 
@@ -112,7 +115,7 @@ def _map_rows(rows) -> list:
     """The map's rows, top to bottom: each line's name, then its bikes. [(label, row or None)]"""
     out = []
     for ln in LINES:
-        out.append((f"<b>{LINE_WORDS[ln]}</b>", None))
+        out.append((f"<b style='font-size:13px'>{LINE_WORDS[ln]}</b>", None))
         out += [(r["label"], r) for r in rows if r["line"] == ln]
     return out
 
@@ -147,7 +150,7 @@ def supply_map_figure(V, V0=None, against=None) -> go.Figure:
         text = [_hover(r, x) if r else [""] * end for _, r in mr]
         fig.add_heatmap(z=z, x=x, y=labels, text=text, hovertemplate="%{text}<extra></extra>", hoverongaps=False,
                         colorscale=MAP_SCALE, zmin=0, zmax=3, showscale=False, xgap=0, ygap=1, row=i + 1, col=1)
-        fig.update_yaxes(categoryorder="array", categoryarray=labels, autorange="reversed", tickfont=dict(size=11),
+        fig.update_yaxes(categoryorder="array", categoryarray=labels, autorange="reversed", tickfont=dict(size=12),
                          showgrid=False, ticks="", row=i + 1, col=1)
         if i == 0 and against is not None:
             for ln in LINES:
@@ -165,9 +168,14 @@ def supply_map_figure(V, V0=None, against=None) -> go.Figure:
                         marker=dict(symbol="square-open", size=11, color=CAPACITY_LINE))
     style(fig, inner + top + BOTTOM_PX)
     fig.update_layout(margin=dict(l=8, r=128, t=top, b=BOTTOM_PX), hovermode="closest",
-                      legend=dict(orientation="h", x=0, y=1 + (34 if n > 1 else 8) / inner, yanchor="bottom"))
-    fig.update_xaxes(tickformat="%b %Y", tickfont=dict(size=10), showgrid=False)
+                      legend=dict(orientation="h", x=0, y=1 + (34 if n > 1 else 8) / inner, yanchor="bottom",
+                                  font=dict(size=12)))
+    fig.update_xaxes(tickformat="%b %Y", tickfont=dict(size=11), showgrid=False)
     fig.update_annotations(font=dict(size=13))
+    for i in range(n):                                    # the right-hand column's header
+        fig.add_annotation(x=1, xref="paper", xanchor="left", xshift=8, y=1, yref=f"y{i + 1 if i else ''} domain",
+                           yanchor="bottom", yshift=2, text="target held from", showarrow=False,
+                           font=dict(size=10.5, color="#6b6a66"))
     held0 = {r["sku"]: r["held"] for r in maps[1]} if n > 1 else {}
     for i, rows in enumerate(maps):
         for r in rows:
@@ -182,5 +190,5 @@ def supply_map_figure(V, V0=None, against=None) -> go.Figure:
                     text += "  <span style='color:#b42318'><b>changed</b></span>"
             fig.add_annotation(x=1, xref="paper", xanchor="left", xshift=8, y=r["label"],
                                yref="y" if i == 0 else f"y{i + 1}", text=text, showarrow=False,
-                               font=dict(size=10, color=CAPACITY_LINE))
+                               font=dict(size=11, color=CAPACITY_LINE))
     return fig

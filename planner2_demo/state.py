@@ -144,6 +144,31 @@ def add(case: sc.Case) -> str:
     return k
 
 
+def _password():
+    """The owner's password from Streamlit secrets (admin_password), or None when none is set."""
+    try:
+        return st.secrets.get("admin_password")
+    except Exception:                                  # no secrets file
+        return None
+
+
+def on_cloud() -> bool:
+    return str(ui.__file__).startswith("/mount/src/")  # Streamlit Community Cloud checks out the repo here
+
+
+def can_delete() -> bool:
+    """The owner may delete runs: locally with no password set, or after signing in with the password (Manage)."""
+    if _password() is None:
+        return not on_cloud()
+    return bool(st.session_state.get("owner"))
+
+
+def sign_in(word: str) -> bool:
+    ok = _password() is not None and word == _password()
+    st.session_state["owner"] = ok
+    return ok
+
+
 def delete(key: str) -> None:
     ss = st.session_state
     if locked(key):

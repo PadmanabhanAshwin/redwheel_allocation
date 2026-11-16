@@ -189,7 +189,8 @@ def test_two_maps_one_above_the_other(views):
         return charts.supply_map_figure(views[k], views[k0])
 
     def right(f):                                                     # the dates and shifts written on the right
-        return [a.text for a in f.layout.annotations if a.xref == "paper" and a.xanchor == "left"]
+        return [a.text for a in f.layout.annotations if a.xref == "paper" and a.xanchor == "left"
+                and a.text != "target held from"]                    # not the column's header
     f = fig("R+C26")
     maps = [t for t in f.data if t.type == "heatmap"]
     end = rd.map_end(views["R+C26"], views["R+"])
@@ -232,7 +233,8 @@ def test_the_scenario_chart_is_the_decks(views):
         assert sorted(pd.Timestamp(s_.x0) for s_ in lines_) == sorted(held[ln]["held_from"] for ln in ui.LINES)
         bw = CASES[k].build_weeks
         assert [a.text for a in fig.layout.annotations] == [
-            f"<b>{rd.LINE_WORDS[ln]}</b>   build time {bw[ln]:g} wk · target held {rd.fdate(held[ln]['held_from'])}"
+            f"<b>{rd.LINE_WORDS[ln]}</b><br><span style='font-size:11.5px;color:#6b6a66'>build time {bw[ln]:g} wk · "
+            f"target held {rd.fdate(held[ln]['held_from'])}</span>"
             for ln in ui.LINES]
     assert "build time 2 wk · target held 4 Oct 2027" in charts.plan_figure(views["R+"]).layout.annotations[3].text
 
@@ -272,8 +274,8 @@ def test_scenarios_reads_each_against_the_one_it_is_built_on(folder):
     at.radio(key="scen_pick").set_value("R+C26").run()
     assert ok(at).subheader[0].value == f"{short('R+C26')}, against R+"
     rows = next(m.value for m in at.markdown if "rw-sum" in m.value)
-    assert [x.split("<")[0] for x in rows.split("<div class='k'>")[1:]] == ["Scenario", "Objective", "Constraints",
-                                                                           "Outputs"]
+    assert [x.split("<")[0] for x in rows.split("<div class='k'>")[1:]] == ["Scenario", "Supply chain", "Targets",
+                                                                           "Objective", "Outputs"]
     assert "Scenario R+, with every line closed for the two weeks starting 21 and 28 Dec 2026, while the lines are " \
            "still clearing the open orders." in rows
     assert md(at, "<b>Line capacity</b> · All lines&#x27; capacity · weeks of 21 Dec to 28 Dec 2026: 1,770 bikes → "
@@ -402,22 +404,24 @@ def md(at, text) -> bool:
 
 def test_the_four_views_render(folder):
     at = start()
-    assert at.title[0].value == "Model" and md(at, "Resources")
-    assert not at.table and not at.dataframe and not at.caption                          # no tables, no notes
-    at.switch_page("scenarios.py").run()
-    pick = at.radio(key="scen_pick")
+    pick = at.radio(key="scen_pick")                                                    # the landing page
     assert ok(at).title[0].value == "Scenario Summary" and pick.value == "R+"
     assert pick.options == [f"**{k}**" for k in KEYS]                                       # every scenario
     assert at.subheader[0].value == f"{short('R+')}, against R" and md(at, "carbon lines 2 wk, base lines 1 wk")
     assert len(at.get("iframe")) == 1 and len(at.get("plotly_chart")) == 2
     at.radio(key="scen_pick").set_value("R").run()
-    assert ok(at) and md(at, "build lead time 1 wk") and at.subheader[0].value == f"{short('R')}, against A"
+    assert ok(at) and md(at, "<span>Build lead time</span>1 wk") and at.subheader[0].value == f"{short('R')}, against A"
     at.switch_page("compare.py").run()
     assert ok(at).title[0].value == "Compare" and at.selectbox(key="_k").value == "R+"
     assert at.selectbox(key="_k0").value == "R" and md(at, "+2 wk") and md(at, "<b>Build time</b>")
     assert not at.table and not at.dataframe
     at.switch_page("whatif.py").run()
     assert ok(at).title[0].value == "Try a change" and at.radio(key="_run").value == "R+C26" and md(at, "+3 wk")
+    at.switch_page("object.py").run()
+    assert ok(at).title[0].value == "Object" and md(at, "Resources")
+    assert not at.table and not at.dataframe and not at.caption                          # no tables, no notes
+    at.switch_page("context.py").run()
+    assert ok(at).title[0].value == "Supply & demand"
 
 
 def test_compare_any_pair(folder):
@@ -449,7 +453,7 @@ def test_a_change_by_form_runs_and_reads_against_its_start(folder):
     assert at.subheader[0].value.endswith("against R+") and md(at, "<b>Line capacity</b>")
     saved = store.load_all(folder)[new]
     assert saved.parent == "R+" and tu.same_changes(saved.changes, sc.CASE_E1.changes)        # the form's defaults
-    at.button(key="tc_remove").click().run()
+    at.button(key="tc_del").click().run()
     assert ok(at) and not (folder / f"{new}.json").exists()
 
 

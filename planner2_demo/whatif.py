@@ -3,6 +3,7 @@ read it against the scenario it started from. The live set on R+ is listed ready
 import streamlit as st
 
 from planner2_demo import state, views
+from planner2_demo.components import delete_control
 from redwheel import llm, tunables as tu
 
 ss = state.init()
@@ -88,9 +89,7 @@ with left:
 
     ss["_run"] = ss.run
     st.radio("Runs", runs, key="_run", format_func=SHORT.get, on_change=pick)
-    if not state.locked(ss.run) and st.button("Remove this run", key="tc_remove", icon=":material/delete:"):
-        state.delete(ss.run)
-        st.rerun()
+    delete_control(ss.run, key="tc")
 
 with right:
     case = ss.cases[ss.run]

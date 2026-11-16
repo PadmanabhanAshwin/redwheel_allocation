@@ -1,10 +1,10 @@
-"""Model: the object in numbers, and one bike drawn as the object sees it."""
+"""Object: the object in numbers, and one bike drawn as the object sees it."""
 import streamlit as st
 
 from planner2_demo.views import strip
 from ui import H, ORDER, network_figure, obj, sku_label
 
-st.title("Model")
+st.title("Object")
 c1, c2 = st.columns([3, 1.4], vertical_alignment="bottom")
 with c1:
     strip([(label, f"{value:,}") for label, value in [

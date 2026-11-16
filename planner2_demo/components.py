@@ -7,6 +7,26 @@ from planner2_demo import facts
 from redwheel import llm
 
 
+def delete_control(k: str, key: str):
+    """The owner's delete: a button for the run `k` once signed in, else a small Manage box to sign in. Built-in
+    scenarios have none."""
+    from planner2_demo import state
+    if state.locked(k):
+        return
+    if state.can_delete():
+        if st.button(f"Delete {k}", key=f"{key}_del", icon=":material/delete:", width="stretch"):
+            state.delete(k)
+            st.rerun()
+    elif state._password() is not None:
+        with st.expander("Manage", icon=":material/lock:"):
+            word = st.text_input("Password", type="password", key=f"{key}_pw", label_visibility="collapsed",
+                                 placeholder="Owner password")
+            if word and not state.sign_in(word):
+                st.caption(":red[Wrong password.]")
+            elif word:
+                st.rerun()
+
+
 def _fill(key, text):
     st.session_state[key] = text
 

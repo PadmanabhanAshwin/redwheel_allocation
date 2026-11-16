@@ -42,20 +42,37 @@ def _score_html(items: list) -> str:
                    + (f" <em class='{t}'>{html.escape(d)}</em>" if d else "") + "</div>" for a, b, d, t in items)
 
 
+def _tiles(items: list) -> str:
+    """[(label, value html)] as a grid of small labelled tiles."""
+    return "<div class='rw-tiles'>" + "".join(f"<div><span>{html.escape(a)}</span>{b}</div>" for a, b in items) + "</div>"
+
+
 def summary(V, V0, description: str):
-    """Four labelled rows: the scenario (what it is, and what it changes from the one it is built on), the objective
-    and its targets, the constraints, and the outputs with their change."""
-    scen = html.escape(description)
+    """Labelled rows: the scenario (what it is, and what it changes from the one it is built on), the supply chain it
+    plans (sourcing, build lead time, capacity, decisions, priority), the targets per line, the objective as its
+    ordered steps, and the outputs with their change."""
+    case, a = V["case"], dict(rd.assumptions(V))
+    scen = f"<div class='lead'>{html.escape(description)}</div>"
     if V0 is not None:
-        lines = rd.change_lines(V0["case"], V["case"], V)
-        scen += "".join(f"<div class='sub'>{_change_html(*x)}</div>" for x in lines) or \
-            f"<div class='sub'>Same settings as {html.escape(V0['case'].key)}</div>"
-    a = dict(rd.assumptions(V))
+        lines = rd.change_lines(V0["case"], case, V)
+        k0 = html.escape(V0["case"].key)
+        scen += (f"<div class='rw-delta'><span>Changed from {k0}</span>"
+                 + "".join(f"<div>{_change_html(*x)}</div>" for x in lines) + "</div>") if lines else \
+            f"<div class='sub'>Same settings as {k0}</div>"
+    pooled = len(V["R"]["pools"]) == 1
+    supply = [("Stock serves orders from", "Reno + PDC, pooled for every order" if pooled else html.escape(a["Sourcing"])),
+              ("Build lead time", html.escape(a["Build lead time"])),
+              ("Capacity", "each line's weekly capacity, as given"),
+              ("Plan decides", html.escape(a["Decisions"])),
+              ("Priority", html.escape(a["Priority"]))]
+    if not pooled:
+        supply.insert(1, ("Reno to the PDC", html.escape(a["Transfer lead time"])))
+    targets = "".join(f"<span class='chip'>{html.escape(t)}</span>" for t in a["Targets (weeks of supply)"].split(" · "))
+    steps = "".join(f"<li>{html.escape(s)}</li>" for s in rd.objective_steps(case))
     rows = [("Scenario", scen),
-            ("Objective", html.escape(rd.objective_words(V["case"]))
-             + f"<div class='sub'>Targets, weeks of supply: {html.escape(a['Targets (weeks of supply)'])}</div>"),
-            ("Constraints", " · ".join(html.escape(c[0].upper() + c[1:] if i == 0 else c)
-                                       for i, c in enumerate(rd.constraint_words(V)))),
+            ("Supply chain", _tiles(supply)),
+            ("Targets", f"<div class='rw-chips'>{targets}<span class='note'>weeks of supply</span></div>"),
+            ("Objective", f"<div class='sub'>Minimise, in order:</div><ol class='rw-steps'>{steps}</ol>"),
             ("Outputs", f"<div class='rw-strip rw-score'>{_score_html(rd.kpis(V, V0))}</div>")]
     cells = "".join(f"<div class='k'>{k}</div><div class='v'>{v}</div>" for k, v in rows)
     st.markdown(f"<div class='rw-sum'>{cells}</div>", unsafe_allow_html=True)

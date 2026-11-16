@@ -4,6 +4,7 @@ it is. Each scenario is read against the one it is built on."""
 import streamlit as st
 
 from planner2_demo import state, views
+from planner2_demo.components import delete_control
 
 ss = state.init()
 st.title("Scenario Summary")
@@ -15,6 +16,7 @@ with pick:
     bold = {x: f"**{x}**" for x in keys}
     k = st.radio("Scenario", keys, key="scen_pick", format_func=bold.get,
                  captions=[state.describe(x) for x in keys], label_visibility="collapsed")
+    delete_control(k, key="scen")
 with page:
     slot = st.empty()                                # planning spinner
     V, err = state.safe_view(k, slot)

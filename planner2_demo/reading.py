@@ -218,6 +218,24 @@ def objective_words(case) -> str:
             + (f" ({'; '.join(ranked)})" if ranked else "") + ".")
 
 
+def objective_steps(case) -> list:
+    """The objective as its ordered steps (the same words as objective_words), for the scenario card."""
+    if not case.walk:
+        return ["each line's largest shortfall against target, in weeks of supply, summed over the weeks",
+                "the total shortfall", "stock above target"]
+    steps = []
+    for s in case.walk.steps:
+        w = STEP_WORDS[s.floor]
+        if s.share == "ranked" and "line_id" in s.select:
+            lines_ = [s.select["line_id"]] if isinstance(s.select["line_id"], str) else s.select["line_id"]
+            w += f" ({', '.join(LINE_WORDS.get(x, x) for x in lines_)} one bike at a time, {', then '.join(s.order)})"
+        if not any(x.startswith(STEP_WORDS[s.floor]) for x in steps):
+            steps.append(w)
+        elif w != STEP_WORDS[s.floor]:
+            steps[[x.startswith(STEP_WORDS[s.floor]) for x in steps].index(True)] = w
+    return steps
+
+
 def constraint_words(V) -> list:
     """The plan's constraints, in short phrases: capacity, build time, where stock serves, what the plan decides."""
     a, case = dict(assumptions(V)), V["case"]
@@ -518,6 +536,6 @@ def supply_map(V, end: int) -> list:
             z = np.where(w < 0, 0.99 * (1 - np.minimum(-w / WAIT_DEPTH, 1)),
                          np.where(w < t - 1e-6, 1 + 0.99 * np.clip(w / t, 0, 1),
                                   2 + 0.99 * np.minimum((w - t) / ABOVE_DEPTH, 1)))
-            rows.append({"line": ln, "sku": s, "label": f"{s} {SKU.at[s, 'size']}", "z": z, "wos": w, "target": t,
+            rows.append({"line": ln, "sku": s, "label": f"{s} ({SKU.at[s, 'size']})", "z": z, "wos": w, "target": t,
                          "held": held_from_runs(phase_runs(V, [s]))})
     return rows
