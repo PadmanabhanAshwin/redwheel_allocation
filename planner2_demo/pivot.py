@@ -102,6 +102,21 @@ function fmt(m, v, of) {
   const s = Math.round(v).toLocaleString("en-US").replace("-", "−");
   return [s, v < -0.5 ? "neg" : ""];
 }
+let scale = {};                                      // differences: the largest on screen per measure and row kind
+const kindOf = r => r.sku ? "bike" : r.line ? "line" : "all";
+const shaded = ({c, sub: isSub}) => !isSub && c.id !== "total";   // sums (Total, period totals) stay plain
+function scales(rows, vis) {
+  scale = {};
+  rows.forEach(r => vis.filter(shaded).forEach(({c}) => {
+    const v = r.values[c.id], k = r.metric + "|" + kindOf(r);
+    if (v !== null && v !== undefined) scale[k] = Math.max(scale[k] || 0, Math.abs(v));
+  }));
+}
+function heat(key, v) {                              // a difference's cell shaded by its size: blue more, red fewer
+  if (mode !== "diff" || v === null || v === undefined || !scale[key]) return "";
+  const a = Math.min(1, Math.abs(v) / scale[key]);
+  return ` style="background: rgba(${v > 0 ? "42,120,214" : "180,35,24"},${(0.06 + 0.34 * a).toFixed(3)})"`;
+}
 function chip(label, active, fn) {
   const b = document.createElement("span");
   b.className = "chip" + (active ? " on" : ""); b.textContent = label; b.onclick = fn; return b;
@@ -177,10 +192,12 @@ function head(vis) {
 }
 function row(cls, c1, c2, c3, m, vals, of, bad, vis, fresh) {
   let h = `<tr class='${cls}'><td class='c1'>${c1}</td><td class='c2'>${c2}</td><td class='c3'>${c3}</td>`;
+  const key = m.key + "|" + (/\ball\b/.test(cls) ? "all" : /\bsub\b/.test(cls) ? "line" : "bike");
   vis.forEach(({c, sub: isSub}) => {
     const [txt, k] = fmt(m, vals[c.id], of);
     const b = bad && bad[c.id] ? " below" : "";
-    h += `<td class='${k}${b}${isSub ? " psub" : ""}${fresh.has(c.id + isSub) ? " new" : ""}'>${txt}</td>`;
+    const style = txt && shaded({c, sub: isSub}) ? heat(key, vals[c.id]) : "";
+    h += `<td class='${k}${b}${isSub ? " psub" : ""}${fresh.has(c.id + isSub) ? " new" : ""}'${style}>${txt}</td>`;
   });
   return h + "</tr>";
 }
@@ -193,13 +210,16 @@ function draw() {
   shown = now;
   const ms = D.metrics.filter(m => on[m.key] && !(mode === "diff" && m.kind === "flag"));
   const R = rowsNow();
+  if (mode === "diff") scales(R, vis);
   let body = "";
   D.lines.forEach(ln => {
     body += `<tr class='line${shut[ln.id] ? " closed" : ""}' data-line='${ln.id}'><td class='c1' colspan='3'>${ln.label}</td>`
           + `<td colspan='${vis.length}'></td></tr>`;
     const lineRows = R.filter(r => r.line === ln.id);
     if (changedOnly && mode && !lineRows.some(keep)) {
-      const note = lineRows.some(r => changed[keyOf(r)]) ? "no change at this level" : `same as ${D.labels.a}`;
+      const by = {Years: "year", Quarters: "quarter", Months: "month"}[colDepth()];
+      const note = !lineRows.some(r => changed[keyOf(r)]) ? "no change"
+                 : by ? `no change by ${by}` : "no change in the columns shown";
       body = body.replace(/<td colspan='\d+'><\/td><\/tr>$/, `<td colspan='${vis.length}' class='same'>${note}</td></tr>`);
       return;
     }

@@ -2,7 +2,7 @@
 nothing else. No Streamlit here: every function is tested against the engine's own numbers (tests/test_planner2.py).
 
     one plan        plan_reading, kpis, bike_dates, assumptions, monthly_stack, pivot_data
-    two plans       kpis (with the change), change_lines, same_plan, phase_data, pivot_compare, change_weeks"""
+    two plans       kpis (with the change), change_lines, same_plan, supply_rows, pivot_compare, change_weeks"""
 from __future__ import annotations
 
 import json
@@ -426,9 +426,9 @@ def change_weeks(V, V0, ln) -> list:
             and not (c.from_t == 1 and c.to_t >= H) and ln in _selected_lines(c, obj)]
 
 
-# ---------------- the phases: customers waiting, stock below target, at target ----------------
+# ---------------- supply against target: the comparison chart ----------------
 
-PHASES = {"w": "customers waiting", "b": "stock below target", "a": "at target"}
+MATERIAL = 1.0           # weeks of supply: a line or bike that moved by less than a week in every week is not drawn
 
 
 def phase_runs(V, skus: list) -> list:
@@ -451,28 +451,40 @@ def held_from_runs(runs: list):
     return runs[-1][1] if runs[-1][0] == "a" else None
 
 
-def phase_data(V, V0) -> dict:
-    """Both plans' phases per line and per bike, for the phase strips: runs, the date each is at target from, its shift
-    in weeks, whether anything moved, and the weeks a change of V applies on the line."""
-    rows = []
+def supply(V, skus: list) -> tuple:
+    """(weeks of supply, target), weeks 1..H, of a group of bikes read at its worst: the target less the largest
+    shortfall among the bikes (each at its worst stock site). At or above the target: every bike is at target; below
+    zero: customers wait. The bikes of a line share their target."""
+    R = V["R"]
+    gap, tgt = [], []
+    for s in skus:
+        keys = [k for k in R["wos"].index if k[0] == s]
+        w = R["wos"].loc[keys, 1:H].to_numpy(float)
+        t = R["target_wos"].loc[keys, 1:H].to_numpy(float)
+        gap.append((w - t).min(axis=0))
+        tgt.append(t.max(axis=0))
+    t = np.max(tgt, axis=0)
+    return t + np.min(gap, axis=0), t
 
-    def item(label, skus, size=None):
-        r0, r = phase_runs(V0, skus), phase_runs(V, skus)
-        h0, h = held_from_runs(r0), held_from_runs(r)
-        return {"label": label, "size": size, "runs": [r0, r], "moved": r0 != r,
-                "held": [fdate(WEEKS[h0]) if h0 else None, fdate(WEEKS[h]) if h else None],
-                "shift": h - h0 if h and h0 else None}
 
+def supply_rows(V, V0) -> tuple:
+    """The comparison chart's panels and its last week: ([{title, skus, a, b, target, held}], end). A line whose
+    weeks of supply moved by MATERIAL in some week is drawn once, at its worst bike; a line whose bikes moved apart
+    (in the same week one ahead of the reference and another behind) is drawn bike by bike, the bikes that moved.
+    held: the week each plan is at target from (V0's, V's), or None."""
+    rows, last = [], 1
     for ln in LINES:
         skus = [s for s in ORDER if s in SKUS_BY_LINE[ln]]
-        row = item(LINE_WORDS[ln], skus)
-        row.update(id=ln, bikes=[item(s, [s], SKU.at[s, "size"]) for s in skus],
-                   bands=[list(b) for b in change_weeks(V, V0, ln)])
-        rows.append(row)
-    moved = [r for r in rows if r["moved"] or any(b["moved"] for b in r["bikes"])]
-    for r in rows:
-        r["open"] = len(moved) == 1 and r is moved[0]
-    last = max([x[1] for r in rows for it in [r, *r["bikes"]] for runs in it["runs"] for x in runs[1:]] or [1])
-    return {"keys": [V0["case"].key, V["case"].key], "weeks": [fdate(WEEKS[t]) for t in PLAN_WEEKS],
-            "iso": [WEEKS[t].strftime("%Y-%m-%d") for t in PLAN_WEEKS],
-            "end": int(min(H, max(70, last + 13))), "rows": rows, "names": PHASES}
+        d = np.array([supply(V, [s])[0] - supply(V0, [s])[0] for s in skus])
+        apart = bool(((d > MATERIAL).any(axis=0) & (d < -MATERIAL).any(axis=0)).any())
+        groups = [[s] for s, x in zip(skus, d) if np.abs(x).max() >= MATERIAL] if apart else [skus]
+        for g in groups:
+            (a, _), (b, t) = supply(V0, g), supply(V, g)
+            moved = np.abs(b - a) >= MATERIAL
+            if not moved.any():
+                continue
+            held = (held_from_runs(phase_runs(V0, g)), held_from_runs(phase_runs(V, g)))
+            title = f"{LINE_WORDS[ln]} · {g[0]} {SKU.at[g[0], 'size']}" if apart else LINE_WORDS[ln]
+            rows.append({"title": title, "skus": g, "a": a, "b": b, "target": t, "held": held})
+            last = max([last, int(np.nonzero(moved)[0].max()) + 1] + [h for h in held if h])
+    return rows, int(min(H, max(70, last + 13)))

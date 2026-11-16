@@ -2,15 +2,16 @@
 
     template(k, V, V0, title)    one scenario, as its deck slide: what it changes from the scenario it is built on, the
                                  four measures and their change, its settings, builds by line and month, the build plan
-    differences(V, V0, key)      one plan against another: what was changed, the four measures and their change, the
-                                 phases of every line and bike, the build plan table of differences"""
+    differences(V, V0, key)      one plan against another: what was changed, the four measures and their change, weeks
+                                 of supply against target for the lines that moved, the build plan table of differences
+                                 (each cell shaded by the size of its change)"""
 from __future__ import annotations
 
 import html
 
 import streamlit as st
 
-from planner2_demo import charts, phases, pivot, reading as rd
+from planner2_demo import charts, pivot, reading as rd
 
 
 def strip(items: list, cls: str = ""):
@@ -56,7 +57,7 @@ def template(k: str, V: dict, V0: dict | None = None, title: str = ""):
 
 
 def differences(V, V0, key: str):
-    """One plan against another: what was changed, the four measures, the phases, the build plan table."""
+    """One plan against another: what was changed, the four measures, supply against target, the build plan table."""
     k0 = V0["case"].key
     lines = change_lines(V, V0)
     scorecard(rd.kpis(V, V0))
@@ -64,6 +65,8 @@ def differences(V, V0, key: str):
         st.success(f"Same build plan as {k0}." if lines else f"Same settings and build plan as {k0}.",
                    icon=":material/check_circle:")
         return
-    phases.render(rd.phase_data(V, V0))
+    fig = charts.supply_figure(V, V0)
+    if fig is not None:
+        st.plotly_chart(fig, key=f"supply_{key}", config={"displayModeBar": False})
     st.markdown("**Build plan**")
     pivot.render(rd.pivot_compare(V, V0), height=640)

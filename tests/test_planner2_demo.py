@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "app")]
 
 import ui  # noqa: E402
-from planner2_demo import charts, phases, pivot, reading as rd, state  # noqa: E402
+from planner2_demo import charts, pivot, reading as rd, state  # noqa: E402
 from redwheel import llm, priors, scenarios as sc, store, tunables as tu  # noqa: E402
 
 APP = str(ROOT / "planner2_demo" / "app.py")
@@ -136,42 +136,63 @@ def test_no_week_is_at_target_while_customers_wait(views):
         assert not (waiting & V["at_target"].loc[:, 1:H]).values.any()
 
 
-def test_the_phase_strips_tell_each_story(views):
-    def data(k, k0="R+"):
-        d = rd.phase_data(views[k], views[k0])
-        return d, {r["id"]: r for r in d["rows"]}
-    d, rows = data("R+C26")
-    assert d["keys"] == ["R+", "R+C26"] and d["end"] >= 70 and d["weeks"][0] == "7 Sep 2026"
-    assert {ln: r["shift"] for ln, r in rows.items()} == {"road-base": 0, "road-carbon": 4, "mtb-base": 6,
-                                                          "mtb-carbon": 3}
-    assert all(r["bands"] == [[16, 17]] for r in rows.values()) and not any(r["open"] for r in rows.values())
-    waits = [b for p, a, b in rows["mtb-carbon"]["runs"][1] if p == "w"]
-    assert W[max(waits)] == date("2027-02-01")                                             # customers wait into February
-    assert W[max(b for p, a, b in rows["mtb-carbon"]["runs"][0] if p == "w")] == date("2027-01-04")
-    d, rows = data("R+P1")
-    mc = rows["mtb-carbon"]
-    assert mc["open"] and not mc["moved"] and mc["shift"] == 0                              # the line's dates hold
-    assert [(b["label"], b["held"][1], b["shift"]) for b in mc["bikes"]] == [
-        ("RW-9304", "31 May 2027", -18), ("RW-4418", "13 Sep 2027", -3), ("RW-6416", "4 Oct 2027", 0)]
-    assert [r["id"] for r in d["rows"] if r["open"]] == ["mtb-carbon"]
-    d, rows = data("R+E4")
-    assert rows["mtb-carbon"]["bands"] == [[10, 10]] and rows["mtb-carbon"]["shift"] == 1 and rows["mtb-carbon"]["open"]
-    assert all(not r["moved"] and r["bands"] == [] for ln, r in rows.items() if ln != "mtb-carbon")
-    d, rows = data("R+E5")
-    assert rows["mtb-carbon"]["bands"] == [] and rows["mtb-carbon"]["shift"] == 0               # lots: no period
-    assert [b["label"] for b in rows["mtb-carbon"]["bikes"] if b["moved"]] == ["RW-9304"]
-    d, rows = data("R+", "R")
-    assert {ln: r["shift"] for ln, r in rows.items()} == {"road-base": 0, "road-carbon": 2, "mtb-base": 0,
-                                                          "mtb-carbon": 2}
+@pytest.mark.parametrize("key", KEYS)
+def test_supply_is_the_engines_target_and_waiting(views, key):
+    """The comparison chart's line, week by week: at or above its target exactly when the engine has every bike at
+    target, below zero exactly when a customer waits; for every line and every bike."""
+    V = views[key]
+    for ln in ui.LINES:
+        for group in [ui.SKUS_BY_LINE[ln]] + [[s] for s in ui.SKUS_BY_LINE[ln]]:
+            y, t = rd.supply(V, group)
+            at = V["at_target"].loc[group, 1:H].all().to_numpy()
+            waiting = (V["open_orders"].loc[group, 1:H] > 0.5).any().to_numpy()
+            assert np.array_equal(y >= t - 1e-6, at), (ln, group)
+            assert np.array_equal(y < -1e-9, waiting), (ln, group)
 
 
-def test_the_phase_page_carries_its_data(views):
-    d = rd.phase_data(views["R+C26"], views["R+"])
-    page = phases.html(d)
-    assert json.dumps(d) in page and "__DATA__" not in page
-    assert phases.height(d) == 24 + 4 + 24 + 4 * (2 * 15 + 3 + 14) + 4
-    p1 = rd.phase_data(views["R+P1"], views["R+"])
-    assert phases.height(p1) == phases.height(d) + 3 * (7 + 2 * 10 + 3)                    # MTB carbon's bikes open
+def test_supply_reads_a_bike_at_its_worst_stock_site():
+    """With two stock sites (scenario B: web orders from the PDC), a bike is at target only when both sites are."""
+    V = ui.view_of(sc.run_case(sc.CASE_B))
+    for s in ui.ORDER:
+        y, t = rd.supply(V, [s])
+        assert np.array_equal(y >= t - 1e-6, V["R"]["at_target"].loc[[k for k in V["R"]["at_target"].index
+                                                                       if k[0] == s], 1:H].all().to_numpy()), s
+
+
+def test_the_comparison_chart_draws_what_moved(views):
+    def rows(k, k0="R+"):
+        r, end = rd.supply_rows(views[k], views[k0])
+        return {x["title"]: tuple(str(W[h].date()) if h else None for h in x["held"]) for x in r}, end
+    assert rows("R+", "R")[0] == {"Road carbon": ("2027-08-16", "2027-08-30"), "MTB carbon": ("2027-09-20", "2027-10-04")}
+    assert rows("R+C26")[0] == {"Road base": ("2026-11-16", "2026-11-16"), "Road carbon": ("2027-08-30", "2027-09-27"),
+                                "MTB base": ("2027-03-08", "2027-04-19"), "MTB carbon": ("2027-10-04", "2027-10-25")}
+    assert rows("R+E4")[0] == {"MTB carbon": ("2027-10-04", "2027-10-11")}
+    assert rows("R+P1")[0] == {"MTB carbon · RW-9304 S": ("2027-10-04", "2027-05-31"),     # the bikes move apart
+                               "MTB carbon · RW-4418 M": ("2027-10-04", "2027-09-13"),
+                               "MTB carbon · RW-6416 L": ("2027-10-04", "2027-10-04")}
+    assert rows("R+E5") == ({}, 70) and charts.supply_figure(views["R+E5"], views["R+"]) is None   # under a week
+    c26 = {x["title"]: x for x in rd.supply_rows(views["R+C26"], views["R+"])[0]}["MTB carbon"]
+    assert W[int(np.nonzero(c26["b"] < 0)[0].max()) + 1] == date("2027-02-01")             # customers wait into February
+    assert W[int(np.nonzero(c26["a"] < 0)[0].max()) + 1] == date("2027-01-04")
+
+
+def test_the_comparison_figure_is_its_rows(views):
+    for k, k0 in (("R+C26", "R+"), ("R+P1", "R+"), ("R+", "R")):
+        V, V0 = views[k], views[k0]
+        rows, end = rd.supply_rows(V, V0)
+        fig = charts.supply_figure(V, V0)
+        assert [a.text for a in fig.layout.annotations][:len(rows)] == [r["title"] for r in rows]
+        lines = [t for t in fig.data if t.mode == "lines" and t.line.width == 2.2]
+        refs = [t for t in fig.data if t.mode == "lines" and t.line.dash == "dot"]
+        assert len(lines) == len(refs) == len(rows)
+        for r, b, a in zip(rows, lines, refs):
+            assert np.allclose(b.y, r["b"][:end]) and np.allclose(a.y, r["a"][:end])
+        assert len([s_ for s_ in fig.layout.shapes if s_.type == "rect"]) == len(rows)         # customers waiting, below 0
+        names = {t.name for t in fig.data if t.showlegend is not False}
+        assert {k, k0, "target", "below 0: customers waiting"} <= names
+    p1 = charts.supply_figure(views["R+P1"], views["R+"])
+    assert {t.name for t in p1.data if t.name} >= {"R+P1 ahead of R+", "R+P1 behind R+"}      # RW-9304 ahead, the rest behind
+    assert "31 May 2027" in [x for t in p1.data if t.text for x in t.text]
 
 
 # ---------------- the scenario template ----------------
@@ -292,6 +313,8 @@ def test_the_difference_table_is_b_minus_a_cell_by_cell(views, key):
 def test_the_tables_fit_their_rows(views):
     page = pivot.html(rd.pivot_compare(views["R+E4"], views["R+"]), 640)
     assert "MAX_H = 640" in page and "__MAX_H__" not in page and "Or click" not in page
+    assert '"no change"' in page and "no change by ${by}" in page and "same as" not in page   # no key to look up
+    assert "function heat(" in page and "if (mode === \"diff\") scales(R, vis);" in page          # cells shaded by size
 
 
 def test_the_weekly_csv_is_the_whole_plan(views):
@@ -452,15 +475,23 @@ def test_no_ai_words_or_sparkles():
 
 
 def test_the_pages_draw_the_pairs_own_data(folder, views):
-    """The two frames on Compare (phase strips, then the table) and on Scenarios (the table) carry exactly the data
-    computed for the scenarios picked."""
+    """Compare draws the comparison chart of the pair picked and its table; Scenarios the table of the one picked."""
     at = start("compare.py")
     at.selectbox(key="_k").set_value("R+C26").run()
     at.selectbox(key="_k0").set_value("R+").run()
     frames = [f.proto.srcdoc for f in ok(at).get("iframe")]
-    assert len(frames) == 2
-    assert json.dumps(rd.phase_data(views["R+C26"], views["R+"])) in frames[0]
-    assert json.dumps(rd.pivot_compare(views["R+C26"], views["R+"])) in frames[1] and "MAX_H = 640" in frames[1]
+    assert len(frames) == 1
+    assert json.dumps(rd.pivot_compare(views["R+C26"], views["R+"])) in frames[0] and "MAX_H = 640" in frames[0]
+    import base64
+
+    def array(v):                                                 # plotly's binary arrays: {"dtype", "bdata"}
+        return np.frombuffer(base64.b64decode(v["bdata"]), v["dtype"]) if isinstance(v, dict) else np.array(v)
+    spec = json.loads(at.get("plotly_chart")[0].proto.spec)
+    rows, end = rd.supply_rows(views["R+C26"], views["R+"])
+    drawn = [array(t["y"]) for t in spec["data"] if t.get("mode") == "lines" and t.get("line", {}).get("width") == 2.2]
+    assert len(drawn) == 4 and all(np.allclose(y, r["b"][:end]) for y, r in zip(drawn, rows))
+    at.selectbox(key="_k").set_value("R+E5").run()
+    assert ok(at) and not at.get("plotly_chart") and len(at.get("iframe")) == 1                # under a week: table only
     at.switch_page("scenarios.py").run()
     for k in state.FEATURED:
         at.radio(key="scen_pick").set_value(k).run()
