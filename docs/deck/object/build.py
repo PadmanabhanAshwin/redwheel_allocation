@@ -1,6 +1,6 @@
-"""The object deck: six 1920x1080 slides as SVG in one HTML file.
+"""The object deck: eleven 1920x1080 slides as SVG in one HTML file.
 
-Usage: python3 build.py OUTDIR  ->  OUTDIR/object.html and OUTDIR/p1..p10.html; print object.html to PDF with Chrome.
+Usage: python3 build.py OUTDIR  ->  OUTDIR/object.html and OUTDIR/p1..p11.html; print object.html to PDF with Chrome.
 Data, read from this folder: base_mtb.json (dump_base.py, scenario A) and slide5_builds.json (the solver session,
 scenarios A and P1). Numbers that are not in those files are in NUM below; refresh them at the final run.
 
@@ -342,8 +342,7 @@ p4 = page(4, "Linear program", "", network() + vrule(860, 232, 530) + matrices()
 
 # ================================================================ 6 · scenarios A, R, R+
 # Every number from docs/deck/deck_numbers.json, keys A, R, R+ (the solver session's final set). Same layout on each
-# scenario slide: what changed; four headline numbers against the parent; open orders (every order cleared) and MTB
-# carbon weeks of supply (targets held from), parent dashed; each line's dates; one sentence.
+# scenario slide: change against the parent; context, change, result notes; builds by line and month.
 DN = json.load(open(next(p for p in [HERE.parent / "deck_numbers.json", HERE / "deck_numbers.json"] if p.exists())))
 DW = {int(k): datetime.date.fromisoformat(v) for k, v in DN["_meta"]["weeks"].items()}
 D_ = lambda s: datetime.date.fromisoformat(str(s)[:10])
@@ -420,14 +419,14 @@ def scenarios_page():
     assert not DN["R"]["against_A"]["sku_totals_diff"] and not DN["R+"]["against_A"]["sku_totals_diff"]
     assert all(DN["R+"]["held_by_line"][ln] == DN["R"]["held_by_line"][ln] for ln in ("mtb-base", "road-base"))
     g = callouts([("94,429", "bikes in each scenario; identical totals per bike"),
-                  ("+2 weeks", "per scenario on every date: orders cleared 14 Dec, 28 Dec, 11 Jan"),
+                  ("+2 weeks", "per scenario on every target date: 6 Sep, 20 Sep, 4 Oct 2027"),
                   ("Carbon lines only", "shift from R to R+; base lines unchanged")])
     g += text_col(110, 400, [
         ("Scenario context", ["One network, one solver, one objective; three settings of build time.",
                               f'{B_("A")}: none. A bike ships in the week it is built.',
                               f'{B_("R")}: one week, every line.',
                               f'{B_("R+")}: two weeks on carbon lines, one on base lines.']),
-        ("Assumptions", ["Build times are assumed; the data holds none.",
+        ("Assumptions", ["Build times are assumptions; the data contains no lead times.",
                          "Stock at Reno and the PDC serves every order.",
                          "Forecast demand is taken as exact."]),
         ("Result notes", ["Build time delays delivery; it does not change the quantity built.",
@@ -454,7 +453,7 @@ def scenarios_page():
         yy += 88
     g += "".join(txt(X(w), bottom + 22, lab, 14, GREY, 400, "middle") for w, lab in [(1, "Sep 2026"), (18, "Jan 2027"), (35, "May 2027"), (53, "Sep 2027"), (70, "Jan 2028")])
     sc_ = ["A", "R", "R+"]
-    rows = [("Every order cleared", [fd(D_(S[k]["Open orders cleared from"])) for k in sc_]),
+    rows = [("Position-weeks below target", [f'{S[k]["Position-weeks below target"]:,}' for k in sc_]),
             ("All targets held from", [fd(D_(S[k]["All targets held from"])) for k in sc_]),
             ("On-time fill", [f'{100*S[k]["On-time fill rate"]:.1f}%' for k in sc_])]
     xs = [1380, 1580, 1790]; ty = 866
@@ -464,7 +463,7 @@ def scenarios_page():
         y = ty + 48 + 26 * i
         g += txt(730, y, lab, 16, INK, 700) + "".join(txt(x, y, v_, 16, INK, 700 if j == 2 else 400, "end") for j, (x, v_) in enumerate(zip(xs, vals)))
     return g
-p5 = page(5, "Scenarios A, R and R+", "", scenarios_page())
+p6 = page(6, "Scenarios A, R and R+", "", scenarios_page())
 
 # ---- 6 · scenario R+
 NM = 16                                       # Sep 2026 - Dec 2027
@@ -504,7 +503,7 @@ def vs_strip(sc, parent, y=226):
     S, P = DN[sc]["scorecard"], DN[parent]["scorecard"]
     pts = round(100 * S["On-time fill rate"], 1) - round(100 * P["On-time fill rate"], 1)
     cols = [("Bikes built", f'{P["Bikes built"]:,}', f'{S["Bikes built"]:,}', "same" if S["Bikes built"] == P["Bikes built"] else f'{S["Bikes built"] - P["Bikes built"]:+,}'),
-            ("Every order cleared", fd(D_(P["Open orders cleared from"])), fd(D_(S["Open orders cleared from"])), wdiff(S["Open orders cleared from"], P["Open orders cleared from"])),
+            ("Position-weeks below target", f'{P["Position-weeks below target"]:,}', f'{S["Position-weeks below target"]:,}', "same" if S["Position-weeks below target"] == P["Position-weeks below target"] else f'{S["Position-weeks below target"] - P["Position-weeks below target"]:+,}'),
             ("All targets held from", fd(D_(P["All targets held from"])), fd(D_(S["All targets held from"])), wdiff(S["All targets held from"], P["All targets held from"])),
             ("On-time fill", f'{100*P["On-time fill rate"]:.1f}%', f'{100*S["On-time fill rate"]:.1f}%', "same" if pts == 0 else f"{pts:+.1f} pt")]
     g = f'<rect x="110" y="{y}" width="1700" height="110" rx="12" fill="{tint(AMB, .07)}"/>'
@@ -529,7 +528,7 @@ RP, C26, E4, E5, P1 = (DN[k] for k in ("R+", "R+C26", "R+E4", "R+E5", "R+P1"))
 assert E4["against_parent"]["other_lines_identical"] and E5["against_parent"]["other_lines_identical"] and E4["scorecard"]["Bikes built"] - RP["scorecard"]["Bikes built"] == 300
 assert E5["builds_per_sku_total"]["RW-9304"] == 16300 and E5["deliveries"]["largest_gap_bikes"] == 3 and C26["deliveries"]["largest_gap_bikes"] == 0
 assert P1["held_by_line"] == RP["held_by_line"] and P1["per_sku"]["RW-9304"]["at_target"] == "2027-05-31" and P1["per_sku"]["RW-4418"]["at_target"] == "2027-09-13"
-p6 = scenario_slide(6, "R+", "R", "Scenario R+", [
+p7 = scenario_slide(7, "R+", "R", "Scenario R+", [
     ("Scenario context", ["The build plan: weekly builds per bike at Reno, 7 Sep 2026 to 25 Dec 2028."]),
     ("Assumptions", ["Two weeks to build on carbon lines, one on base lines.",
                      "Targets: 15 weeks of supply on MTB carbon, 12 on MTB base, 8 on road (10 from Jan 2028).",
@@ -539,34 +538,104 @@ p6 = scenario_slide(6, "R+", "R", "Scenario R+", [
                         "The only optimal plan, to within 2 bikes.",
                         "No plan delivers more by any date, on any line.",
                         "Consistent: 14 rules between the scenarios hold."])])
-p7 = scenario_slide(7, "R+C26", "R+", "Scenario R+ · closed for Christmas 2026", [
+p8 = scenario_slide(8, "R+C26", "R+", "Scenario R+ · closed for Christmas 2026", [
     ("Scenario context", ["Every line closed for the weeks of 21 and 28 Dec 2026, while the lines are still clearing the open orders."]),
     ("Change to the model", ["Capacity arrival set to 0 on every line for two weeks: one edit, eight entries."]),
-    ("Result notes", ["Three lines are full, so they cannot build ahead. Road base, the line with room, builds ahead exactly what it would have built in the closed weeks.",
-                      "Only MTB carbon customers wait: 4 Jan to 1 Feb 2027, up to 724 bikes.",
+    ("Result notes", ["Three lines are at capacity and cannot build ahead. Road base, with spare capacity, builds ahead exactly the two closed weeks’ output.",
+                      "Only MTB carbon customers wait, 4 Jan to 1 Feb 2027: up to 724 bikes.",
                       "December deliveries are not hit: with two weeks to build, those bikes were on the line before the closure. The closure costs January.",
-                      "Same 94,429 bikes; every target three weeks later; fill 93.8%."])], shade=(16, 17))
-p8 = scenario_slide(8, "R+E4", "R+", "Scenario R+ · a fleet order lands", [
+                      "Same 94,429 bikes; every target three weeks later."])], shade=(16, 17))
+p9 = scenario_slide(9, "R+E4", "R+", "Scenario R+ · a fleet order lands", [
     ("Scenario context", ["A commercial order for 300 RW-4418 (MTB carbon, size M) arrives in the week of 9 Nov 2026, on top of the forecast."]),
     ("Change to the model", ["Order arrival +300 on RW-4418 commercial, one week: one entry."]),
-    ("Result notes", ["The line is full, so exactly 300 more bikes are built when capacity rises, and those customers wait.",
-                      "MTB carbon reaches target one week later; every order clears two weeks later.",
-                      "The other three lines do not move: identical cell for cell."])], shade=(10, 10))
-p9 = scenario_slide(9, "R+E5", "R+", "Scenario R+ · RW-9304 built in lots of 50", [
+    ("Result notes", ["MTB carbon is at capacity, so the 300 are built when capacity rises in Sep 2027; those customers wait.",
+                      "MTB carbon reaches target one week later.",
+                      "The other three lines are unchanged, cell for cell."])], shade=(10, 10))
+p10 = scenario_slide(10, "R+E5", "R+", "Scenario R+ · RW-9304 built in lots of 50", [
     ("Scenario context", ["RW-9304 (MTB carbon, size S) is built in whole lots of 50, a fixed order quantity."]),
     ("Change to the model", ["Lot size of RW-9304’s make task set to 50. The solver plans the flow; the build plan is cut into lots."]),
     ("Result notes", ["Every build of RW-9304 is a whole lot; its total rounds up from 16,267 to 16,300 (+33).",
-                      "No line’s date moves, and the line is never idle in a week R+ ran it full.",
-                      "The cost: 3 RW-9304 bikes a week late on 11 Jan 2027, so orders clear 18 Jan; stock carried above target.",
-                      "Deliveries within 3 bikes of the most any plan could make: the price of lots."])])
-p10 = scenario_slide(10, "R+P1", "R+", "Scenario R+ · MTB carbon in priority order", [
+                      "No target date moves; the line is at capacity in every week R+ ran it at capacity.",
+                      "The cost: 3 RW-9304 bikes a week late on 11 Jan 2027, and stock carried above target.",
+                      "Deliveries within 3 bikes of the maximum any plan achieves: the cost of lots."])])
+p11 = scenario_slide(11, "R+P1", "R+", "Scenario R+ · MTB carbon in priority order", [
     ("Scenario context", ["A priority order on the MTB carbon line: orders past their date first, then every open order, then the target for RW-9304, RW-4418 and RW-6416 in turn."]),
-    ("Change to the model", ["The objective only: one step replaced by six ordered steps. The network is untouched."]),
-    ("Result notes", ["The same bikes, every line’s date, the orders and the fill all stay as in R+.",
-                      "Only who reaches target first changes: RW-9304 on 31 May 2027, RW-4418 on 13 Sep, RW-6416 on 4 Oct.",
-                      "The first step covers every line, so road carbon re-mixes in a few early weeks."])], last="Next: we change the world live.")
+    ("Change to the model", ["Objective only: the single step becomes six ordered steps. Network and data unchanged."]),
+    ("Result notes", ["The same bikes, every line’s date and the fill stay as in R+.",
+                      "Only the order in which bikes reach target changes: RW-9304 on 31 May 2027, RW-4418 on 13 Sep, RW-6416 on 4 Oct.",
+                      "Step 1 applies to every line, so road carbon’s mix changes in a few early weeks."])], last="Next: we change the world live.")
 
-pages = [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10]
+# ================================================================ 5b · priority order
+# Planning priors: scenarios.CASE_RP.priors (settings a planner writes; not in the data). Floors for RW-4418, week 1:
+# NOTE_TO_DECK_BOT.md §2 (net -1,285; due -123; owed 0; target 857). Two bikes: tests/test_engine.py
+# test_walk_on_two_bikes (builds pinned; net = previous net + builds, no demand). R+ against R+P1: deck_numbers.json
+# weeks_of_supply_mtb and per_sku at_target; the walk's six steps from R+P1.walk.
+PO_C = {"RW-9304": "#b45309", "RW-4418": "#111827", "RW-6416": "#2563eb"}; MTB = ["RW-9304", "RW-4418", "RW-6416"]
+def priors_col(x, y):
+    rows = [("Routes", "every site serves every customer"), ("Build time", "carbon lines 2 weeks, base lines 1"),
+            ("Transfer Reno → PDC", "1 week; not used in R+"), ("Plan decides", "make; move off"),
+            ("Targets", "road 8 wk (10 from 2028), MTB base 12, MTB carbon 15"), ("Undated order", "due 7 days after it was placed")]
+    g = sec_head(x, y, "Planning priors") + txt(x, y + 26, "Settings a planner writes; none is in the data.", 16, GREY)
+    for i, (a, b) in enumerate(rows):
+        yy = y + 62 + 30 * i
+        g += txt(x, yy, a, 16, INK, 700) + txt(x + 190, yy, b, 15)
+    return g
+def floors_col(x, y):
+    net, due, owed, tgt = NUM["rw4418_floors"]
+    g = sec_head(x, y, "Floors") + txt(x, y + 26, "Levels net inventory must reach, read from the object.", 16, GREY)
+    lo, hi = -1500, 1000; y0, y1 = y + 80, y + 300
+    Y = lambda v: y1 - (v - lo) * (y1 - y0) / (hi - lo)
+    g += f'<line x1="{x + 150}" y1="{y0}" x2="{x + 150}" y2="{y1}" stroke="{LIGHT}" stroke-width="2"/>'
+    for v, lab, word, off in [(tgt, "target", "the next 15 weeks of forecast", 5), (owed, "owed", "no customer waiting", -6), (due, "due", "no order past its date", 16)]:
+        g += f'<line x1="{x + 130}" y1="{Y(v)}" x2="{x + 170}" y2="{Y(v)}" stroke="{INK}" stroke-width="2.5"/>'
+        g += txt(x + 120, Y(v) + off, f"{v:+,}" if v else "0", 15, INK, 700, "end") + txt(x + 182, Y(v) + off, f'{B_(lab)} <tspan style="fill:{GREY}">{word}</tspan>', 15)
+    g += f'<circle cx="{x + 150}" cy="{Y(net)}" r="6" fill="{AMB}"/>' + txt(x + 120, Y(net) + 5, f"{net:,}", 15, AMB, 700, "end") + txt(x + 182, Y(net) + 5, "RW-4418, week 1: 25 in stock, 1,310 on order", 15, GREY)
+    return g + txt(x, y1 + 36, "Below a floor is a need; the lower the floor, the more it counts.", 16)
+TWO = [("Even rule", [[0, 0], [5, 5], [10, 10], [15, 15]]),
+       ("Y first", [[-10, 10], [-10, 20], [0, 20], [10, 20]]),
+       ("Customers, then Y first", [[0, 0], [0, 10], [0, 20], [10, 20]])]
+def two_bikes(x, y):
+    g = sec_head(x, y, "Two bikes, one line") + txt(x, y + 26, "10 a week, no new orders. X: 10 customers waiting. Target 20 each.", 16, GREY)
+    g += txt(x, y + 50, "Net inventory at the end of each week, X / Y", 15, GREY)
+    g += "".join(txt(x + 215 + 78 * j, y + 82, f"week {j + 1}", 13, GREY, 700, "middle") for j in range(4))
+    for i, (rule_, cells) in enumerate(TWO):
+        yy = y + 118 + 46 * i
+        g += txt(x, yy, rule_, 16, INK, 700)
+        for j, (cx, cy) in enumerate(cells):
+            px = x + 215 + 78 * j
+            g += f'<rect x="{px - 36}" y="{yy - 21}" width="72" height="30" rx="6" fill="{tint(RED, .15) if cx < 0 else "#f3f4f6"}"/>'
+            g += txt(px, yy, f"{cx} / {cy}", 14, RED if cx < 0 else INK, 700 if cx < 0 else 400, "middle")
+    return g + lines(x, y + 274, ["Ranking the bikes alone keeps X’s customers waiting two weeks.", "A step for customers first, then the ranking, does not."], 16, INK, 24)
+def p1_chart(x0, y0, w, h):
+    W1 = 60; x1, y1 = x0 + w, y0 + h
+    X = lambda t: x0 + (t - 1) * w / (W1 - 1); Y = lambda v: y1 - (v + 25) * h / 42
+    g = sec_head(x0, y0 - 56, "R+ against R+P1") + txt(x0, y0 - 30, "Weeks of supply, MTB carbon bikes. Grey dashed: R+, all three together.", 16, GREY)
+    g += "".join(f'<line x1="{x0}" y1="{Y(v)}" x2="{x1}" y2="{Y(v)}" stroke="{RULE_C}" stroke-width="1"/>' + txt(x0 - 8, Y(v) + 5, f"{v}", 13, GREY, 400, "end") for v in (-20, -10, 0, 10))
+    g += f'<line x1="{x0}" y1="{Y(15)}" x2="{x1}" y2="{Y(15)}" stroke="{INK}" stroke-width="1.5" stroke-dasharray="6 5"/>' + txt(x0 - 8, Y(15) + 5, "15", 13, INK, 700, "end")
+    for k in MTB:
+        g += poly([(X(t), Y(v)) for t, v in zip(range(1, W1 + 1), DN["R+"]["weeks_of_supply_mtb"][k][:W1])], LIGHT, 2, True)
+    for k in MTB:
+        g += poly([(X(t), Y(v)) for t, v in zip(range(1, W1 + 1), DN["R+P1"]["weeks_of_supply_mtb"][k][:W1])], PO_C[k], 2.5)
+        wt = WK_OF_DN(DN["R+P1"]["per_sku"][k]["at_target"])
+        g += f'<circle cx="{X(wt)}" cy="{Y(15)}" r="5" fill="{PO_C[k]}" stroke="#fff" stroke-width="1.5"/>'
+    g += "".join(txt(X(t), y1 + 22, lab, 13, GREY, 400, "middle") for t, lab in [(1, "Sep 2026"), (18, "Jan 2027"), (35, "May 2027"), (53, "Sep 2027")])
+    for i, k in enumerate(MTB):
+        g += f'<rect x="{x0 + 190 * i}" y="{y1 + 40}" width="14" height="14" fill="{PO_C[k]}"/>' + txt(x0 + 20 + 190 * i, y1 + 52, f'{k}: {fd(D_(DN["R+P1"]["per_sku"][k]["at_target"]))}', 14, INK)
+    return g
+def priority_page():
+    assert DN["R+P1"]["held_by_line"] == DN["R+"]["held_by_line"] and DN["R+P1"]["scorecard"]["Bikes built"] == DN["R+"]["scorecard"]["Bikes built"]
+    assert [w["floor"] for w in DN["R+P1"]["walk"]] == ["due", "owed", "target", "target", "target", "target"]
+    g = txt(110, 250, "A scenario has three parts a planner can read and change: the world (stock, capacity, demand), the rules (routes, build times, what the plan decides) and the purpose: what the plan protects first.", 18)
+    g += priors_col(110, 310) + floors_col(110, 560)
+    g += vrule(700, 296, 940) + two_bikes(740, 310)
+    g += vrule(1240, 296, 940) + p1_chart(1310, 420, 490, 300)
+    g += rule(690, 740, 1200) + sec_head(740, 736, "Scenario R+P1, six steps in turn") + lines(740, 766, ["1  due, every bike  2  owed, every bike", "3  target, RW-9304  4  target, RW-4418  5  target, RW-6416", "6  target, the other seven bikes"], 16, INK, 24)
+    g += txt(740, 860, "Each step: minimise its shortfall, hold the result, then the next step.", 16, GREY)
+    g += rule(968) + txt(110, 1012, "A priority order changes the objective only. R+P1 builds R+’s bikes and holds every line’s target on R+’s date; it changes the order in which the three bikes get there.", 20)
+    return g
+p5 = page(5, "Priority order", "", priority_page())
+
+pages = [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11]
 head = f'<!doctype html><html><head><meta charset="utf-8"><style>{CSS}</style></head><body>'
 (out / "object.html").write_text(head + "".join(pages) + "</body></html>")
 for i, p in enumerate(pages, 1): (out / f"p{i}.html").write_text(head + p + "</body></html>")
