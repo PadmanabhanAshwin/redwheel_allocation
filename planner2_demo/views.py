@@ -1,10 +1,10 @@
 """The two layouts the pages share.
 
     template(k, V, V0, title)    one scenario, as its deck slide: what it changes from the scenario it is built on, the
-                                 four measures and their change, its settings, builds by line and month, the build plan
-    differences(V, V0, key)      one plan against another: what was changed, the four measures and their change, weeks
-                                 of supply against target for the lines that moved, the build plan table of differences
-                                 (each cell shaded by the size of its change)"""
+                                 four measures and their change, its settings, builds by line and month, the supply
+                                 map, the build plan
+    differences(V, V0, key)      one plan against another: what was changed, the four measures and their change, the
+                                 two supply maps one above the other, the build plan table (changed cells shaded)"""
 from __future__ import annotations
 
 import html
@@ -45,6 +45,7 @@ def template(k: str, V: dict, V0: dict | None = None, title: str = ""):
     scorecard(rd.kpis(V, V0))
     strip(rd.assumptions(V), "rw-set")
     st.plotly_chart(charts.plan_figure(V, V0), key=f"plan_{k}", config={"displayModeBar": False})
+    st.plotly_chart(charts.supply_map_figure(V, against=V0), key=f"map_{k}", config={"displayModeBar": False})
     st.markdown("**Build plan**")
     pivot.render(rd.pivot_data(V))
     with st.container(horizontal=True):
@@ -57,7 +58,7 @@ def template(k: str, V: dict, V0: dict | None = None, title: str = ""):
 
 
 def differences(V, V0, key: str):
-    """One plan against another: what was changed, the four measures, supply against target, the build plan table."""
+    """One plan against another: what was changed, the four measures, the two supply maps, the build plan table."""
     k0 = V0["case"].key
     lines = change_lines(V, V0)
     scorecard(rd.kpis(V, V0))
@@ -65,8 +66,6 @@ def differences(V, V0, key: str):
         st.success(f"Same build plan as {k0}." if lines else f"Same settings and build plan as {k0}.",
                    icon=":material/check_circle:")
         return
-    fig = charts.supply_figure(V, V0)
-    if fig is not None:
-        st.plotly_chart(fig, key=f"supply_{key}", config={"displayModeBar": False})
+    st.plotly_chart(charts.supply_map_figure(V, V0), key=f"map_{key}", config={"displayModeBar": False})
     st.markdown("**Build plan**")
     pivot.render(rd.pivot_compare(V, V0), height=640)

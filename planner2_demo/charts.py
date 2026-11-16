@@ -1,20 +1,19 @@
-"""The two charts: one plan by month, and two plans against the target by week.
+"""The two charts: the build plan by month, and the supply map by week.
 
     plan_figure    bikes built stacked by bike, forecast, capacity, open orders at month end; per line its build time
                    and the date it holds target from, marked as a dotted line; the months a change applies shaded
                    (the deck's chart)
-    supply_figure  two plans: weeks of supply against target for each line that moved (bike by bike when a plan
-                   re-mixes a line), the gap shaded, customers waiting below zero, the dates each is at target from"""
+    supply_map_figure   every bike, week by week: customers waiting, below target, at target; one plan, or two one
+                        above the other on one time axis, the second the reference"""
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from planner2_demo.reading import LINE_WORDS, MONTH, MONTHS, change_weeks, fdate, monthly_stack, plan_reading, \
-    supply_rows
-from ui import LINES, MUTED as MUTED_INK, SIZE_RANK, SKU, WEEKS, cell, style
+from planner2_demo.reading import LINE_WORDS, MONTH, MONTHS, change_weeks, fdate, map_end, minus, monthly_stack, \
+    plan_reading, supply_map
+from ui import LINES, SIZE_RANK, SKU, WEEKS, cell, style
 
 X = [p.to_timestamp() for p in MONTHS]
 TICKS = [m.strftime("%b")[0] + (f"<br>{m.year}" if i == 0 or m.month == 1 else "") for i, m in enumerate(X)]
@@ -98,75 +97,90 @@ def plan_figure(V, V0=None) -> go.Figure:
     return fig
 
 
-# ---------------- two plans: weeks of supply against target ----------------
-
-REF_LINE, SCEN_LINE, WAITING = "#8a909c", "#2a78d6", "#fbeaea"
-BEHIND, AHEAD = "rgba(185,28,28,0.20)", "rgba(21,128,61,0.22)"
 
 
-def supply_figure(V, V0):
-    """One panel per line that moved (bike by bike where a plan re-mixes a line's bikes): weeks of supply of both
-    plans against the target, the gap shaded (red where V is behind V0, green where ahead), customers waiting below
-    zero, and the date each plan is at target from. None when nothing moved by half a week."""
-    rows, end = supply_rows(V, V0)
-    if not rows:
-        return None
-    k, k0 = V["case"].key, V0["case"].key
-    n = len(rows)
-    cols = {1: 1, 2: 2, 3: 3, 4: 2}.get(n, 3)
-    nr = -(-n // cols)
-    panel, gap, top, bottom = 200, 64, 78, 8
-    inner = nr * panel + (nr - 1) * gap
-    fig = make_subplots(rows=nr, cols=cols, subplot_titles=[r["title"] for r in rows], shared_yaxes="all",
-                        horizontal_spacing=0.05, vertical_spacing=gap / inner if nr > 1 else 0.1)
+# ---------------- the supply map: every bike, every week, against its target ----------------
+
+MAP_SCALE = [[0.0, "#8f1d1d"], [0.33, "#f3c9c9"], [0.3334, "#8d939e"], [0.66, "#e6e8ec"],
+             [0.6667, "#bfe1c7"], [1.0, "#7fb88f"]]
+STATES = (("customers waiting", "#c25a5a"), ("below target", "#b4b9c2"), ("at target", "#a9d5b4"))
+STATE_AT = ("customers waiting", "below target", "at target")
+ROW_PX, GAP_PX, TOP_PX, BOTTOM_PX = 16, 50, 66, 28
+
+
+def _map_rows(rows) -> list:
+    """The map's rows, top to bottom: each line's name, then its bikes. [(label, row or None)]"""
+    out = []
+    for ln in LINES:
+        out.append((f"<b>{LINE_WORDS[ln]}</b>", None))
+        out += [(r["label"], r) for r in rows if r["line"] == ln]
+    return out
+
+
+def _hover(r, x) -> list:
+    words = [STATE_AT[min(int(z), 2)] for z in r["z"]]
+    return [f"{r['label']} · week of {fdate(d)} · {s} · weeks of supply {w:.1f}, target {t:g}"
+            for d, s, w, t in zip(x, words, r["wos"], r["target"])]
+
+
+def supply_map_figure(V, V0=None, against=None) -> go.Figure:
+    """The supply map: every bike, under its line, week by week: customers waiting (red, darker the deeper), below
+    target (grey, darker the further), at target (green, darker the further above); each bike's at-target date on
+    the right. With V0: V's map above V0's on one time axis, V's dates with their shift against V0. The weeks a
+    change of V's applies (one that V0, or `against`, does not have) are outlined on V's map."""
+    plans = [V] + ([V0] if V0 is not None else [])
+    against = V0 if V0 is not None else against
+    end = map_end(*plans)
     x = [WEEKS[t] for t in range(1, end + 1)]
-    lo = min(min(r["a"][:end].min(), r["b"][:end].min()) for r in rows)
-    tmax = max(r["target"][:end].max() for r in rows)
-    hi = min(max(max(r["a"][:end].max(), r["b"][:end].max()) for r in rows), tmax + 6)
-    shown = set()
-    rank = {k: 1, k0: 2, "target": 3, f"{k} behind {k0}": 4, f"{k} ahead of {k0}": 5}
-
-    def legend(name):
-        first = name not in shown
-        shown.add(name)
-        return dict(name=name, legendgroup=name, showlegend=first, legendrank=rank[name])
-
-    for i, r in enumerate(rows):
-        at = dict(row=i // cols + 1, col=i % cols + 1)
-        a, b, t = r["a"][:end], r["b"][:end], r["target"][:end]
-        fig.add_hrect(y0=lo - 5, y1=0, fillcolor=WAITING, line_width=0, layer="below", exclude_empty_subplots=False,
-                      **at)
-        for edge, colour, name in ((np.minimum(a, b), BEHIND, f"{k} behind {k0}"),
-                                   (np.maximum(a, b), AHEAD, f"{k} ahead of {k0}")):
-            if np.abs(edge - a).max() < 1e-9:
-                continue
-            fig.add_scatter(x=x, y=a, mode="lines", line=dict(width=0), showlegend=False, hoverinfo="skip", **at)
-            fig.add_scatter(x=x, y=edge, mode="lines", line=dict(width=0), fill="tonexty", fillcolor=colour,
-                            hoverinfo="skip", **legend(name), **at)
-        fig.add_scatter(x=x, y=t, mode="lines", line=dict(color=CAPACITY_LINE, width=1, dash="dash"), line_shape="hv",
-                        hovertemplate="target %{y:.1f} wk<extra></extra>", **legend("target"), **at)
-        fig.add_scatter(x=x, y=a, mode="lines", line=dict(color=REF_LINE, width=1.6, dash="dot"),
-                        hovertemplate=f"{k0} %{{y:.1f}} wk<extra></extra>", **legend(k0), **at)
-        fig.add_scatter(x=x, y=b, mode="lines", line=dict(color=SCEN_LINE, width=2.2),
-                        hovertemplate=f"{k} %{{y:.1f}} wk<extra></extra>", **legend(k), **at)
-        h0, h = r["held"]
-        early = h is not None and h0 is not None and h < h0          # the labels point away from each other
-        for w, colour, pos, same in ((h0, REF_LINE, "bottom right" if early else "bottom left", h0 == h),
-                                     (h, SCEN_LINE, "bottom left" if early else "bottom right", False)):
-            if w is None or w > end or same:
-                continue
-            fig.add_scatter(x=[WEEKS[w]], y=[t[w - 1]], mode="markers+text", marker=dict(size=8, color=colour),
-                            text=[fdate(WEEKS[w])], textposition=pos, cliponaxis=False, showlegend=False,
-                            textfont=dict(size=10, color=MUTED_INK if colour == REF_LINE else CAPACITY_LINE),
-                            hovertemplate=f"at target from {fdate(WEEKS[w])}<extra></extra>", **at)
-    fig.add_scatter(x=[None], y=[None], mode="markers", marker=dict(symbol="square", size=11, color=WAITING),
-                    name="below 0: customers waiting", legendrank=1000, row=1, col=1)
-    style(fig, inner + top + bottom)
-    fig.update_layout(margin=dict(l=8, r=8, t=top, b=bottom), hovermode="closest",
-                      legend=dict(orientation="h", x=0, y=1 + 46 / inner, yanchor="bottom"))
-    fig.update_yaxes(range=[lo - 1, hi + 2.5], zeroline=False)
-    fig.update_yaxes(title_text="weeks of supply", col=1)
-    fig.update_xaxes(range=[x[0] - pd.Timedelta(days=3), x[-1] + pd.Timedelta(days=3)], tickformat="%b %Y",
-                     tickfont=dict(size=10))
+    maps = [supply_map(P, end) for P in plans]
+    n, nrows = len(plans), len(_map_rows(maps[0]))
+    inner = n * nrows * ROW_PX + (n - 1) * GAP_PX
+    titles = [f"<b>{P['case'].key}</b> · {P['case'].name.split(' · ', 1)[-1]}" for P in plans] if n > 1 else None
+    top = TOP_PX if n > 1 else 40                         # one map: the page names the plan
+    fig = make_subplots(rows=n, cols=1, shared_xaxes=True, vertical_spacing=GAP_PX / inner if n > 1 else 0.1,
+                        subplot_titles=titles)
+    half = pd.Timedelta(days=3.5)
+    for i, rows in enumerate(maps):
+        mr = _map_rows(rows)
+        labels = [lab for lab, _ in mr]
+        z = [r["z"] if r else [None] * end for _, r in mr]
+        text = [_hover(r, x) if r else [""] * end for _, r in mr]
+        fig.add_heatmap(z=z, x=x, y=labels, text=text, hovertemplate="%{text}<extra></extra>", hoverongaps=False,
+                        colorscale=MAP_SCALE, zmin=0, zmax=3, showscale=False, xgap=0, ygap=1, row=i + 1, col=1)
+        fig.update_yaxes(categoryorder="array", categoryarray=labels, autorange="reversed", tickfont=dict(size=11),
+                         showgrid=False, ticks="", row=i + 1, col=1)
+        if i == 0 and against is not None:
+            for ln in LINES:
+                idx = [j for j, (_, r) in enumerate(mr) if r and r["line"] == ln]
+                for a, b in change_weeks(V, against, ln):
+                    if a <= end:
+                        fig.add_shape(type="rect", x0=WEEKS[a] - half, x1=WEEKS[min(b, end)] + half,
+                                      y0=idx[0] - 0.5, y1=idx[-1] + 0.5, line=dict(color=CAPACITY_LINE, width=1.4,
+                                      dash="dot"), fillcolor="rgba(0,0,0,0)", row=1, col=1)
+    for name, colour in STATES:
+        fig.add_scatter(x=[None], y=[None], mode="markers", name=name, marker=dict(symbol="square", size=11,
+                        color=colour), row=1, col=1)
+    if any(s.type == "rect" for s in fig.layout.shapes):
+        fig.add_scatter(x=[None], y=[None], mode="markers", name="weeks changed", row=1, col=1,
+                        marker=dict(symbol="square-open", size=11, color=CAPACITY_LINE))
+    style(fig, inner + top + BOTTOM_PX)
+    fig.update_layout(margin=dict(l=8, r=128, t=top, b=BOTTOM_PX), hovermode="closest",
+                      legend=dict(orientation="h", x=0, y=1 + (34 if n > 1 else 8) / inner, yanchor="bottom"))
+    fig.update_xaxes(tickformat="%b %Y", tickfont=dict(size=10), showgrid=False)
     fig.update_annotations(font=dict(size=13))
+    held0 = {r["sku"]: r["held"] for r in maps[1]} if n > 1 else {}
+    for i, rows in enumerate(maps):
+        for r in rows:
+            h = r["held"]
+            text = fdate(WEEKS[h]) if h else "not held"
+            if i == 0 and n > 1:
+                h0 = held0[r["sku"]]
+                if h and h0 and h != h0:
+                    colour = "#b42318" if h > h0 else "#1e7b3a"
+                    text += f"  <span style='color:{colour}'><b>{minus(f'{h - h0:+d} wk')}</b></span>"
+                elif (h is None) != (h0 is None):
+                    text += "  <span style='color:#b42318'><b>changed</b></span>"
+            fig.add_annotation(x=1, xref="paper", xanchor="left", xshift=8, y=r["label"],
+                               yref="y" if i == 0 else f"y{i + 1}", text=text, showarrow=False,
+                               font=dict(size=10, color=CAPACITY_LINE))
     return fig

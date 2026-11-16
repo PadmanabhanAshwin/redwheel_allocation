@@ -159,40 +159,57 @@ def test_supply_reads_a_bike_at_its_worst_stock_site():
                                                                        if k[0] == s], 1:H].all().to_numpy()), s
 
 
-def test_the_comparison_chart_draws_what_moved(views):
-    def rows(k, k0="R+"):
-        r, end = rd.supply_rows(views[k], views[k0])
-        return {x["title"]: tuple(str(W[h].date()) if h else None for h in x["held"]) for x in r}, end
-    assert rows("R+", "R")[0] == {"Road carbon": ("2027-08-16", "2027-08-30"), "MTB carbon": ("2027-09-20", "2027-10-04")}
-    assert rows("R+C26")[0] == {"Road base": ("2026-11-16", "2026-11-16"), "Road carbon": ("2027-08-30", "2027-09-27"),
-                                "MTB base": ("2027-03-08", "2027-04-19"), "MTB carbon": ("2027-10-04", "2027-10-25")}
-    assert rows("R+E4")[0] == {"MTB carbon": ("2027-10-04", "2027-10-11")}
-    assert rows("R+P1")[0] == {"MTB carbon · RW-9304 S": ("2027-10-04", "2027-05-31"),     # the bikes move apart
-                               "MTB carbon · RW-4418 M": ("2027-10-04", "2027-09-13"),
-                               "MTB carbon · RW-6416 L": ("2027-10-04", "2027-10-04")}
-    assert rows("R+E5") == ({}, 70) and charts.supply_figure(views["R+E5"], views["R+"]) is None   # under a week
-    c26 = {x["title"]: x for x in rd.supply_rows(views["R+C26"], views["R+"])[0]}["MTB carbon"]
-    assert W[int(np.nonzero(c26["b"] < 0)[0].max()) + 1] == date("2027-02-01")             # customers wait into February
-    assert W[int(np.nonzero(c26["a"] < 0)[0].max()) + 1] == date("2027-01-04")
+@pytest.mark.parametrize("key", KEYS)
+def test_the_supply_map_is_the_runs_own(views, key):
+    """Every bike in line order; a cell is red (below 1) exactly when a customer waits, green (2 and up) exactly when
+    the bike is at target, grey otherwise; the date on the right is the bike's own at-target date."""
+    V = views[key]
+    rows = rd.supply_map(V, H)
+    assert [r["sku"] for r in rows] == [s for ln in ui.LINES for s in ui.ORDER if s in ui.SKUS_BY_LINE[ln]]
+    dates = rd.bike_dates(V)
+    for r in rows:
+        s = r["sku"]
+        waiting = (V["open_orders"].loc[s, 1:H] > 0.5).to_numpy()
+        at = V["at_target"].loc[s, 1:H].to_numpy(bool)
+        assert np.array_equal(r["z"] < 1, waiting) and np.array_equal(r["z"] >= 2, at), s
+        assert ((r["z"] >= 0) & (r["z"] < 3)).all()
+        assert (W[r["held"]] if r["held"] else None) == dates[s][1], s
+    assert rd.map_end(V) == 70                                                            # every bike held by Oct 2027
 
 
-def test_the_comparison_figure_is_its_rows(views):
-    for k, k0 in (("R+C26", "R+"), ("R+P1", "R+"), ("R+", "R")):
-        V, V0 = views[k], views[k0]
-        rows, end = rd.supply_rows(V, V0)
-        fig = charts.supply_figure(V, V0)
-        assert [a.text for a in fig.layout.annotations][:len(rows)] == [r["title"] for r in rows]
-        lines = [t for t in fig.data if t.mode == "lines" and t.line.width == 2.2]
-        refs = [t for t in fig.data if t.mode == "lines" and t.line.dash == "dot"]
-        assert len(lines) == len(refs) == len(rows)
-        for r, b, a in zip(rows, lines, refs):
-            assert np.allclose(b.y, r["b"][:end]) and np.allclose(a.y, r["a"][:end])
-        assert len([s_ for s_ in fig.layout.shapes if s_.type == "rect"]) == len(rows)         # customers waiting, below 0
-        names = {t.name for t in fig.data if t.showlegend is not False}
-        assert {k, k0, "target", "below 0: customers waiting"} <= names
-    p1 = charts.supply_figure(views["R+P1"], views["R+"])
-    assert {t.name for t in p1.data if t.name} >= {"R+P1 ahead of R+", "R+P1 behind R+"}      # RW-9304 ahead, the rest behind
-    assert "31 May 2027" in [x for t in p1.data if t.text for x in t.text]
+def test_the_map_runs_to_the_last_date_held(views):
+    e = tu.make("line_capacity", line="mtb-carbon", first=pd.Timestamp("2026-09-07").date(), weeks=121, percent=40,
+                why="")
+    never = ui.view_of(sc.run_case(tu.apply(CASES["R+"], [e], key="T", name="T", summary="", parent="R+")))
+    assert rd.map_end(never) == H and rd.map_end(views["R+"], never) == H                   # a bike never at target
+
+
+def test_two_maps_one_above_the_other(views):
+    def fig(k, k0="R+"):
+        return charts.supply_map_figure(views[k], views[k0])
+
+    def right(f):                                                     # the dates and shifts written on the right
+        return [a.text for a in f.layout.annotations if a.xref == "paper" and a.xanchor == "left"]
+    f = fig("R+C26")
+    maps = [t for t in f.data if t.type == "heatmap"]
+    end = rd.map_end(views["R+C26"], views["R+"])
+    for t, k in zip(maps, ("R+C26", "R+")):                                               # the scenario above
+        z = [row for row in t.z if row[0] is not None]
+        assert np.allclose(np.array(z, float), np.array([r["z"] for r in rd.supply_map(views[k], end)]))
+    assert [a.text for a in f.layout.annotations][:2] == ["<b>R+C26</b> · closed for Christmas 2026",
+                                                         "<b>R+</b> · build time by model"]
+    shifts = right(f)[:10]
+    assert sum("+3 wk" in x for x in shifts) == 3 and sum("+4 wk" in x for x in shifts) == 3      # MTB and road carbon
+    assert sum("+6 wk" in x for x in shifts) == 1 and right(f)[10:] == [x.split("  ")[0] for x in right(f)[10:]]
+    assert len([s_ for s_ in f.layout.shapes if s_.type == "rect"]) == 4                  # the closure on every line
+    assert "weeks changed" in {t.name for t in f.data}
+    p1 = right(fig("R+P1"))
+    assert "31 May 2027  <span style='color:#1e7b3a'><b>−18 wk</b></span>" in p1
+    assert len([s_ for s_ in fig("R+E4").layout.shapes if s_.type == "rect"]) == 1          # MTB carbon, one week
+    assert not [s_ for s_ in fig("R+E5").layout.shapes if s_.type == "rect"]               # lots: no period
+    one = charts.supply_map_figure(views["R+C26"], against=views["R+"])
+    assert len([t for t in one.data if t.type == "heatmap"]) == 1 and len(one.layout.shapes) == 4
+    assert len([t for t in charts.supply_map_figure(views["A"]).data if t.type == "heatmap"]) == 1
 
 
 # ---------------- the scenario template ----------------
@@ -240,6 +257,9 @@ def test_scenarios_reads_each_against_the_one_it_is_built_on(folder):
     assert ok(at).subheader[0].value == f"{short('R+C26')}, against R+"
     assert md(at, "<b>Line capacity</b> · All lines&#x27; capacity · weeks of 21 Dec to 28 Dec 2026: 1,770 bikes → "
                   "<b>0 bikes</b>") and md(at, "<em class='bad'>+3 wk</em>")
+    one = json.loads(at.get("plotly_chart")[1].proto.spec)                                   # its own supply map
+    assert len([t for t in one["data"] if t.get("type") == "heatmap"]) == 1
+    assert len(one["layout"]["shapes"]) == 4 and not one["layout"].get("annotations", [{}])[0].get("text", "").startswith("<b>")
     at.radio(key="scen_pick").set_value("A").run()
     assert ok(at).subheader[0].value == "A · base case" and not any("rw-change" in m.value for m in at.markdown)
     assert not any("<em" in m.value for m in at.markdown)                                   # no changes to show
@@ -314,7 +334,8 @@ def test_the_tables_fit_their_rows(views):
     page = pivot.html(rd.pivot_compare(views["R+E4"], views["R+"]), 640)
     assert "MAX_H = 640" in page and "__MAX_H__" not in page and "Or click" not in page
     assert '"no change"' in page and "no change by ${by}" in page and "same as" not in page   # no key to look up
-    assert "function heat(" in page and "if (mode === \"diff\") scales(R, vis);" in page          # cells shaded by size
+    assert "function heat(" in page and "if (D.modes) scales(D.modes.diff, vis);" in page        # cells shaded by size
+    assert 'let mode = D.modes ? "b" : null;' in page and "let changedOnly = false;" in page   # the plan, every row
 
 
 def test_the_weekly_csv_is_the_whole_plan(views):
@@ -366,7 +387,7 @@ def test_the_four_views_render(folder):
     pick = at.radio(key="scen_pick")
     assert ok(at).title[0].value == "Scenarios" and pick.options == KEYS and pick.value == "R+"   # every scenario
     assert at.subheader[0].value == f"{short('R+')}, against R" and md(at, "carbon lines 2 wk, base lines 1 wk")
-    assert len(at.get("iframe")) == 1 and len(at.get("plotly_chart")) == 1
+    assert len(at.get("iframe")) == 1 and len(at.get("plotly_chart")) == 2
     at.radio(key="scen_pick").set_value("R").run()
     assert ok(at) and md(at, "<span>Build lead time</span>1 wk") and at.subheader[0].value == f"{short('R')}, against A"
     at.switch_page("compare.py").run()
@@ -487,13 +508,17 @@ def test_the_pages_draw_the_pairs_own_data(folder, views):
     def array(v):                                                 # plotly's binary arrays: {"dtype", "bdata"}
         return np.frombuffer(base64.b64decode(v["bdata"]), v["dtype"]) if isinstance(v, dict) else np.array(v)
     spec = json.loads(at.get("plotly_chart")[0].proto.spec)
-    rows, end = rd.supply_rows(views["R+C26"], views["R+"])
-    drawn = [array(t["y"]) for t in spec["data"] if t.get("mode") == "lines" and t.get("line", {}).get("width") == 2.2]
-    assert len(drawn) == 4 and all(np.allclose(y, r["b"][:end]) for y, r in zip(drawn, rows))
+    end = rd.map_end(views["R+C26"], views["R+"])
+    maps = [t for t in spec["data"] if t.get("type") == "heatmap"]
+    assert len(maps) == 2
+    for t, k in zip(maps, ("R+C26", "R+")):
+        z = [row for row in t["z"] if row[0] is not None]
+        assert np.allclose(np.array(z, float), np.array([r["z"] for r in rd.supply_map(views[k], end)]))
     at.selectbox(key="_k").set_value("R+E5").run()
-    assert ok(at) and not at.get("plotly_chart") and len(at.get("iframe")) == 1                # under a week: table only
+    assert ok(at) and len(at.get("plotly_chart")) == 1 and len(at.get("iframe")) == 1         # the same picture, always
     at.switch_page("scenarios.py").run()
     for k in state.FEATURED:
         at.radio(key="scen_pick").set_value(k).run()
         frames = [f.proto.srcdoc for f in ok(at).get("iframe")]
         assert len(frames) == 1 and json.dumps(rd.pivot_data(views[k])) in frames[0], k
+        assert len(at.get("plotly_chart")) == 2                                               # the plan, the map

@@ -71,10 +71,12 @@ const on = {}; D.metrics.forEach(m => on[m.key] = m.on);
 const sub = {line: true, all: true, period: false};
 const shut = {};
 let shown = new Set();
-let mode = D.modes ? "diff" : null;                  // compare: 'diff' (B − A), 'a' or 'b'
-let changedOnly = !!D.modes;
+let mode = D.modes ? "b" : null;                     // compare: 'b' (the scenario), 'a' (the reference), 'diff' (b − a)
+let changedOnly = false;                             // every row shows; changed cells are shaded
 const keyOf = r => `${r.line}|${r.sku}|${r.metric}`;
 const changed = {}; if (D.modes) D.modes.diff.forEach(r => changed[keyOf(r)] = r.changed);
+const byMode = {}; if (D.modes) for (const m of ["a", "b", "diff"]) {
+  byMode[m] = {}; D.modes[m].forEach(r => byMode[m][keyOf(r)] = r.values); }
 const rowsNow = () => D.modes ? D.modes[mode] : D.rows;
 let visNow = [];                                     // the columns on screen: 'changed' is judged on them
 const moves = r => visNow.some(({c}) => { const v = D.modes.diff.find(x => keyOf(x) === keyOf(r)).values[c.id];
@@ -88,9 +90,9 @@ function leaves(c) {
   if (sub.period) out.push({c: c, sub: true});
   return out;
 }
-function fmt(m, v, of) {
+function fmt(m, v, of, as) {
   if (v === null || v === undefined) return ["", ""];
-  if (mode === "diff") {
+  if ((as || mode) === "diff") {
     if (Math.abs(v) < (m.kind === "ratio" ? 0.05 : m.kind === "share" ? 0.005 : 0.5)) return ["", ""];
     const t = m.kind === "share" ? Math.round(v * 100) + " pts" : m.kind === "ratio" ? v.toFixed(1)
             : Math.round(v).toLocaleString("en-US");
@@ -113,7 +115,7 @@ function scales(rows, vis) {
   }));
 }
 function heat(key, v) {                              // a difference's cell shaded by its size: blue more, red fewer
-  if (mode !== "diff" || v === null || v === undefined || !scale[key]) return "";
+  if (!D.modes || v === null || v === undefined || !scale[key]) return "";
   const a = Math.min(1, Math.abs(v) / scale[key]);
   return ` style="background: rgba(${v > 0 ? "42,120,214" : "180,35,24"},${(0.06 + 0.34 * a).toFixed(3)})"`;
 }
@@ -138,9 +140,9 @@ function bar() {
   if (D.modes) {
     const g0 = document.createElement("div"); g0.className = "grp";
     g0.innerHTML = "<span class='k'>Values</span>";
-    const names = {diff: D.labels.diff, a: D.labels.a, b: D.labels.b};
+    const names = {b: D.labels.b, a: D.labels.a, diff: D.labels.diff};
     g0.appendChild(seg(Object.values(names), names[mode], v => { mode = Object.keys(names).find(k => names[k] === v); draw(); }));
-    if (mode === "diff") g0.appendChild(chip("Changed only", changedOnly, () => { changedOnly = !changedOnly; draw(); }));
+    g0.appendChild(chip("Changed only", changedOnly, () => { changedOnly = !changedOnly; draw(); }));
     el.append(g0, g3, g1, g2);
     return;
   }
@@ -190,14 +192,25 @@ function head(vis) {
   });
   return "<thead>" + r.map(x => "<tr>" + x.join("") + "</tr>").join("") + "</thead>";
 }
-function row(cls, c1, c2, c3, m, vals, of, bad, vis, fresh) {
+function plain(m, v) {                               // a value as the table writes it, for the hover
+  if (v === null || v === undefined) return "–";
+  if (m.kind === "share") return Math.round(v * 100) + "%";
+  if (m.kind === "ratio") return v.toFixed(1).replace("-", "−");
+  return Math.round(v).toLocaleString("en-US").replace("-", "−");
+}
+function row(cls, c1, c2, c3, m, vals, of, bad, vis, fresh, rk) {
   let h = `<tr class='${cls}'><td class='c1'>${c1}</td><td class='c2'>${c2}</td><td class='c3'>${c3}</td>`;
   const key = m.key + "|" + (/\ball\b/.test(cls) ? "all" : /\bsub\b/.test(cls) ? "line" : "bike");
+  const diff = D.modes && rk ? byMode.diff[rk] : null;
   vis.forEach(({c, sub: isSub}) => {
     const [txt, k] = fmt(m, vals[c.id], of);
     const b = bad && bad[c.id] ? " below" : "";
-    const style = txt && shaded({c, sub: isSub}) ? heat(key, vals[c.id]) : "";
-    h += `<td class='${k}${b}${isSub ? " psub" : ""}${fresh.has(c.id + isSub) ? " new" : ""}'${style}>${txt}</td>`;
+    const d = diff ? diff[c.id] : null;
+    const moved = d !== null && d !== undefined && fmt({kind: m.kind}, d, null, "diff")[0] !== "";
+    const style = txt && shaded({c, sub: isSub}) && (mode === "diff" || moved) ? heat(key, mode === "diff" ? vals[c.id] : d) : "";
+    const tip = moved ? ` title="${D.labels.a}: ${plain(m, byMode.a[rk][c.id])} · ${D.labels.b}: ${plain(m, byMode.b[rk][c.id])} · `
+                        + `change ${fmt({kind: m.kind}, d, null, "diff")[0]}"` : "";
+    h += `<td class='${k}${b}${isSub ? " psub" : ""}${fresh.has(c.id + isSub) ? " new" : ""}'${style}${tip}>${txt}</td>`;
   });
   return h + "</tr>";
 }
@@ -210,7 +223,7 @@ function draw() {
   shown = now;
   const ms = D.metrics.filter(m => on[m.key] && !(mode === "diff" && m.kind === "flag"));
   const R = rowsNow();
-  if (mode === "diff") scales(R, vis);
+  if (D.modes) scales(D.modes.diff, vis);
   let body = "";
   D.lines.forEach(ln => {
     body += `<tr class='line${shut[ln.id] ? " closed" : ""}' data-line='${ln.id}'><td class='c1' colspan='3'>${ln.label}</td>`
@@ -230,21 +243,21 @@ function draw() {
         ms.filter(m => m.scope === "bike").map(m => [m, R.find(x => x.sku === s && x.metric === m.key)])
           .filter(([m, r]) => keep(r)).forEach(([m, r], i) => {
           body += row((i === 0 ? "first" : "") + (m.em ? " em" : ""), "", i === 0 ? `${s}<small>${b.size}</small>` : "", m.label,
-                      m, r.values, null, mode === "diff" ? null : r.bad, vis, fresh);
+                      m, r.values, null, D.modes ? null : r.bad, vis, fresh, keyOf(r));
         });
       });
     }
     if (sub.line || shut[ln.id]) {
       ms.filter(m => m.kind !== "ratio").map(m => [m, R.find(x => x.line === ln.id && !x.sku && x.metric === m.key)])
         .filter(([m, r]) => keep(r)).forEach(([m, r], i) => {
-        body += row("sub" + (i === 0 ? " first" : "") + (m.em ? " em" : ""), "", i === 0 ? "Line total" : "", m.label, m, r.values, r.of, null, vis, fresh);
+        body += row("sub" + (i === 0 ? " first" : "") + (m.em ? " em" : ""), "", i === 0 ? "Line total" : "", m.label, m, r.values, r.of, null, vis, fresh, keyOf(r));
       });
     }
   });
   if (sub.all) {
     ms.filter(m => m.kind !== "ratio").map(m => [m, R.find(x => x.line === null && x.metric === m.key)])
       .filter(([m, r]) => keep(r)).forEach(([m, r], i) => {
-      body += row("all" + (i === 0 ? " first" : ""), i === 0 ? "All lines" : "", "", m.label, m, r.values, r.of, null, vis, fresh);
+      body += row("all" + (i === 0 ? " first" : ""), i === 0 ? "All lines" : "", "", m.label, m, r.values, r.of, null, vis, fresh, keyOf(r));
     });
   }
   const t = document.getElementById("t");

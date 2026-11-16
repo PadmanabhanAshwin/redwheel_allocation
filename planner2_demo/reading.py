@@ -2,7 +2,8 @@
 nothing else. No Streamlit here: every function is tested against the engine's own numbers (tests/test_planner2.py).
 
     one plan        plan_reading, kpis, bike_dates, assumptions, monthly_stack, pivot_data
-    two plans       kpis (with the change), change_lines, same_plan, supply_rows, pivot_compare, change_weeks"""
+    two plans       kpis (with the change), change_lines, same_plan, pivot_compare, change_weeks
+    the supply map  supply, supply_map, map_end (one plan; two are drawn one above the other)"""
 from __future__ import annotations
 
 import json
@@ -426,9 +427,7 @@ def change_weeks(V, V0, ln) -> list:
             and not (c.from_t == 1 and c.to_t >= H) and ln in _selected_lines(c, obj)]
 
 
-# ---------------- supply against target: the comparison chart ----------------
-
-MATERIAL = 1.0           # weeks of supply: a line or bike that moved by less than a week in every week is not drawn
+# ---------------- the supply map: every bike, every week, against its target ----------------
 
 
 def phase_runs(V, skus: list) -> list:
@@ -467,24 +466,27 @@ def supply(V, skus: list) -> tuple:
     return t + np.min(gap, axis=0), t
 
 
-def supply_rows(V, V0) -> tuple:
-    """The comparison chart's panels and its last week: ([{title, skus, a, b, target, held}], end). A line whose
-    weeks of supply moved by MATERIAL in some week is drawn once, at its worst bike; a line whose bikes moved apart
-    (in the same week one ahead of the reference and another behind) is drawn bike by bike, the bikes that moved.
-    held: the week each plan is at target from (V0's, V's), or None."""
-    rows, last = [], 1
+WAIT_DEPTH, ABOVE_DEPTH = 20.0, 6.0     # weeks: the darkest red (customers waiting) and darkest green (above target)
+
+
+def map_end(*views) -> int:
+    """The supply map's last week: Jan 2028 (week 70), or 9 weeks after the last bike in these plans is at target;
+    the end of the plan when one never is."""
+    held = [held_from_runs(phase_runs(V, [s])) for V in views for s in ORDER]
+    return H if None in held else int(min(H, max(70, max(held) + 9)))
+
+
+def supply_map(V, end: int) -> list:
+    """The supply map of one plan, weeks 1..end: one row per bike, in line order, with the value the map colours each
+    week by (0–1 customers waiting, darker the deeper; 1–2 below target, darker the further; 2–3 at target, darker the
+    further above), its weeks of supply and target, and the week it is at target from (or None)."""
+    rows = []
     for ln in LINES:
-        skus = [s for s in ORDER if s in SKUS_BY_LINE[ln]]
-        d = np.array([supply(V, [s])[0] - supply(V0, [s])[0] for s in skus])
-        apart = bool(((d > MATERIAL).any(axis=0) & (d < -MATERIAL).any(axis=0)).any())
-        groups = [[s] for s, x in zip(skus, d) if np.abs(x).max() >= MATERIAL] if apart else [skus]
-        for g in groups:
-            (a, _), (b, t) = supply(V0, g), supply(V, g)
-            moved = np.abs(b - a) >= MATERIAL
-            if not moved.any():
-                continue
-            held = (held_from_runs(phase_runs(V0, g)), held_from_runs(phase_runs(V, g)))
-            title = f"{LINE_WORDS[ln]} · {g[0]} {SKU.at[g[0], 'size']}" if apart else LINE_WORDS[ln]
-            rows.append({"title": title, "skus": g, "a": a, "b": b, "target": t, "held": held})
-            last = max([last, int(np.nonzero(moved)[0].max()) + 1] + [h for h in held if h])
-    return rows, int(min(H, max(70, last + 13)))
+        for s in [s for s in ORDER if s in SKUS_BY_LINE[ln]]:
+            w, t = (x[:end] for x in supply(V, [s]))
+            z = np.where(w < 0, 0.99 * (1 - np.minimum(-w / WAIT_DEPTH, 1)),
+                         np.where(w < t - 1e-6, 1 + 0.99 * np.clip(w / t, 0, 1),
+                                  2 + 0.99 * np.minimum((w - t) / ABOVE_DEPTH, 1)))
+            rows.append({"line": ln, "sku": s, "label": f"{s} {SKU.at[s, 'size']}", "z": z, "wos": w, "target": t,
+                         "held": held_from_runs(phase_runs(V, [s]))})
+    return rows
