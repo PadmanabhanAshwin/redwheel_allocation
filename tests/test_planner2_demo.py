@@ -251,10 +251,31 @@ def test_each_scenario_reads_as_its_slide(views):
     assert shaded("R+", "R") == ([], 0, False) and shaded("A", None) == ([], 0, False)
 
 
+def test_the_summary_states_scenario_objective_constraints_outputs(views):
+    assert rd.objective_words(CASES["R+"]) == (
+        "Minimise each line's largest shortfall against target, in weeks of supply, summed over the weeks; then the "
+        "total shortfall; then stock above target.")                                       # docs/SOLVER.md §2
+    assert rd.objective_words(CASES["R+P1"]) == (
+        "Minimise the shortfall in steps, each held at its best before the next: orders past their date, then all "
+        "open orders, then the target (MTB carbon one bike at a time, RW-9304, then RW-4418, then RW-6416).")
+    assert rd.constraint_words(views["R+"]) == ["line capacity, week by week",
+                                                "build lead time carbon lines 2 wk, base lines 1 wk",
+                                                "stock at Reno and the PDC pooled against every order",
+                                                "the plan decides builds"]
+    assert rd.constraint_words(views["A"])[1] == "build lead time 0 wk"
+    assert rd.targets_words(views["R+"]) == "Road 8 wk, 10 from 3 Jan 2028 · MTB base 12 wk · MTB carbon 15 wk"
+    assert set(state.DESCRIPTIONS) == set(CASES) and all(len(d) <= 38 for d in state.DESCRIPTIONS.values())
+
+
 def test_scenarios_reads_each_against_the_one_it_is_built_on(folder):
     at = start("scenarios.py")
     at.radio(key="scen_pick").set_value("R+C26").run()
     assert ok(at).subheader[0].value == f"{short('R+C26')}, against R+"
+    rows = next(m.value for m in at.markdown if "rw-sum" in m.value)
+    assert [x.split("<")[0] for x in rows.split("<div class='k'>")[1:]] == ["Scenario", "Objective", "Constraints",
+                                                                           "Outputs"]
+    assert "Scenario R+, with every line closed for the two weeks starting 21 and 28 Dec 2026, while the lines are " \
+           "still clearing the open orders." in rows
     assert md(at, "<b>Line capacity</b> · All lines&#x27; capacity · weeks of 21 Dec to 28 Dec 2026: 1,770 bikes → "
                   "<b>0 bikes</b>") and md(at, "<em class='bad'>+3 wk</em>")
     one = json.loads(at.get("plotly_chart")[1].proto.spec)                                   # its own supply map
@@ -265,7 +286,7 @@ def test_scenarios_reads_each_against_the_one_it_is_built_on(folder):
     assert not any("<em" in m.value for m in at.markdown)                                   # no changes to show
     store.save(sc.Case("F", "Scenario F · a run on R+", CASES["R+"].priors, "", "R+", sc.CASE_RP_C26.changes), folder)
     at = start("scenarios.py")
-    assert at.radio(key="scen_pick").options == KEYS + ["F"]                                # the user's runs after
+    assert at.radio(key="scen_pick").options == [f"**{k}**" for k in KEYS + ["F"]]           # the user's runs after
     at.radio(key="scen_pick").set_value("F").run()
     assert ok(at).subheader[0].value == "F · a run on R+, against R+" and md(at, "+3 wk")
 
@@ -385,11 +406,12 @@ def test_the_four_views_render(folder):
     assert not at.table and not at.dataframe and not at.caption                          # no tables, no notes
     at.switch_page("scenarios.py").run()
     pick = at.radio(key="scen_pick")
-    assert ok(at).title[0].value == "Scenarios" and pick.options == KEYS and pick.value == "R+"   # every scenario
+    assert ok(at).title[0].value == "Scenario Summary" and pick.value == "R+"
+    assert pick.options == [f"**{k}**" for k in KEYS]                                       # every scenario
     assert at.subheader[0].value == f"{short('R+')}, against R" and md(at, "carbon lines 2 wk, base lines 1 wk")
     assert len(at.get("iframe")) == 1 and len(at.get("plotly_chart")) == 2
     at.radio(key="scen_pick").set_value("R").run()
-    assert ok(at) and md(at, "<span>Build lead time</span>1 wk") and at.subheader[0].value == f"{short('R')}, against A"
+    assert ok(at) and md(at, "build lead time 1 wk") and at.subheader[0].value == f"{short('R')}, against A"
     at.switch_page("compare.py").run()
     assert ok(at).title[0].value == "Compare" and at.selectbox(key="_k").value == "R+"
     assert at.selectbox(key="_k0").value == "R" and md(at, "+2 wk") and md(at, "<b>Build time</b>")

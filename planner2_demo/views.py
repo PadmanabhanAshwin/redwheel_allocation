@@ -1,8 +1,7 @@
 """The two layouts the pages share.
 
-    template(k, V, V0, title)    one scenario, as its deck slide: what it changes from the scenario it is built on, the
-                                 four measures and their change, its settings, builds by line and month, the supply
-                                 map, the build plan
+    template(k, V, V0, title)    one scenario: its summary (the scenario, objective, constraints, outputs), builds by
+                                 line and month, the supply map, the build plan
     differences(V, V0, key)      one plan against another: what was changed, the four measures and their change, the
                                  two supply maps one above the other, the build plan table (changed cells shaded)"""
 from __future__ import annotations
@@ -22,28 +21,50 @@ def strip(items: list, cls: str = ""):
 
 def scorecard(items: list):
     """[(label, value, change, tone)] as one row: each value, and its change against the reference."""
-    cells = "".join(f"<div><span>{html.escape(a)}</span>{html.escape(b)}"
-                    + (f" <em class='{t}'>{html.escape(d)}</em>" if d else "") + "</div>" for a, b, d, t in items)
-    st.markdown(f"<div class='rw-strip rw-score'>{cells}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='rw-strip rw-score'>{_score_html(items)}</div>", unsafe_allow_html=True)
+
+
+def _change_html(change, what, a, b) -> str:
+    return (f"<b>{html.escape(change)}</b>" + (f" · {html.escape(what)}" if what else "")
+            + f": {html.escape(a)} → <b>{html.escape(b)}</b>")
 
 
 def change_lines(V, V0) -> list:
     """What V sets differently from V0, one line each; returns them."""
     lines = rd.change_lines(V0["case"], V["case"], V)
-    for change, what, a, b in lines:
-        st.markdown(f"<div class='rw-change'><b>{html.escape(change)}</b>"
-                    + (f" · {html.escape(what)}" if what else "")
-                    + f": {html.escape(a)} → <b>{html.escape(b)}</b></div>", unsafe_allow_html=True)
+    for line in lines:
+        st.markdown(f"<div class='rw-change'>{_change_html(*line)}</div>", unsafe_allow_html=True)
     return lines
 
 
-def template(k: str, V: dict, V0: dict | None = None, title: str = ""):
-    """One scenario. V0: the scenario it is built on (its changes and the measures' change are read against it)."""
-    st.subheader(title + (f", against {V0['case'].key}" if V0 is not None else ""))
+def _score_html(items: list) -> str:
+    return "".join(f"<div><span>{html.escape(a)}</span>{html.escape(b)}"
+                   + (f" <em class='{t}'>{html.escape(d)}</em>" if d else "") + "</div>" for a, b, d, t in items)
+
+
+def summary(V, V0, description: str):
+    """Four labelled rows: the scenario (what it is, and what it changes from the one it is built on), the objective
+    and its targets, the constraints, and the outputs with their change."""
+    scen = html.escape(description)
     if V0 is not None:
-        change_lines(V, V0)
-    scorecard(rd.kpis(V, V0))
-    strip(rd.assumptions(V), "rw-set")
+        lines = rd.change_lines(V0["case"], V["case"], V)
+        scen += "".join(f"<div class='sub'>{_change_html(*x)}</div>" for x in lines) or \
+            f"<div class='sub'>Same settings as {html.escape(V0['case'].key)}</div>"
+    a = dict(rd.assumptions(V))
+    rows = [("Scenario", scen),
+            ("Objective", html.escape(rd.objective_words(V["case"]))
+             + f"<div class='sub'>Targets, weeks of supply: {html.escape(a['Targets (weeks of supply)'])}</div>"),
+            ("Constraints", " · ".join(html.escape(c[0].upper() + c[1:] if i == 0 else c)
+                                       for i, c in enumerate(rd.constraint_words(V)))),
+            ("Outputs", f"<div class='rw-strip rw-score'>{_score_html(rd.kpis(V, V0))}</div>")]
+    cells = "".join(f"<div class='k'>{k}</div><div class='v'>{v}</div>" for k, v in rows)
+    st.markdown(f"<div class='rw-sum'>{cells}</div>", unsafe_allow_html=True)
+
+
+def template(k: str, V: dict, V0: dict | None = None, title: str = "", description: str = ""):
+    """One scenario. V0: the scenario it is built on (its changes and the outputs' change are read against it)."""
+    st.subheader(title + (f", against {V0['case'].key}" if V0 is not None else ""))
+    summary(V, V0, description)
     st.plotly_chart(charts.plan_figure(V, V0), key=f"plan_{k}", config={"displayModeBar": False})
     st.plotly_chart(charts.supply_map_figure(V, against=V0), key=f"map_{k}", config={"displayModeBar": False})
     st.markdown("**Build plan**")

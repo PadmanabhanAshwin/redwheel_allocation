@@ -1,6 +1,6 @@
 """Redwheel build planner.   Run:  streamlit run planner2_demo/app.py --client.toolbarMode=viewer
 
-Model (the object) · Scenarios (R+ and R in one template) · Compare (any two, one read against the other) · Try a
+Model (the object) · Scenario Summary (every scenario in one template) · Compare (any two, one read against the other) · Try a
 change (change a tunable, run, read it against its start; the live set on R+)."""
 import sys
 from pathlib import Path
@@ -19,6 +19,6 @@ from planner2_demo import theme   # noqa: E402
 theme.inject()
 state.init()
 st.navigation([st.Page("model.py", title="Model", icon=":material/hub:", default=True),
-               st.Page("scenarios.py", title="Scenarios", icon=":material/bar_chart:"),
+               st.Page("scenarios.py", title="Scenario Summary", icon=":material/bar_chart:"),
                st.Page("compare.py", title="Compare", icon=":material/compare_arrows:"),
                st.Page("whatif.py", title="Try a change", icon=":material/tune:")], position="top").run()

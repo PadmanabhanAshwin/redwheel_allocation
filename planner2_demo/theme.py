@@ -1,5 +1,5 @@
-"""Style rules on top of the Streamlit theme: page width, headings, the headline cards, the assumptions strip, the
-change lines."""
+"""Style rules on top of the Streamlit theme: page width, headings, the measures and settings strips, the change lines,
+the scenario summary and its picker."""
 import streamlit as st
 
 CSS = """
@@ -16,19 +16,17 @@ div[data-testid="stMetric"] {padding: 0.55rem 0.8rem;}
 .rw-strip em.good {background: #e4f4e8; color: #1e7b3a;}
 .rw-strip em.same, .rw-strip em.neutral {background: #f0f0ee; color: #6b6a66;}
 .rw-change .n {color: #6b6a66; font-size: 0.85rem;}
-.rw-strip.rw-set {font-size: 0.84rem; color: #4a4946; margin-top: -0.1rem;}
-.rw-strip.rw-set span {font-size: 0.7rem;}
-.st-key-scen_pick + div h3, .st-key-scen_pick ~ div h3 {padding-top: 0.1rem !important;}
 div[data-testid="stTabs"] button p {font-size: 0.98rem; font-weight: 500;}
-/* the scenario picker on Scenarios, drawn as tabs */
-.st-key-scen_pick div[role="radiogroup"] {gap: 0 1.8rem; border-bottom: 1px solid #e6e6e3; width: 100%;
-                                          margin-bottom: 0.2rem;}
-.st-key-scen_pick label[data-baseweb="radio"] {padding: 0.3rem 0 0.5rem 0; margin: 0 0 -1px 0; cursor: pointer;
-                                               border-bottom: 2px solid transparent;}
-.st-key-scen_pick label[data-baseweb="radio"] > div:first-child {display: none;}
-.st-key-scen_pick label[data-baseweb="radio"]:has(input:checked) {border-bottom-color: #2a78d6;}
-.st-key-scen_pick label[data-baseweb="radio"]:has(input:checked) p {color: #2a78d6;}
-.st-key-scen_pick label p {font-size: 0.98rem; font-weight: 500;}
+/* Scenario Summary: the summary rows, and the panel that picks the scenario */
+.rw-sum {display: grid; grid-template-columns: 6.6rem 1fr; gap: 0.6rem 1.2rem; align-items: baseline;
+         margin: 0.2rem 0 0.8rem 0; font-size: 0.93rem; line-height: 1.45;}
+.rw-sum > .k {color: #6b6a66; font-size: 0.72rem; letter-spacing: 0.07em; text-transform: uppercase;}
+.rw-sum .sub {color: #4a4946; font-size: 0.86rem; margin-top: 0.15rem;}
+.rw-sum .rw-strip {margin: 0;}
+.st-key-scen_pick div[role="radiogroup"] {gap: 0.15rem;}
+.st-key-scen_pick label[data-baseweb="radio"] {padding: 0.35rem 0.5rem; border-radius: 6px; margin: 0;}
+.st-key-scen_pick label[data-baseweb="radio"]:has(input:checked) {background: #edf3fb;}
+.st-key-scen_pick [data-testid="stCaptionContainer"] p {font-size: 0.82rem; line-height: 1.3;}
 </style>
 """
 

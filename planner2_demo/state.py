@@ -18,6 +18,29 @@ BUILT_IN = {c.key: c for c in (sc.CASE_A, *sc.R_CASES.values())}   # the deck's 
 FEATURED = ("R+", "R")             # Compare opens on R+ against R; a change starts from either
 EXAMPLES = ("R+C26", "R+E4", "R+E5", "R+P1")   # the live set on R+, listed on Try a change beside the user's runs
 BASE = "R+"
+DESCRIPTIONS = {                               # one line each, for the picker; from the final table (D28)
+    "A": "Ships the week it is built",
+    "R": "1 week line to stock, all lines",
+    "R+": "Carbon 2 weeks, base 1: the plan",
+    "R+C26": "All lines closed 21 + 28 Dec 2026",
+    "R+E4": "Fleet order: 300 RW-4418, 9 Nov 2026",
+    "R+E5": "RW-9304 built in lots of 50",
+    "R+P1": "MTB carbon in turn: RW-9304 first",
+}
+
+
+def describe(key: str) -> str:
+    """One short line on what a scenario is, for the picker: the built-in set's own, a run's name."""
+    if key in DESCRIPTIONS:
+        return DESCRIPTIONS[key]
+    n = st.session_state.cases[key].name
+    return n.split(" · ", 1)[1] if " · " in n else n
+
+
+def sentence(key: str) -> str:
+    """The scenario's own first sentence (its summary), for the Scenario row; a run's name when it has none."""
+    s_ = st.session_state.cases[key].summary.strip()
+    return (s_.split(". ")[0].rstrip(".") + ".") if s_ else describe(key)
 
 
 def _rooted(saved: dict) -> dict:

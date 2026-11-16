@@ -198,16 +198,47 @@ def priority_words(case) -> str:
     return " > ".join(floors) + ("; " + "; ".join(ranked) if ranked else "")
 
 
+STEP_WORDS = {"due": "orders past their date", "owed": "all open orders", "target": "the target"}
+
+
+def objective_words(case) -> str:
+    """The plan's objective in one sentence (docs/SOLVER.md §2, §2a)."""
+    if not case.walk:
+        return ("Minimise each line's largest shortfall against target, in weeks of supply, summed over the weeks; "
+                "then the total shortfall; then stock above target.")
+    steps, ranked = [], []
+    for s in case.walk.steps:
+        if STEP_WORDS[s.floor] not in steps:
+            steps.append(STEP_WORDS[s.floor])
+        if s.share == "ranked" and "line_id" in s.select:
+            lines_ = [s.select["line_id"]] if isinstance(s.select["line_id"], str) else s.select["line_id"]
+            ranked.append(f"{', '.join(LINE_WORDS.get(x, x) for x in lines_)} one bike at a time, "
+                          f"{', then '.join(s.order)}")
+    return ("Minimise the shortfall in steps, each held at its best before the next: " + ", then ".join(steps)
+            + (f" ({'; '.join(ranked)})" if ranked else "") + ".")
+
+
+def constraint_words(V) -> list:
+    """The plan's constraints, in short phrases: capacity, build time, where stock serves, what the plan decides."""
+    a, case = dict(assumptions(V)), V["case"]
+    out = ["line capacity, week by week", f"build lead time {a['Build lead time']}"]
+    if len(V["R"]["pools"]) == 1:
+        out.append("stock at Reno and the PDC pooled against every order")
+    else:
+        out.append(f"orders served {a['Sourcing']}; Reno to the PDC {a['Transfer lead time']}")
+    out.append("the plan decides builds" + (" and transfers" if "move" in case.decides else ""))
+    return out
+
+
 def targets_words(V) -> str:
-    """'Road 8 → 10 wk (3 Jan 2028) · MTB base 12 wk · MTB carbon 15 wk', from the plan's own targets."""
+    """'Road 8 wk, 10 from 3 Jan 2028 · MTB base 12 wk · MTB carbon 15 wk', from the plan's own targets."""
     R = V["R"]
     out = []
     for name, ln in (("Road", "road-base"), ("MTB base", "mtb-base"), ("MTB carbon", "mtb-carbon")):
         k = next(k for k in R["target_wos"].index if R["line"][k] == ln)
         tw = R["target_wos"].loc[k, 1:H]
         steps = [(int(t), float(v)) for t, v in tw.items() if t == 1 or v != tw[t - 1]]
-        out.append(f"{name} {' → '.join(f'{v:g}' for _, v in steps)} wk"
-                   + "".join(f" ({fdate(WEEKS[t])})" for t, _ in steps[1:]))
+        out.append(f"{name} {steps[0][1]:g} wk" + "".join(f", {v:g} from {fdate(WEEKS[t])}" for t, v in steps[1:]))
     return " · ".join(out)
 
 
