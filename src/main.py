@@ -178,7 +178,6 @@ held = pd.DataFrame({"A": sc.held_by_line(base).max(axis=1), "E1": sc.held_by_li
 print("bikes built: A", int(base["builds"].values.sum()), "| E1", int(event["builds"].values.sum()))
 held                                                   # the week each line holds its targets from
 
-
 # %% 4.2 a priority order: a scenario says what comes first when a line is short
 from redwheel import tunables as tu, walk as wk
 due = obj.due                                          # the facts: when the opening orders are due
@@ -195,4 +194,3 @@ print("checks:", int(sc.checks(p1)["pass"].sum()), "of", len(sc.checks(p1)),
 pd.DataFrame({"orders cleared, A": when(base["flows"]["open_orders"] < 0.5),
               "orders cleared, P1": when(p1["flows"]["open_orders"] < 0.5),
               "at target, A": when(base["at_target"]), "at target, P1": when(p1["at_target"])})
-
