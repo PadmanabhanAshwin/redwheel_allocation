@@ -117,8 +117,8 @@ def stage(x, w, head, sub, rows, red, dy=23):
     return g + "".join(txt(x + 22 + (16 if r.startswith("\t") else 0), RTOP + 52 + i * 24, r.lstrip("\t"), 17) for i, r in enumerate(red))
 def flow_arrow(x1, x2, y=(TOP1 + BOT1) / 2): return f'<path class="wire" marker-end="url(#a)" d="M{x1} {y} L{x2-3} {y}"/>'
 SC = json.load(open(next(f for f in (HERE.parent / "deck_numbers.json", HERE / "deck_numbers.json") if f.exists())))   # the solver session's end-to-end run
-A_SC = SC["A"]["scorecard"]; A_HELD = datetime.date.fromisoformat(A_SC["All targets held from"])
-N_SCEN = len([k for k in SC if not k.startswith("_") and "+" not in k])
+A_SC = SC["R+"]["scorecard"]; A_HELD = datetime.date.fromisoformat(A_SC["All targets held from"])
+N_SCEN = len([k for k in SC if not k.startswith("_")])
 s1 = (
     stage(110, 260, "Data", "inputs",
           ["Part master", "Locations, routes", "Inventory by location", "Open orders, due dates", "Demand forecast", "Capacity", "Lead times, targets"],
@@ -135,21 +135,21 @@ s1 = (
     + stage(880, 330, "Scenario", "edits to 𝒪, rules, objective",
             [f'{B_("Edits to 𝒪")}: opening levels, arrivals,', "\trun limits, delays θ", f'{B_("Rules")}: permitted routes; task kinds', "\tthe solver decides",
              f'{B_("Objective")}: stock targets; priority', "\torder as ordered steps",
-             "~Examples", "~\tline down 3 weeks: capacity = 0", "~\tweb orders from Columbus: route", "~\tRW-9304 first: priority order"],
-            [f"{N_SCEN} scenarios", "A: base", "B: web orders from Columbus", "E1–E5: events", "P1: priority order"])
+             "~Examples", "~\tbuild time 2 weeks: delay θ", "~\tclosed for Christmas: capacity = 0", "~\tRW-9304 first: priority order"],
+            [f"{N_SCEN} scenarios", "A, R, R+: build time none, 1 wk,", "\tby model; R+ is the plan", "On R+: Christmas closure, fleet", "\torder, lots of 50, priority order"])
     + flow_arrow(1210, 1250)
     + stage(1250, 290, "Solver", "method by problem structure",
             ["LP: build and transfer plans", "MIP: lot sizes, set-ups,", "\tminimum runs", "Heuristics: dispatch and", "\tallocation rules", "Sampling: safety stock", "\tunder uncertainty"],
             ["LP in HiGHS", "Variables: runs N ≥ 0", "Rows: one balance per", "\tresource and period", "Objective: priority order", "A: 13,068 variables, &lt; 0.2 s", "Lots: by rounding the LP"])
     + flow_arrow(1540, 1580)
     + stage(1580, 230, "Plan", "per scenario", ["Runs N per task and", "\tperiod: the build plan", "Levels X: stock, backlog", "Date each target is met", "Feasibility checks"],
-            [f'A: {A_SC["Bikes built"]:,} bikes', "all targets held from", f"{A_HELD.day} {A_HELD:%b %Y}"])
+            [f'R+: {A_SC["Bikes built"]:,} bikes', "all targets held from", f"{A_HELD.day} {A_HELD:%b %Y}"])
     # planning question
     + box(110, 822, 730, 176) + txt(130, 856, "Planning question", 21, INK, 700)
     + meq(130, 896, "q = (𝒪, σ, Ω),   answer = Ω(𝒪 | σ)", 30)
     + txt(130, 926, "𝒪 object · σ scope: resources, tasks, horizon · Ω operator: project, decide, intervene, diagnose, evaluate", 15, GREY)
-    + txt(130, 958, f'{B_("Example")}  E1: “MTB carbon line down 3 weeks from 1 Mar 2027”', 16)
-    + txt(130, 982, "𝒪: the network · σ: the line’s 3 SKUs, 121 weeks · Ω: intervene, decide, evaluate against A", 16)
+    + txt(130, 958, f'{B_("Example")}  R+C26: “every line closed for the weeks of 21 and 28 Dec 2026”', 16)
+    + txt(130, 982, "𝒪: the network · σ: all 4 lines, 121 weeks · Ω: intervene, decide, evaluate against R+", 16)
     # LLM interface
     + box(880, 822, 930, 176, stroke=AMB) + txt(900, 856, "LLM interface", 21, AMB, 700)
     + txt(900, 892, f'{B_("Input")}  natural-language request → typed edit forms → validated in code → proposal for approval', 17)
