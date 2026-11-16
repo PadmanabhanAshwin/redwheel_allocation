@@ -159,7 +159,7 @@ s1 = (
     + f'<path d="M1045 822 L1045 803" stroke="{AMB}" stroke-width="2.5" stroke-dasharray="5 4" marker-end="url(#g)"/>'
     + f'<path d="M1695 803 L1695 820" stroke="{AMB}" stroke-width="2.5" stroke-dasharray="5 4" marker-end="url(#g)"/>'
 )
-p1 = page(1, "Planning system", "", s1)
+p1 = page(1, "Planning system", "Five parts, one object. Every scenario is an edit to the object; the solver and the plan follow from it.", s1)
 
 # ================================================================ 2 · Redwheel as an RTN
 BREAK = [(NUM["resources"][0], "resources", [("40", "inventory", "10 SKUs × {Reno, Columbus, in transit, dealers}"), ("30", "order", "10 SKUs × {web, dealer, commercial}"), ("4", "capacity", "one per line")]),
