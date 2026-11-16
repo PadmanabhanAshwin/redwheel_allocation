@@ -478,7 +478,6 @@ def line_panel(x0, y0, w, h, ln, sc="R+", shade=None):
     gw = w / NM; Y = lambda q: y0 + h - q * h / top
     held = D_(DN[sc]["held_by_line"][ln])
     g = txt(x0, y0 - 16, f'{B_(LNAME[ln])}<tspan style="fill:{GREY};font-size:15px"> build time {bw(sc, ln)} · target held {fd(held)}' + '</tspan>', 19)
-    if ln == "mtb-base": g += txt(x0 + w, y0 + h + 40, "RW-9324 (M): 631 of the line’s 11,053 bikes", 13, GREY, 400, "end")
     if shade:
         js = [j for j, (m_, wk) in enumerate(ms) if any(shade[0] <= t <= shade[1] for t in wk)]
         g += f'<rect x="{x0 + gw * js[0]}" y="{y0}" width="{gw * len(js)}" height="{h}" fill="{tint(RED, .12)}"/>'
