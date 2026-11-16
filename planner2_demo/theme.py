@@ -16,10 +16,13 @@ div[data-testid="stMetric"] {padding: 0.55rem 0.8rem;}
 .rw-strip em.good {background: #e4f4e8; color: #1e7b3a;}
 .rw-strip em.same, .rw-strip em.neutral {background: #f0f0ee; color: #6b6a66;}
 .rw-change .n {color: #6b6a66; font-size: 0.85rem;}
+.rw-strip.rw-set {font-size: 0.84rem; color: #4a4946; margin-top: -0.1rem;}
+.rw-strip.rw-set span {font-size: 0.7rem;}
+.st-key-scen_pick + div h3, .st-key-scen_pick ~ div h3 {padding-top: 0.1rem !important;}
 div[data-testid="stTabs"] button p {font-size: 0.98rem; font-weight: 500;}
 /* the scenario picker on Scenarios, drawn as tabs */
 .st-key-scen_pick div[role="radiogroup"] {gap: 0 1.8rem; border-bottom: 1px solid #e6e6e3; width: 100%;
-                                          margin-bottom: 0.6rem;}
+                                          margin-bottom: 0.2rem;}
 .st-key-scen_pick label[data-baseweb="radio"] {padding: 0.3rem 0 0.5rem 0; margin: 0 0 -1px 0; cursor: pointer;
                                                border-bottom: 2px solid transparent;}
 .st-key-scen_pick label[data-baseweb="radio"] > div:first-child {display: none;}

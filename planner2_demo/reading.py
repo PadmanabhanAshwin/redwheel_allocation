@@ -220,8 +220,13 @@ def assumptions(V) -> list:
                              f" ← {' + '.join(SITE_WORDS[x] for x in p['stock'])}"
                              for p in sorted(pools.values(), key=lambda p: "WEB" not in p["customers"]))
     bw = case.build_weeks
-    build = _wk(next(iter(bw.values()))) if len(set(bw.values())) == 1 else \
-        ", ".join(f"{LINE_WORDS[ln]} {_wk(bw[ln])}" for ln in LINES)
+    carbon, base = ({bw[ln] for ln in LINES if kind in ln} for kind in ("carbon", "base"))
+    if len(set(bw.values())) == 1:
+        build = _wk(next(iter(bw.values())))
+    elif len(carbon) == 1 and len(base) == 1:
+        build = f"carbon lines {_wk(carbon.pop())}, base lines {_wk(base.pop())}"
+    else:
+        build = ", ".join(f"{LINE_WORDS[ln]} {_wk(bw[ln])}" for ln in LINES)
     return [("Sourcing", sourcing), ("Build lead time", build), ("Transfer lead time", _wk(case.transfer_weeks)),
             ("Decisions", "builds" + (", transfers" if "move" in case.decides else "")),
             ("Priority", priority_words(case)), ("Targets (weeks of supply)", targets_words(V))]

@@ -1,8 +1,8 @@
 """Session state for the planner: the scenarios, what each view has open, and cached plan runs.
 
-Built in and locked: the final set (docs/WORKING_NOTES.md D28). R+ is the build plan and R the case for it (featured on
-Scenarios); the live set changes R+ one mechanism at a time (listed on Try a change). Every other scenario is a run made
-on Try a change, saved to outputs/scenarios/; a saved run is loaded only when the scenario it starts from is."""
+Built in and locked: the final set (docs/WORKING_NOTES.md D28), in the deck's order: A, R, R+ (the build plan), then the
+live set, which changes R+ one mechanism at a time (listed on Try a change). Every other scenario is a run made on Try a
+change, saved to outputs/scenarios/; a saved run is loaded only when the scenario it starts from is."""
 from __future__ import annotations
 
 import io
@@ -14,8 +14,8 @@ import streamlit as st
 from redwheel import changes as ch, priors, scenarios as sc, store, walk as wk
 import ui
 
-BUILT_IN = dict(sc.R_CASES)
-FEATURED = ("R+", "R")                         # Scenarios and Compare; the choice is the solver session's (D28)
+BUILT_IN = {c.key: c for c in (sc.CASE_A, *sc.R_CASES.values())}   # the deck's order (D28)
+FEATURED = ("R+", "R")             # Compare opens on R+ against R; a change starts from either
 EXAMPLES = ("R+C26", "R+E4", "R+E5", "R+P1")   # the live set on R+, listed on Try a change beside the user's runs
 BASE = "R+"
 

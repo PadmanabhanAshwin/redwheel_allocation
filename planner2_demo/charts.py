@@ -1,14 +1,15 @@
 """The scenario chart: one panel per line, by month.
 
     plan_figure    bikes built stacked by bike, forecast, capacity, open orders at month end; per line its build time
-                   and the date it holds target from, marked as a dotted line (the deck's chart)"""
+                   and the date it holds target from, marked as a dotted line; the months a change applies shaded
+                   (the deck's chart)"""
 from __future__ import annotations
 
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from planner2_demo.reading import LINE_WORDS, MONTHS, fdate, monthly_stack, plan_reading
+from planner2_demo.reading import LINE_WORDS, MONTH, MONTHS, change_weeks, fdate, monthly_stack, plan_reading
 from ui import LINES, SIZE_RANK, SKU, cell, style
 
 X = [p.to_timestamp() for p in MONTHS]
@@ -18,6 +19,8 @@ BAR_MS = 24 * 24 * 3600 * 1000
 # categorical hue for the forecast, ink for capacity, red diamonds (shape as well as colour) for open orders.
 SIZE = {"S": "#86b6ef", "M": "#2a78d6", "L": "#104281"}
 FORECAST_LINE, CAPACITY_LINE, OPEN_MARK = "#eb6834", "#0b0b0b", "#e34948"
+CHANGED = "#f6e3e3"                  # the deck's shading of the months a change applies (red at 12%)
+HALF_MONTH = pd.Timedelta(days=15)
 
 
 def _grid(titles) -> go.Figure:
@@ -41,11 +44,12 @@ def months_shown(V) -> int:
     return min(len(MONTHS), max(MONTHS.index(pd.Period("2027-12", "M")) + 1, last + 3))
 
 
-def plan_figure(V) -> go.Figure:
+def plan_figure(V, V0=None) -> go.Figure:
     """Per line, by month: bikes built stacked by bike (coloured by size), forecast demand, capacity (dashed), and
-    open orders at month end (markers, where any are waiting)."""
+    open orders at month end (markers, where any are waiting). V0: the scenario V is built on; the months in which a
+    dated change of V's (one V0 does not have) applies are shaded."""
     fig = _grid(_titles(V))
-    shown, held = set(), plan_reading(V)["lines"]
+    shown, held, shaded = set(), plan_reading(V)["lines"], False
     n = months_shown(V)
     x = X[:n]
     for i, ln in enumerate(LINES):
@@ -68,11 +72,20 @@ def plan_figure(V) -> go.Figure:
                         showlegend=first, marker=dict(symbol="diamond", size=9, color=OPEN_MARK,
                                                       line=dict(color="white", width=1.5)),
                         hovertemplate="open orders %{y:,.0f}<extra></extra>", **at)
+        months = sorted({MONTHS.index(MONTH[t]) for a, b in (change_weeks(V, V0, ln) if V0 else [])
+                         for t in range(a, b + 1)})
+        for m in [m for m in months if m < n]:
+            fig.add_vrect(x0=X[m] - HALF_MONTH, x1=X[m] + HALF_MONTH, fillcolor=CHANGED, opacity=1, layer="below",
+                          line_width=0, **at)
+            shaded = True
         h = held[ln]["held_from"]
         if h is not None and h < X[n - 1] + pd.offsets.MonthEnd(1):   # the week it holds target from
             fig.add_vline(x=h, line=dict(color=CAPACITY_LINE, width=1.2, dash="dot"), **at)
     fig.add_scatter(x=[None], y=[None], mode="lines", name="target held", legendrank=13,
                     line=dict(color=CAPACITY_LINE, width=1.2, dash="dot"), **cell(0))
+    if shaded:
+        fig.add_scatter(x=[None], y=[None], mode="markers", name="weeks changed", legendrank=14, hoverinfo="skip",
+                        marker=dict(symbol="square", size=12, color=CHANGED), **cell(0))
     fig.update_yaxes(rangemode="tozero")
     fig.update_xaxes(tickvals=x, ticktext=TICKS[:n], tickfont=dict(size=10), tickangle=0)
     fig.update_layout(barmode="stack")
