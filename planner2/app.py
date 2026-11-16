@@ -1,8 +1,7 @@
-"""Redwheel build planner — scenario-first UI.   Run:  streamlit run planner2/app.py
+"""Redwheel build planner.   Run:  streamlit run planner2/app.py --client.toolbarMode=viewer
 
-Pages: Home (what this is, where things stand, the scenarios) · Scenario (one plan in depth) · What-if (make or
-change a scenario, in words or directly) · Compare (scenarios side by side) · Reference (data and model pages from
-the first UI, unchanged). The engine and its settings are shared with the other UIs (app/, planner/)."""
+Model (the object) · Scenarios (each featured scenario in one template) · Compare (side by side; the differences
+between two) · Try a change (change a tunable, run, read it against its start)."""
 import sys
 from pathlib import Path
 
@@ -19,13 +18,7 @@ from planner2 import theme   # noqa: E402
 
 theme.inject()
 state.init()
-st.navigation({
-    "": [st.Page("home.py", title="Home", icon=":material/home:", default=True),
-                st.Page("scenario.py", title="Scenario", icon=":material/insights:"),
-                st.Page("whatif.py", title="What-if", icon=":material/tune:"),
-                st.Page("compare.py", title="Compare", icon=":material/compare_arrows:")],
-    "Reference": [st.Page("ref_context.py", title="Supply–Demand Context", icon=":material/show_chart:"),
-                  st.Page("ref_demand.py", title="Demand Sources", icon=":material/map:"),
-                  st.Page("ref_model.py", title="Object Encoding", icon=":material/hub:"),
-                  st.Page("ref_validation.py", title="Model Validation", icon=":material/verified:")],
-}, position="top").run()
+st.navigation([st.Page("model.py", title="Model", icon=":material/hub:", default=True),
+               st.Page("scenarios.py", title="Scenarios", icon=":material/insights:"),
+               st.Page("compare.py", title="Compare", icon=":material/compare_arrows:"),
+               st.Page("whatif.py", title="Try a change", icon=":material/tune:")], position="top").run()

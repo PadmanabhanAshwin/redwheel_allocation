@@ -16,8 +16,7 @@ pip install -e .
 ```bash
 python src/main.py             # run the pipeline (or cell by cell in VS Code)
 pytest                         # everything offline; live LLM tests: RUN_LLM_TESTS=1 pytest tests/test_llm_live.py
-streamlit run planner3/app.py --theme.primaryColor=#1F2933 --client.toolbarMode=viewer   # the compact planner (deck's look): Plan view
-streamlit run planner2/app.py  # the planner (scenario-first UI) — start here
+streamlit run planner2/app.py --client.toolbarMode=viewer   # the planner: Model · Scenarios · Compare · Try a change
 streamlit run app/app.py       # first UI: report pages per scenario
 streamlit run planner/app.py   # second UI: scenario workbench (kept for reference)
 ```
@@ -34,9 +33,8 @@ without them.
 | `src/main.py` | The pipeline as `# %%` cells, calling the modules below |
 | `src/redwheel/` | `config` · `utils` (helpers) · `read` (one reader per file) · `aux_fns` (Redwheel logic) · `rtn` (the generic object) · `changes` (edits to the object's numbers, generic) · `walk` (the priority order: what comes first when a line is short, generic) · `engine` (the LP) · `scenarios` · `priors` (the settings table and its validator) · `tunables` (every tunable, in one list, with its form) · `llm` (requests → checked edits; grounded answers) · `store` (saved scenarios) |
 | `tests/` | One file per layer: the generic object by hand, master data, Redwheel as the object, the solver, scenarios and settings, the LLM loop, the UIs |
-| `planner3/` | The compact planner (the deck's look). Plan view: the date every target is held and what sets it, headline numbers, a planning grid (line capacity used, SKU weeks of supply, month by month), Build Plans, Summarized Plan, Plan by SKU. `reading` (what the view says; no Streamlit; tested against the engine) · `charts` (the grid) · `theme`. Same engine, scenarios and saved files as `planner2/` |
-| `planner2/` | The planner: `home` · `scenario` · `whatif` · `compare` pages; `components` (settings in plain words, the settings editor), `charts`, `facts` (what the LLM may answer from), `state` (scenarios, drafts, cached runs) |
-| `app/` | First UI: `app.py` (navigation) · `ui.py` (shared data and styling, also used by `planner2`) · `views/` (one file per page; four are reused as `planner2` reference pages) |
+| `planner2/` | The planner: `model` (the object for one bike; where each number comes from) · `scenarios` (each featured scenario in one template: assumptions; build plan by line, bars stacked by bike with forecast, capacity and open orders; the build plan table, a pivot of line → bike → measure by fiscal year → quarter → month; CSV) · `compare` (featured scenarios side by side; for any two: the headline measures and their change, what was changed, for the lines that moved, both plans' builds by quarter or month and the cumulative builds ahead or behind, the build plan table of differences) · `whatif` (a tunable's form or a sentence through `llm.propose_edits`; run; read against its start). `state.FEATURED` lists the featured scenarios. `reading` (all figures; no Streamlit; tested against the engine), `views` (the template and the differences layout), `pivot` (the build plan table, drawn in the browser), `charts`, `facts` (Ask), `state` |
+| `app/` | First UI: `app.py` (navigation) · `ui.py` (shared data and styling, also used by `planner2`) · `views/` (one file per page) |
 | `planner/` | Second UI (scenario workbench), kept unchanged |
 | `docs/` | Assumptions and data-quality log |
 | `outputs/` | Generated tables (git-ignored) |
@@ -437,15 +435,7 @@ where it must and nowhere else (every other line's builds identical to A, week b
 plan check passes. Each also gives exactly the same plan as the same event made by editing the
 input files instead (every number compared).
 
-**In the planner (`planner2/`)** both are built in beside A and B, and anyone can make their own on the
-What-if page (the **Events** card: a line down or slowed, demand up or down, a stock count
-correction; each checked against the object before it is added, and with the settings, previewed
-and saved as part of the scenario). A scenario's page has an **Events** tab (the numbers changed, the
-effect on each line against the scenario it is compared with, and two charts for a line, the event
-weeks shaded), an events badge, and its events in the Settings tab's differences. Compare lists
-events among the settings that differ, and the facts that Ask answers from list them with the numbers
-each changed. The older UIs (`app/`, `planner/`) run and chart a saved scenario that has events, from
-its own object (capacity, stock), but do not list them.
+**In the planner (`planner2/`)** E1–E5 are listed on **Try a change**, each read against A (what changed and the numbers it touched; the measures; both plans' builds by quarter or month; cumulative builds ahead or behind; the build plan table of differences). A change made there from a tunable's form or a sentence is read the same way.
 
 | Scenario | Change | Numbers changed | What the plan does |
 |---|---|---|---|
@@ -560,8 +550,7 @@ What the module gives, for any UI or an LLM:
 | `differences(a, b)` | what b sets differently from a: settings and changes, as Tunable · What · From · To · Why |
 | `change_rows(changes, report)` | a run's changes with the numbers each changed (from `R["change_report"]`) |
 
-The planner (`planner2/`) still uses its own words for events (`planner2/events.py`); they cover
-the first four data tunables. E3 joins its built-in list when its words come from this module.
+The planner (`planner2/`) takes its words, forms and differences from this module.
 
 ### A request in words → tunables, filled by Claude
 
