@@ -477,7 +477,8 @@ def line_panel(x0, y0, w, h, ln, sc="R+", shade=None):
     top = max(max(cap), max(opn), max(fore)) * 1.08
     gw = w / NM; Y = lambda q: y0 + h - q * h / top
     held = D_(DN[sc]["held_by_line"][ln])
-    g = txt(x0, y0 - 16, f'{B_(LNAME[ln])}<tspan style="fill:{GREY};font-size:15px"> build time {bw(sc, ln)} · target held {fd(held)}' + ("\u2003·\u2003RW-9324 (M) is 631 of 11,053 bikes" if ln == "mtb-base" else "") + '</tspan>', 19)
+    g = txt(x0, y0 - 16, f'{B_(LNAME[ln])}<tspan style="fill:{GREY};font-size:15px"> build time {bw(sc, ln)} · target held {fd(held)}' + '</tspan>', 19)
+    if ln == "mtb-base": g += txt(x0 + w, y0 + h + 40, "RW-9324 (M): 631 of the line’s 11,053 bikes", 13, GREY, 400, "end")
     if shade:
         js = [j for j, (m_, wk) in enumerate(ms) if any(shade[0] <= t <= shade[1] for t in wk)]
         g += f'<rect x="{x0 + gw * js[0]}" y="{y0}" width="{gw * len(js)}" height="{h}" fill="{tint(RED, .12)}"/>'
@@ -542,14 +543,14 @@ def pair_page(n, sc, title, sub, line, left_notes, right_notes, shade=None, shad
     assert DN[sc]["checks"]["passed"] == DN[sc]["checks"]["of"]
     g = vs_strip(sc, "R+")
     for k, x0, notes in [("R+", 110, left_notes), (sc, 980, right_notes)]:
-        g += txt(x0, 384, k, 22, INK, 700) + txt(x0 + 24 + 15 * len(k), 384, LNAME[line] + ", bikes per month", 16, GREY)
-        g += line_panel(x0, 430, 760, 220, line, k, shade if k == sc else None)
+        g += txt(x0, 396, k, 22, INK, 700) + txt(x0 + 24 + 15 * len(k), 396, LNAME[line] + ", bikes per month", 16, GREY)
+        g += line_panel(x0, 440, 760, 220, line, k, shade if k == sc else None)
         b, y = bullets(x0, 740, notes, 72, 17, 24, 5); g += b
     g += vrule(940, 370, 940)
-    lg = "".join(f'<rect x="{110 + 90 * i}" y="344" width="14" height="14" fill="{SIZE_C[c]}"/>' + txt(130 + 90 * i, 356, lab, 14, INK) for i, (c, lab) in enumerate([("S", "size S"), ("M", "size M"), ("L", "size L")]))
-    lg += poly([(390, 351), (420, 351)], FORE_C, 2.2) + txt(428, 356, "forecast", 14, INK) + poly([(510, 351), (540, 351)], CAP_C, 1.6, True) + txt(548, 356, "capacity", 14, INK)
-    lg += f'<path d="M636 344 l7 7 l-7 7 l-7 -7 z" fill="{OPEN_C}"/>' + txt(650, 356, "open orders, month end", 14, INK) + f'<line x1="822" y1="344" x2="822" y2="358" stroke="{INK}" stroke-width="1.4" stroke-dasharray="3 4"/>' + txt(832, 356, "target held", 14, INK)
-    if shade: lg += f'<rect x="930" y="344" width="14" height="14" fill="{tint(RED, .12)}"/>' + txt(950, 356, shade_label, 14, INK)
+    lg = "".join(f'<rect x="{110 + 90 * i}" y="350" width="14" height="14" fill="{SIZE_C[c]}"/>' + txt(130 + 90 * i, 362, lab, 14, INK) for i, (c, lab) in enumerate([("S", "size S"), ("M", "size M"), ("L", "size L")]))
+    lg += poly([(390, 357), (420, 357)], FORE_C, 2.2) + txt(428, 362, "forecast", 14, INK) + poly([(510, 357), (540, 357)], CAP_C, 1.6, True) + txt(548, 362, "capacity", 14, INK)
+    lg += f'<path d="M636 350 l7 7 l-7 7 l-7 -7 z" fill="{OPEN_C}"/>' + txt(650, 362, "open orders, month end", 14, INK) + f'<line x1="822" y1="350" x2="822" y2="364" stroke="{INK}" stroke-width="1.4" stroke-dasharray="3 4"/>' + txt(832, 362, "target held", 14, INK)
+    if shade: lg += f'<rect x="930" y="350" width="14" height="14" fill="{tint(RED, .12)}"/>' + txt(950, 362, shade_label, 14, INK)
     g += lg
     return page(n, title, sub, g + (rule(968) + txt(110, 1012, close, 20) if close else ""))
 p9 = pair_page(9, "R+C26", "Closed for Christmas 2026", "Supply lost while customers wait. Every line closed for the weeks of 21 and 28 Dec 2026.", "mtb-carbon",
