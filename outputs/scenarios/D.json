@@ -1,0 +1,124 @@
+{
+ "key": "D",
+ "name": "Scenario D \u00b7 MTB carbon line capacity -70%",
+ "summary": "MTB carbon line capacity \u00b7 weeks of 1 Mar to 15 Mar 2027 \u00b7 -70%.",
+ "parent": "A",
+ "priors": [
+  {
+   "prior": "route",
+   "applies_to": "RENO>WEB",
+   "value": "yes",
+   "from_date": ""
+  },
+  {
+   "prior": "route",
+   "applies_to": "RENO>DEALERS",
+   "value": "yes",
+   "from_date": ""
+  },
+  {
+   "prior": "route",
+   "applies_to": "RENO>COMMERCIAL",
+   "value": "yes",
+   "from_date": ""
+  },
+  {
+   "prior": "route",
+   "applies_to": "CMH>WEB",
+   "value": "yes",
+   "from_date": ""
+  },
+  {
+   "prior": "route",
+   "applies_to": "CMH>DEALERS",
+   "value": "yes",
+   "from_date": ""
+  },
+  {
+   "prior": "route",
+   "applies_to": "CMH>COMMERCIAL",
+   "value": "yes",
+   "from_date": ""
+  },
+  {
+   "prior": "build_weeks",
+   "applies_to": "road-base",
+   "value": "0",
+   "from_date": ""
+  },
+  {
+   "prior": "build_weeks",
+   "applies_to": "road-carbon",
+   "value": "0",
+   "from_date": ""
+  },
+  {
+   "prior": "build_weeks",
+   "applies_to": "mtb-base",
+   "value": "0",
+   "from_date": ""
+  },
+  {
+   "prior": "build_weeks",
+   "applies_to": "mtb-carbon",
+   "value": "0",
+   "from_date": ""
+  },
+  {
+   "prior": "transfer_weeks",
+   "applies_to": "RENO>CMH",
+   "value": "1",
+   "from_date": ""
+  },
+  {
+   "prior": "target_weeks",
+   "applies_to": "road",
+   "value": "8",
+   "from_date": "2026-09-07"
+  },
+  {
+   "prior": "target_weeks",
+   "applies_to": "road",
+   "value": "10",
+   "from_date": "2028-01-03"
+  },
+  {
+   "prior": "target_weeks",
+   "applies_to": "mtb_base",
+   "value": "12",
+   "from_date": "2026-09-07"
+  },
+  {
+   "prior": "target_weeks",
+   "applies_to": "mtb_carbon",
+   "value": "15",
+   "from_date": "2026-09-07"
+  },
+  {
+   "prior": "decides",
+   "applies_to": "make",
+   "value": "yes",
+   "from_date": ""
+  },
+  {
+   "prior": "decides",
+   "applies_to": "move",
+   "value": "no",
+   "from_date": ""
+  }
+ ],
+ "changes": [
+  {
+   "field": "arrival",
+   "select": {
+    "kind": "capacity",
+    "location": "RENO/mtb-carbon"
+   },
+   "op": "scale",
+   "value": 0.3,
+   "from_t": 26,
+   "to_t": 28,
+   "reason": "sda"
+  }
+ ]
+}

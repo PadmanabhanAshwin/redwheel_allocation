@@ -1,0 +1,111 @@
+{
+ "key": "C",
+ "name": "Scenario C \u00b7 copy of B",
+ "summary": "A copy of scenario B; change its priors to explore.",
+ "parent": "B",
+ "priors": [
+  {
+   "prior": "route",
+   "applies_to": "RENO>WEB",
+   "value": "no",
+   "from_date": ""
+  },
+  {
+   "prior": "route",
+   "applies_to": "RENO>DEALERS",
+   "value": "yes",
+   "from_date": ""
+  },
+  {
+   "prior": "route",
+   "applies_to": "RENO>COMMERCIAL",
+   "value": "yes",
+   "from_date": ""
+  },
+  {
+   "prior": "route",
+   "applies_to": "CMH>WEB",
+   "value": "yes",
+   "from_date": ""
+  },
+  {
+   "prior": "route",
+   "applies_to": "CMH>DEALERS",
+   "value": "no",
+   "from_date": ""
+  },
+  {
+   "prior": "route",
+   "applies_to": "CMH>COMMERCIAL",
+   "value": "no",
+   "from_date": ""
+  },
+  {
+   "prior": "build_weeks",
+   "applies_to": "road-base",
+   "value": "1",
+   "from_date": ""
+  },
+  {
+   "prior": "build_weeks",
+   "applies_to": "road-carbon",
+   "value": "1",
+   "from_date": ""
+  },
+  {
+   "prior": "build_weeks",
+   "applies_to": "mtb-base",
+   "value": "1",
+   "from_date": ""
+  },
+  {
+   "prior": "build_weeks",
+   "applies_to": "mtb-carbon",
+   "value": "1",
+   "from_date": ""
+  },
+  {
+   "prior": "transfer_weeks",
+   "applies_to": "RENO>CMH",
+   "value": "1",
+   "from_date": ""
+  },
+  {
+   "prior": "target_weeks",
+   "applies_to": "road",
+   "value": "8",
+   "from_date": "2026-09-07"
+  },
+  {
+   "prior": "target_weeks",
+   "applies_to": "road",
+   "value": "10",
+   "from_date": "2028-01-03"
+  },
+  {
+   "prior": "target_weeks",
+   "applies_to": "mtb_base",
+   "value": "12",
+   "from_date": "2026-09-07"
+  },
+  {
+   "prior": "target_weeks",
+   "applies_to": "mtb_carbon",
+   "value": "15",
+   "from_date": "2026-09-07"
+  },
+  {
+   "prior": "decides",
+   "applies_to": "make",
+   "value": "yes",
+   "from_date": ""
+  },
+  {
+   "prior": "decides",
+   "applies_to": "move",
+   "value": "yes",
+   "from_date": ""
+  }
+ ],
+ "changes": []
+}

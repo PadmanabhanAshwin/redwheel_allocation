@@ -9,6 +9,7 @@ __pycache__/
 # Generated artefacts (rebuilt by `python -m redwheel.master` / the engine)
 outputs/*
 !outputs/.gitkeep
+!outputs/scenarios/
 *.pkl
 
 # Personal working material, not part of the submission
@@ -19,7 +20,3 @@ local_assets/
 .DS_Store
 .vscode/
 .idea/
-
-data/
-
-outputs/

@@ -1,0 +1,126 @@
+{
+ "key": "G",
+ "name": "Scenario G \u00b7 Web orders for RW-9835 +1,000 bikes",
+ "summary": "we have a orders 1000 Web  orders on the this one: RW-9835  base cycle model as of jan 15th, create a build plan",
+ "parent": "R+",
+ "priors": [
+  {
+   "prior": "route",
+   "applies_to": "RENO>WEB",
+   "value": "yes",
+   "from_date": ""
+  },
+  {
+   "prior": "route",
+   "applies_to": "RENO>DEALERS",
+   "value": "yes",
+   "from_date": ""
+  },
+  {
+   "prior": "route",
+   "applies_to": "RENO>COMMERCIAL",
+   "value": "yes",
+   "from_date": ""
+  },
+  {
+   "prior": "route",
+   "applies_to": "CMH>WEB",
+   "value": "yes",
+   "from_date": ""
+  },
+  {
+   "prior": "route",
+   "applies_to": "CMH>DEALERS",
+   "value": "yes",
+   "from_date": ""
+  },
+  {
+   "prior": "route",
+   "applies_to": "CMH>COMMERCIAL",
+   "value": "yes",
+   "from_date": ""
+  },
+  {
+   "prior": "build_weeks",
+   "applies_to": "road-base",
+   "value": "1",
+   "from_date": ""
+  },
+  {
+   "prior": "build_weeks",
+   "applies_to": "road-carbon",
+   "value": "2",
+   "from_date": ""
+  },
+  {
+   "prior": "build_weeks",
+   "applies_to": "mtb-base",
+   "value": "1",
+   "from_date": ""
+  },
+  {
+   "prior": "build_weeks",
+   "applies_to": "mtb-carbon",
+   "value": "2",
+   "from_date": ""
+  },
+  {
+   "prior": "transfer_weeks",
+   "applies_to": "RENO>CMH",
+   "value": "1",
+   "from_date": ""
+  },
+  {
+   "prior": "target_weeks",
+   "applies_to": "road",
+   "value": "8",
+   "from_date": "2026-09-07"
+  },
+  {
+   "prior": "target_weeks",
+   "applies_to": "road",
+   "value": "10",
+   "from_date": "2028-01-03"
+  },
+  {
+   "prior": "target_weeks",
+   "applies_to": "mtb_base",
+   "value": "12",
+   "from_date": "2026-09-07"
+  },
+  {
+   "prior": "target_weeks",
+   "applies_to": "mtb_carbon",
+   "value": "15",
+   "from_date": "2026-09-07"
+  },
+  {
+   "prior": "decides",
+   "applies_to": "make",
+   "value": "yes",
+   "from_date": ""
+  },
+  {
+   "prior": "decides",
+   "applies_to": "move",
+   "value": "no",
+   "from_date": ""
+  }
+ ],
+ "changes": [
+  {
+   "field": "arrival",
+   "select": {
+    "kind": "order",
+    "item": "RW-9835",
+    "location": "WEB"
+   },
+   "op": "add",
+   "value": 1000,
+   "from_t": 19,
+   "to_t": 19,
+   "reason": ""
+  }
+ ],
+ "walk": null
+}
